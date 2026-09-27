@@ -11,9 +11,10 @@
 
 ## 从项目根目录执行
 
-在当前 PowerShell 窗口进入 `C:\Users\23103\Desktop\新能源设备智能运维平台\PowerSystem`，确认提示符位于该目录，然后执行 Windows 自带的 `powershell.exe`：
+在当前 PowerShell 窗口**先执行第一行切换目录**。看到提示符变为 `PS C:\Users\23103\Desktop\新能源设备智能运维平台\PowerSystem>` 后，再依次执行预检和正式测试：
 
 ```powershell
+Set-Location -LiteralPath 'C:\Users\23103\Desktop\新能源设备智能运维平台\PowerSystem'
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\preflight-stage1.ps1
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\run-stage1-test.ps1
 ```
