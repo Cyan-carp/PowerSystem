@@ -3,7 +3,7 @@ erDiagram
     DEVICES ||--o{ ALARM_RULES : "配置规则"
     DEVICES ||--o{ ALARM_RECORDS : "产生告警"
     ALARM_RULES ||--o{ ALARM_RECORDS : "触发"
-    DEVICES ||--o{ WORK_ORDERS : "关联工单"
+    DEVICES ||--o{ TELEMETRY_INBOX : "可靠收件"
 
     USERS {
         bigint id PK
@@ -12,6 +12,7 @@ erDiagram
         varchar role
         varchar real_name
         timestamptz created_at
+        timestamptz updated_at
     }
     DEVICES {
         bigint id PK
@@ -19,8 +20,9 @@ erDiagram
         varchar name
         varchar dev_type
         varchar vendor
+        varchar station_code
         varchar group_name
-        varchar status
+        timestamptz deleted_at
         timestamptz created_at
     }
     ALARM_RULES {
@@ -31,6 +33,7 @@ erDiagram
         float8 threshold
         varchar level
         boolean enabled
+        timestamptz created_at
     }
     ALARM_RECORDS {
         bigint id PK
@@ -41,13 +44,17 @@ erDiagram
         float8 value
         varchar status
         bigint acked_by FK
+        timestamptz acked_at
+        timestamptz recovered_at
         timestamptz triggered_at
     }
-    WORK_ORDERS {
+    TELEMETRY_INBOX {
         bigint id PK
         bigint device_id FK
-        bigint alarm_id FK
-        varchar title
-        varchar status
-        timestamptz created_at
+        varchar run_id
+        bigint seq
+        bigint ts_ms
+        jsonb payload
+        timestamptz received_at
+        timestamptz processed_at
     }

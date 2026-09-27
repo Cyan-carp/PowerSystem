@@ -1,0 +1,5 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>阶段二实时通道测试</title>
+<style>body{font:16px system-ui;margin:2rem;max-width:900px}input{width:70%;padding:.5rem}button{padding:.5rem}pre{white-space:pre-wrap;background:#eee;padding:1rem;height:60vh;overflow:auto}</style>
+<h1>阶段二实时通道测试</h1><p>先调用登录接口，将 Bearer token 粘贴在下方。</p>
+<input id="token" type="password" placeholder="JWT token"><button id="connect">连接</button><pre id="events"></pre>
+<script>document.getElementById('connect').onclick=async()=>{const token=document.getElementById('token').value;const r=await fetch('/api/v1/ws-ticket',{method:'POST',headers:{Authorization:'Bearer '+token}});const j=await r.json();if(!r.ok){alert(j.message);return}const ws=new WebSocket((location.protocol==='https:'?'wss://':'ws://')+location.host+'/ws/realtime?ticket='+encodeURIComponent(j.data.ticket));ws.onmessage=e=>{const p=document.getElementById('events');p.textContent+=e.data+'\n';p.scrollTop=p.scrollHeight};ws.onclose=()=>{document.getElementById('events').textContent+='连接关闭，请重新获取票据。\n'}};</script></html>
