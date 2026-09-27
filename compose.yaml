@@ -1,0 +1,38 @@
+services:
+  emqx:
+    image: emqx:5.8.8
+    hostname: node1.emqx.com
+    environment:
+      EMQX_NODE_NAME: emqx@node1.emqx.com
+      EMQX_CLUSTER__DISCOVERY_STRATEGY: singleton
+      EMQX_DURABLE_SESSIONS__ENABLE: "true"
+      EMQX_DURABLE_STORAGE__MESSAGES__BACKEND: builtin_local
+    ports:
+      - "127.0.0.1:1883:1883"
+      - "127.0.0.1:18083:18083"
+    volumes:
+      - emqx-data:/opt/emqx/data
+      - emqx-log:/opt/emqx/log
+    restart: unless-stopped
+
+  tdengine:
+    image: tdengine/tsdb:3.4.2.8
+    environment:
+      TAOS_ROOT_PASSWORD: ${TDENGINE_ROOT_PASSWORD:?Set TDENGINE_ROOT_PASSWORD in .env}
+    ports:
+      - "127.0.0.1:6041:6041"
+    volumes:
+      - tdengine-data:/var/lib/taos
+      - tdengine-log:/var/log/taos
+    healthcheck:
+      test: ["CMD", "taos-check", "service"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
+volumes:
+  emqx-data:
+  emqx-log:
+  tdengine-data:
+  tdengine-log:
