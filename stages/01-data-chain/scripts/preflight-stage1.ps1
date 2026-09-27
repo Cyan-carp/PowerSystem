@@ -8,9 +8,9 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Docker 引擎未运行。请先打开 Docker Desktop，等显示 Engine running 后重试。' }
     Write-Host "Docker Engine: $serverVersion"
     $secret = Get-LocalSecret
-    & $docker compose config --quiet
+    & $docker @ComposeArgs config --quiet
     if ($LASTEXITCODE -ne 0) { throw 'compose.yaml 校验失败。' }
-    & $docker compose up -d
+    & $docker @ComposeArgs up -d
     if ($LASTEXITCODE -ne 0) { throw 'EMQX / TDengine 容器启动失败。' }
 
     $deadline = (Get-Date).AddMinutes(2)
@@ -50,7 +50,7 @@ try {
     }
     & $venvPython -c 'import paho.mqtt.client'
     if ($LASTEXITCODE -ne 0) {
-        & $venvPython -m pip install -r (Join-Path $ProjectRoot 'simulator\requirements.txt')
+        & $venvPython -m pip install -r (Join-Path $StageRoot 'simulator\requirements.txt')
         if ($LASTEXITCODE -ne 0) { throw '安装 paho-mqtt 失败。' }
     }
     if (-not $SkipBuild) {
@@ -58,7 +58,7 @@ try {
         $env:GOMODCACHE = Join-Path $ProjectRoot 'artifacts\go-mod'
         $binaryDir = Join-Path $ProjectRoot 'artifacts\bin'
         New-Item -ItemType Directory -Path $binaryDir -Force | Out-Null
-        Push-Location (Join-Path $ProjectRoot 'gateway')
+        Push-Location (Join-Path $StageRoot 'gateway')
         try {
             & go build -o (Join-Path $binaryDir 'gateway.exe') ./cmd/gateway
             if ($LASTEXITCODE -ne 0) { throw 'Go 网关编译失败。' }
