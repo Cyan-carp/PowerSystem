@@ -9,4 +9,4 @@
 
 阶段一的预检、测试、断电后收集和停止服务命令，均见[阶段一运行说明](stages/01-data-chain/README.md)。项目生成物与迁移方法见 [[开发阶段1-数据链路/05-项目文件位置与迁移清单]]。
 
-本地 Git 提交身份仅在此仓库配置为 `Carp <2310314536@qq.com>`。公开仓库为 [Cyan-carp/PowerSystem](https://github.com/Cyan-carp/PowerSystem)，阶段一发布见 [阶段1-数据链路](https://github.com/Cyan-carp/PowerSystem/releases/tag/stage1-data-chain)。首次 M1 验收记录见 [[开发阶段1-数据链路/04-阶段一测试与交付]]。
+公开仓库为 [Cyan-carp/PowerSystem](https://github.com/Cyan-carp/PowerSystem)，阶段一发布见 [阶段1-数据链路](https://github.com/Cyan-carp/PowerSystem/releases/tag/stage1-data-chain)。首次 M1 验收记录见 [[开发阶段1-数据链路/04-阶段一测试与交付]]。
