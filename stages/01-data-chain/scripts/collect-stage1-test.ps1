@@ -14,7 +14,7 @@ if ($run.status -eq 'running') {
 $secret = Get-LocalSecret
 $env:TDENGINE_ROOT_PASSWORD = $secret
 $python = Get-PythonExe
-$output = & $python (Join-Path $ProjectRoot 'scripts\reconcile-stage1.py') $runDir $run.database $run.samples_per_device
+$output = & $python (Join-Path $StageRoot 'scripts\reconcile-stage1.py') $runDir $run.database $run.samples_per_device
 if ($LASTEXITCODE -ne 0) { throw '对账脚本执行失败，请把运行目录路径交给我。' }
 $result = Get-Content -LiteralPath (Join-Path $runDir 'reconciliation.json') -Raw | ConvertFrom-Json
 if ($run.status -eq 'completed' -and -not $result.passed) {

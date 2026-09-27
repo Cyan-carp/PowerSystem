@@ -1,6 +1,8 @@
 ﻿Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
-$ProjectRoot = Split-Path -Parent $PSScriptRoot
+$StageRoot = Split-Path -Parent $PSScriptRoot
+$ProjectRoot = Split-Path -Parent (Split-Path -Parent $StageRoot)
+$ComposeArgs = @('compose', '--project-name', 'powersystem', '--env-file', (Join-Path $ProjectRoot '.env'), '--file', (Join-Path $StageRoot 'compose.yaml'))
 
 function Get-DockerExe {
     $found = Get-Command docker -ErrorAction SilentlyContinue
@@ -13,7 +15,7 @@ function Get-DockerExe {
 function Get-PythonExe {
     $candidate = Join-Path $ProjectRoot '.venv\Scripts\python.exe'
     if (Test-Path -LiteralPath $candidate) { return $candidate }
-    throw 'Python 虚拟环境不存在，请先运行 scripts/preflight-stage1.ps1。'
+    throw 'Python 虚拟环境不存在，请先运行 stages/01-data-chain/scripts/preflight-stage1.ps1。'
 }
 
 function Get-LocalSecret {
@@ -45,7 +47,7 @@ function Invoke-TDSql {
 function Initialize-TDDatabase {
     param([Parameter(Mandatory)][string]$Database, [Parameter(Mandatory)][string]$Password)
     if ($Database -notmatch '^[a-z][a-z0-9_]{0,63}$') { throw '数据库名含有非法字符。' }
-    $template = Get-Content -LiteralPath (Join-Path $ProjectRoot 'deploy\tdengine\init.sql') -Raw
+    $template = Get-Content -LiteralPath (Join-Path $StageRoot 'deploy\tdengine\init.sql') -Raw
     $statements = ($template -replace '(?m)^--.*$', '' -replace '\{\{DATABASE\}\}', $Database) -split ';'
     foreach ($statement in $statements) {
         if ($statement.Trim()) { $null = Invoke-TDSql -Sql $statement.Trim() -Password $Password }
@@ -62,7 +64,7 @@ function Write-RunEvent {
 function Get-QueueStatus {
     param([string]$RunDir)
     $python = Get-PythonExe
-    $output = & $python (Join-Path $ProjectRoot 'scripts\queue-status.py') $RunDir
+    $output = & $python (Join-Path $StageRoot 'scripts\queue-status.py') $RunDir
     if ($LASTEXITCODE -ne 0) { throw '无法读取 SQLite 队列计数。' }
     return ($output | ConvertFrom-Json)
 }
