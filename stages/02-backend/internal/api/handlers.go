@@ -3,12 +3,14 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"math"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
@@ -23,7 +25,7 @@ func (s *Server) register(c *gin.Context) {
 		Password string `json:"password"`
 		RealName string `json:"real_name"`
 	}
-	if c.ShouldBindJSON(&body) != nil || len(body.Username) < 3 || len(body.Username) > 64 || len(body.Password) < 8 || len(body.Password) > 72 {
+	if c.ShouldBindJSON(&body) != nil || len(body.Username) < 3 || !telemetry.Code.MatchString(body.Username) || len(body.Password) < 8 || len(body.Password) > 72 || len(body.RealName) > 64 {
 		fail(c, 400, 40001, "invalid username or password")
 		return
 	}
@@ -228,7 +230,11 @@ func (s *Server) latest(c *gin.Context) {
 	}
 	value, err := s.redis.Get(c.Request.Context(), "device:"+strconv.FormatInt(deviceID, 10)+":latest").Result()
 	if err != nil {
-		fail(c, 404, 40401, "latest telemetry unavailable")
+		if errors.Is(err, redis.Nil) {
+			fail(c, 404, 40401, "latest telemetry unavailable")
+		} else {
+			fail(c, 503, 50000, "latest telemetry cache unavailable")
+		}
 		return
 	}
 	var data any

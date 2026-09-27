@@ -16,7 +16,9 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	logger, err := zap.NewProduction()
+	logConfig := zap.NewProductionConfig()
+	logConfig.OutputPaths = []string{"stdout"}
+	logger, err := logConfig.Build()
 	if err != nil {
 		log.Fatal(err)
 	}

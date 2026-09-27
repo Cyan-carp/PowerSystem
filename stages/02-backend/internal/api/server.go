@@ -183,12 +183,21 @@ func (s *Server) processPending(ctx context.Context) {
 		if !found {
 			continue
 		}
-		device, events, err := service.ProcessSample(s.db, item, sample)
+		var device model.Device
+		if err := s.db.First(&device, item.DeviceID).Error; err != nil {
+			s.log.Error("inbox_device_lookup_failed", zap.Error(err))
+			return
+		}
+		latest, err := s.cacheLatest(ctx, device, sample, item.ReceivedAt)
+		if err != nil {
+			s.log.Warn("redis_latest_failed", zap.Error(err))
+			return
+		}
+		_, events, err := service.ProcessSample(s.db, item, sample)
 		if err != nil {
 			s.log.Error("inbox_process_failed", zap.Error(err))
 			return
 		}
-		latest := s.cacheLatest(ctx, device, sample, item.ReceivedAt)
 		s.broadcast(gin.H{"type": "telemetry", "data": latest})
 		for _, event := range events {
 			s.broadcast(event)
@@ -196,14 +205,16 @@ func (s *Server) processPending(ctx context.Context) {
 	}
 }
 
-func (s *Server) cacheLatest(ctx context.Context, device model.Device, sample telemetry.Sample, receivedAt time.Time) gin.H {
+func (s *Server) cacheLatest(ctx context.Context, device model.Device, sample telemetry.Sample, receivedAt time.Time) (gin.H, error) {
 	latest := gin.H{"device_id": device.ID, "device_code": device.DeviceCode, "run_id": sample.RunID, "seq": sample.Seq, "ts_ms": sample.TS, "received_at": receivedAt, "voltage": sample.Voltage, "current": sample.Current, "temperature": sample.Temperature, "power": sample.Power, "status": sample.Status, "fault_code": sample.FaultCode}
-	if b, err := json.Marshal(latest); err == nil {
-		if err = s.redis.Set(ctx, fmt.Sprintf("device:%d:latest", device.ID), b, 0).Err(); err != nil {
-			s.log.Warn("redis_latest_failed", zap.Error(err))
-		}
+	b, err := json.Marshal(latest)
+	if err != nil {
+		return nil, err
 	}
-	return latest
+	if err := s.redis.Set(ctx, fmt.Sprintf("device:%d:latest", device.ID), b, 0).Err(); err != nil {
+		return nil, err
+	}
+	return latest, nil
 }
 
 func (s *Server) restoreLatest(ctx context.Context) {
@@ -221,7 +232,9 @@ func (s *Server) restoreLatest(ctx context.Context) {
 		if err := json.Unmarshal(item.Payload, &sample); err != nil {
 			continue
 		}
-		s.cacheLatest(ctx, device, sample, item.ReceivedAt)
+		if _, err := s.cacheLatest(ctx, device, sample, item.ReceivedAt); err != nil {
+			s.log.Warn("latest_restore_failed", zap.Error(err))
+		}
 	}
 }
 

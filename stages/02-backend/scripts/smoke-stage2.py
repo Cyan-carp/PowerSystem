@@ -169,7 +169,8 @@ def main() -> int:
         publish(0, 70)
         created = ws.until("alarm_created")
         check("18 high temperature alarm push", created["data"]["device_id"] == device_id)
-        check("18a alarm latency within 10s", time.monotonic() - alarm_start <= 10)
+        alarm_latency = time.monotonic() - alarm_start
+        check("18a alarm latency within 10s", alarm_latency <= 10, f"{alarm_latency:.3f}s")
         alarm_id = created["data"]["id"]
         status, data = request(base, "GET", f"/api/v1/devices/{device_id}/telemetry/latest", token=token)
         check("19 Redis latest", status == 200 and data["data"]["seq"] == 0)
