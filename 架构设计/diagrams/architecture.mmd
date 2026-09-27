@@ -1,0 +1,35 @@
+flowchart TB
+    subgraph L1["① 设备层 · 数据产生"]
+        SIM["光伏逆变器模拟器<br/>（Python · 机理仿真）"]
+    end
+
+    subgraph L2["② 网络层 · 可靠传输"]
+        MQTT["MQTT Broker<br/>EMQX · 18083<br/>主题 device/telemetry"]
+    end
+
+    subgraph L3["③ 边缘层 · 现场就近处理"]
+        GW["Go 边缘网关<br/>paho 订阅 · 解析校验 · 批量写库<br/>断网缓存 SQLite/文件队列"]
+    end
+
+    subgraph L4["④ 平台层 · 存储 / 计算 / 业务"]
+        TD["TDengine<br/>遥测时序库"]
+        RED[("Redis 最新值")]
+        PG[("PostgreSQL 业务库")]
+        BACK["Go 后端 Gin<br/>认证 / 设备 / 告警 / 查询"]
+        AI["FastAPI 预测服务<br/>XGBoost"]
+    end
+
+    subgraph L5["⑤ 应用层 · 人机交互"]
+        WEB["Vue3 + Element Plus + ECharts<br/>总览大屏 / 设备管理 / 告警中心 / 预测页"]
+    end
+
+    SIM -->|"MQTT / JSON"| MQTT
+    MQTT -->|"订阅消费"| GW
+    GW -->|"批量写入"| TD
+    GW -->|"更新 latest"| RED
+    TD -->|"历史查询"| BACK
+    PG -->|"业务数据 CRUD"| BACK
+    RED -->|"读最新值"| BACK
+    AI -->|"HTTP /predict"| BACK
+    BACK -->|"REST /api/v1"| WEB
+    BACK -->|"WebSocket 实时推送"| WEB

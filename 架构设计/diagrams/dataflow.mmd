@@ -1,0 +1,22 @@
+sequenceDiagram
+    autonumber
+    participant SIM as 模拟器
+    participant MQ as EMQX Broker
+    participant GW as Go 网关
+    participant TD as TDengine
+    participant RED as Redis
+    participant BE as Gin 后端(告警引擎)
+    participant WEB as Vue3 前端
+
+    SIM->>MQ: publish device/telemetry (JSON 温度)
+    MQ->>GW: 转发遥测消息
+    GW->>GW: JSON 解析 + 字段校验(非法丢弃记日志)
+    GW->>TD: 批量写入(攒 50 条 / 2 秒)
+    GW->>RED: 更新 latest 最新值
+    GW->>BE: 触发告警规则匹配
+    BE->>BE: 越限判断 → 生成告警记录(写 PostgreSQL)
+    BE-->>WEB: WebSocket 推送告警(≤10s)
+    WEB->>BE: GET /api/v1/devices/{id}/telemetry 查历史曲线
+    BE->>TD: 查询历史遥测
+    TD-->>BE: 返回曲线数据
+    BE-->>WEB: 返回历史曲线(≤2s)
