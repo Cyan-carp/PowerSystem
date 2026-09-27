@@ -28,6 +28,7 @@ function Get-LocalSecret {
     if (-not $line) { throw '.env 缺少 TDENGINE_ROOT_PASSWORD。' }
     $value = ($line -split '=', 2)[1]
     if ($value -eq 'change-this-local-password' -or $value.Length -lt 8) { throw '.env 中的 TDengine 密码尚未正确设置。' }
+    if ($value -notmatch '^[A-Za-z0-9!@#%._-]+$') { throw '.env 密码只能使用英文字母、数字和 ! @ # % . _ -。' }
     return $value
 }
 

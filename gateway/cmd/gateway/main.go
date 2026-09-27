@@ -187,11 +187,30 @@ func validate(t Telemetry) error {
 }
 
 func (g *Gateway) receive(_ mqtt.Client, message mqtt.Message) {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(message.Payload(), &fields); err != nil {
+		g.logger.Warn("telemetry_rejected", "reason", "invalid_json", "error", err)
+		message.Ack()
+		return
+	}
+	for _, key := range []string{"schema_version", "run_id", "device_id", "station_id", "seq", "ts_ms", "voltage", "current", "temperature", "power", "status", "fault_code"} {
+		if _, ok := fields[key]; !ok {
+			g.logger.Warn("telemetry_rejected", "reason", "missing_field", "field", key)
+			message.Ack()
+			return
+		}
+	}
 	var t Telemetry
 	decoder := json.NewDecoder(bytes.NewReader(message.Payload()))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&t); err != nil {
 		g.logger.Warn("telemetry_rejected", "reason", "invalid_json", "error", err)
+		message.Ack()
+		return
+	}
+	var extra any
+	if err := decoder.Decode(&extra); err != io.EOF {
+		g.logger.Warn("telemetry_rejected", "reason", "trailing_json")
 		message.Ack()
 		return
 	}
