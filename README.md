@@ -25,7 +25,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\run-stage1-tes
 
 ### 交给我审查
 
-- **正常完成**：只需发该次 `review-bundle.zip` 的绝对路径。我会核对每台 720 条、序号连续、无重复、待发/待写队列清零和恢复耗时。完整 1 小时测试通过前，不将 `dev` 合并进 `main`。
+- **正常完成**：只需发该次 `review-bundle.zip` 的绝对路径。我会核对每台 720 条、序号连续、无重复、待发/待写队列清零和恢复耗时。首次一小时 M1 已于 2026-09-27 审查通过，结果见 [[04-阶段一测试与交付]]。
 - **脚本报告失败或主动中断**：发同一审查包的绝对路径、终端最后的错误文字及中断原因。
 - **重启、断电或强制结束**：重新打开 Docker Desktop 后，在项目根目录运行 `powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\collect-stage1-test.ps1 -RunId <运行编号>`。发重新生成的审查包绝对路径及大约中断时间；如果 Docker Desktop 窗口显示未写入日志的错误，再附截图。运行编号可以从 `artifacts/stage1/` 下的文件夹名找回。
 
