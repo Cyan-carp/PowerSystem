@@ -1,0 +1,13 @@
+.env
+.venv/
+__pycache__/
+*.py[cod]
+*.exe
+*.test
+*.out
+artifacts/
+data/
+.obsidian/workspace.json
+.workbuddy/
+!deploy/tdengine/*.sql
+
