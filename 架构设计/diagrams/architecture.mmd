@@ -8,14 +8,14 @@ flowchart TB
     end
 
     subgraph L3["③ 边缘层 · 现场就近处理"]
-        GW["Go 边缘网关<br/>paho 订阅 · 解析校验 · 批量写库<br/>断网缓存 SQLite/文件队列"]
+        GW["阶段二 Go 网关<br/>动态设备校验 · SQLite 待写队列<br/>批量写入 TDengine"]
     end
 
     subgraph L4["④ 平台层 · 存储 / 计算 / 业务"]
         TD["TDengine<br/>遥测时序库"]
         RED[("Redis 最新值")]
-        PG[("PostgreSQL 业务库")]
-        BACK["Go 后端 Gin<br/>认证 / 设备 / 告警 / 查询"]
+        PG[("PostgreSQL<br/>设备 / 规则 / 告警 / 遥测收件")]
+        BACK["Go 后端 Gin<br/>JWT / 设备 / 查询 / 告警 / WebSocket"]
         AI["FastAPI 预测服务<br/>XGBoost"]
     end
 
@@ -26,9 +26,10 @@ flowchart TB
     SIM -->|"MQTT / JSON"| MQTT
     MQTT -->|"订阅消费"| GW
     GW -->|"批量写入"| TD
-    GW -->|"更新 latest"| RED
-    TD -->|"历史查询"| BACK
-    PG -->|"业务数据 CRUD"| BACK
+    MQTT -->|"独立持久订阅"| BACK
+    BACK -->|"遥测收件去重、业务数据"| PG
+    TD -->|"入库确认、历史查询"| BACK
+    BACK -->|"入库确认后更新 latest"| RED
     RED -->|"读最新值"| BACK
     AI -->|"HTTP /predict"| BACK
     BACK -->|"REST /api/v1"| WEB

@@ -24,7 +24,7 @@ tags:
 | 分页 | 列表接口必带 `page`、`page_size`，返回 `total` |
 | 错误码 | 4xx 客户端错、5xx 服务端错 |
 
-## 二、接口清单
+## 二、全生命周期规划接口清单（阶段二实现子集见第七节）
 
 ### 1. 认证模块（FR-08）
 
@@ -110,7 +110,7 @@ tags:
 | FR-02/03/04 告警 | GET/POST `/alarms` + WS `/ws/realtime` |
 | FR-05 设备台账 | `/devices` CRUD |
 | FR-06 历史曲线 | GET `/devices/{id}/telemetry` |
-| FR-07 总览大屏 | WS `/ws/realtime` + `/devices` + `/alarms` |
+| FR-07 总览大屏 | WS `/ws/realtime` + `/dashboard/summary` + `/devices` + `/alarms` |
 | FR-08 登录鉴权 | `/auth/register`、`/auth/login` |
 | FR-09 故障预测 | GET `/devices/{id}/prediction` |
 | FR-11 数据导出 | GET `/devices/{id}/telemetry/export` |
@@ -124,3 +124,17 @@ tags:
 - [x] 与 [[03-数据库设计]] 字段一一对应（`device_code`↔`devices` 表、`level/status`↔`alarm_records` 表）。
 
 > 架构设计模块到此完成。四件套（架构图 → 数据流 → 数据库 → API）全部交付，进入开发实战前可做一次「设计评审」（见 [[00-索引·架构设计]] 四件套自洽核对）。
+
+## 七、阶段二已实现契约
+
+| 类别 | 接口 | 约定 |
+| --- | --- | --- |
+| 公开 | `GET /api/v1/ping`；`POST /api/v1/auth/register`、`/auth/login` | 登录返回 8 小时 JWT；注册仅创建 `operator` |
+| 设备 | `/api/v1/devices`、`/api/v1/devices/{id}` 的 GET/POST/PUT/DELETE | 列表按 `page/page_size/group_name`；删除为软删除，编号/场站编号不可修改 |
+| 遥测 | `GET /api/v1/devices/{id}/telemetry`、`.../latest` | 指标白名单；历史时间为 RFC3339、≤24 小时、≤5000 点；最新值读 Redis |
+| 规则 | `/api/v1/alarm-rules`、`/api/v1/alarm-rules/{id}` 的 GET/POST/PUT/DELETE | 每设备每指标一条规则；阈值、比较符和级别受校验 |
+| 告警 | `GET /api/v1/alarms`、`/alarms/{id}`；`POST /alarms/{id}/ack` | 列表按状态/级别筛选；确认后持续越限不重报，恢复后可再报 |
+| 总览 | `GET /api/v1/dashboard/summary` | 返回在线/离线/故障数、当前功率、活动告警与基础运行健康比例 |
+| 实时 | `POST /api/v1/ws-ticket`；`GET /ws/realtime?ticket=...` | JWT 换一次性 60 秒票据；WebSocket 推送遥测及告警事件 |
+
+所有阶段二业务 REST 接口均需 Bearer JWT，成功与失败都返回 `code/message/data`；列表默认第 1 页、每页 20 条，上限 100。详情告警不内嵌曲线，可通过关联设备的遥测接口查询。上文列出的预测、导出和报表接口仍是后续阶段规划，M2 不以其上线为前提。运行和自测命令见 [[stages/02-backend/README.md]]。
