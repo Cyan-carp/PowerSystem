@@ -1,4 +1,4 @@
-param([Parameter(Mandatory)][string]$RunId)
+﻿param([Parameter(Mandatory)][string]$RunId)
 . (Join-Path $PSScriptRoot 'stage1-common.ps1')
 
 if ($RunId -notmatch '^stage1_[0-9]{8}_[0-9]{6}_[0-9a-f]{4}$') { throw '运行编号格式不正确。' }

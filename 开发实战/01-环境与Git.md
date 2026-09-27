@@ -13,7 +13,7 @@ tags:
 
 ## 本机启动
 
-项目根目录是 `C:\Users\23103\Desktop\新能源设备智能运维平台\PowerSystem`。在此处执行 `pwsh -NoProfile -File .\scripts\preflight-stage1.ps1`。脚本检查 Docker Engine 和 Compose，启动 EMQX、TDengine，验证 MQTT 1883 端口及 TDengine REST SQL，准备 Python 虚拟环境并编译 Go 网关。首次拉镜像和下载依赖需要网络。
+项目根目录是 `C:\Users\23103\Desktop\新能源设备智能运维平台\PowerSystem`。在此处执行 `powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\preflight-stage1.ps1`。脚本兼容 Windows 自带 PowerShell 5.1，也可在 PowerShell 7 运行。它检查 Docker Engine 和 Compose，启动 EMQX、TDengine，验证 MQTT 1883 端口及 TDengine REST SQL，准备 Python 虚拟环境并编译 Go 网关。首次拉镜像和下载依赖需要网络。
 
 Compose 将服务端口只绑定 `127.0.0.1`，有独立 Docker 数据卷。TDengine 首次启动密码从根目录忽略的 `.env` 读取；预检在没有该文件时随机生成。不要在笔记、日志或 Git 中写入真实密码。可用 `docker compose ps` 查看状态；`docker compose stop` 停止服务。
 

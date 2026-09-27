@@ -1,4 +1,4 @@
-param(
+﻿param(
     [ValidateRange(1, 100000)][int]$SamplesPerDevice = 720,
     [ValidateRange(0.1, 3600)][double]$IntervalSeconds = 5,
     [switch]$NoFaults,
@@ -153,8 +153,12 @@ try {
         Start-Sleep -Seconds 2
     }
 
+    $simulator.WaitForExit()
     $simulator.Refresh()
-    if ($simulator.ExitCode -ne 0) { throw "模拟器退出码 $($simulator.ExitCode)，请检查 simulator.stderr.log。" }
+    if ($null -ne $simulator.ExitCode -and $simulator.ExitCode -ne 0) { throw "模拟器退出码 $($simulator.ExitCode)，请检查 simulator.stderr.log。" }
+    if (-not (Select-String -LiteralPath (Join-Path $runDir 'simulator.jsonl') -Pattern '"event": "simulator_stopped"' -Quiet)) {
+        throw '模拟器未写出正常结束事件，请检查 simulator.stderr.log。'
+    }
     $deadline = (Get-Date).AddSeconds(90)
     do {
         $metric = Record-Metric

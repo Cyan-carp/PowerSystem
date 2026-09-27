@@ -1,4 +1,4 @@
-param([switch]$SkipBuild)
+﻿param([switch]$SkipBuild)
 . (Join-Path $PSScriptRoot 'stage1-common.ps1')
 
 Push-Location $ProjectRoot

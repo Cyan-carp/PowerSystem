@@ -1,4 +1,4 @@
-Set-StrictMode -Version Latest
+﻿Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $ProjectRoot = Split-Path -Parent $PSScriptRoot
 
@@ -20,7 +20,8 @@ function Get-LocalSecret {
     $envPath = Join-Path $ProjectRoot '.env'
     if (-not (Test-Path -LiteralPath $envPath)) {
         $bytes = New-Object byte[] 12
-        [System.Security.Cryptography.RandomNumberGenerator]::Fill($bytes)
+        $rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+        try { $rng.GetBytes($bytes) } finally { $rng.Dispose() }
         $hex = -join ($bytes | ForEach-Object { $_.ToString('x2') })
         Set-Content -LiteralPath $envPath -Value "TDENGINE_ROOT_PASSWORD=Aa7!$hex" -Encoding utf8
     }
