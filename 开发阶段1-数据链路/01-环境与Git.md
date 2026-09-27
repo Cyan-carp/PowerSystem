@@ -53,7 +53,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\stages\01-data-chain\s
 | 提交身份 | 仅在此仓库配置为 `Carp <2310314536@qq.com>` |
 | 忽略项 | `.env`、虚拟环境、编译文件、`artifacts/` 均忽略 |
 | 提交项 | `go.sum` 和依赖锁定文件提交 |
-| 远端 | 当前不配置 GitHub 远端 |
+| 远端 | `origin` 指向公开仓库 `https://github.com/Cyan-carp/PowerSystem.git` |
 
 > 首次一小时 M1 已于 2026-09-27 审查通过，当时 `main` 与 `dev` 均指向合并提交 `0a367e8`；本次目录整理不会改写该提交或标签。
 
