@@ -103,7 +103,7 @@ try {
     Start-Sleep -Seconds 2
     $python = Get-PythonExe
     $simArgs = @(
-        '-u', (Join-Path $ProjectRoot 'simulator\simulator.py'),
+        '-u', (Join-Path $StageRoot 'simulator\simulator.py'),
         '--samples', "$SamplesPerDevice", '--interval-seconds', "$IntervalSeconds", '--time-scale', "$TimeScale",
         '--run-id', $runId, '--outbox', (Join-Path $runDir 'simulator.sqlite'), '--fault-labels', (Join-Path $runDir 'fault-labels.csv')
     )
@@ -118,7 +118,7 @@ try {
         $gateway.Refresh()
         $elapsed = ([DateTime]::UtcNow - $startTime).TotalSeconds
         if (-not $NoFaults -and -not $brokerStopped -and $elapsed -ge $brokerAt) {
-            & $docker compose stop emqx | Out-Null
+            & $docker @ComposeArgs stop emqx | Out-Null
             if ($LASTEXITCODE -ne 0) { throw '停止 EMQX 注入故障失败。' }
             $brokerStopped = $true
             $brokerDownAt = [DateTime]::UtcNow
@@ -126,7 +126,7 @@ try {
             Write-Host "已自动停止 EMQX，$BrokerDowntimeSeconds 秒后恢复。"
         }
         if ($brokerStopped -and -not $brokerRestored -and ([DateTime]::UtcNow - $brokerDownAt).TotalSeconds -ge $BrokerDowntimeSeconds) {
-            & $docker compose start emqx | Out-Null
+            & $docker @ComposeArgs start emqx | Out-Null
             if ($LASTEXITCODE -ne 0) { throw '恢复 EMQX 失败。' }
             $brokerRestored = $true
             Write-RunEvent -RunDir $runDir -Event 'broker_restored'
@@ -183,7 +183,7 @@ try {
 } finally {
     if ($brokerStopped -and -not $brokerRestored -and $docker) {
         try {
-            & $docker compose start emqx | Out-Null
+            & $docker @ComposeArgs start emqx | Out-Null
             Write-RunEvent -RunDir $runDir -Event 'broker_restored_during_cleanup'
         } catch {
             Write-Warning "清理时未能恢复 EMQX：$($_.Exception.Message)"
