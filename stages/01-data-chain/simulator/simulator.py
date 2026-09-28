@@ -178,6 +178,7 @@ def main() -> int:
     parser.add_argument("--port", type=int, default=1883)
     parser.add_argument("--interval-seconds", type=float, default=5.0)
     parser.add_argument("--samples", type=int, default=720, help="total samples per device, including samples from a resumed run")
+    parser.add_argument("--continuous", action="store_true", help="keep producing current-time samples until stopped")
     parser.add_argument("--time-scale", type=float, default=1.0)
     parser.add_argument("--seed", type=int, default=2026)
     parser.add_argument("--run-id", default="manual")
@@ -193,17 +194,17 @@ def main() -> int:
     ledger = Ledger(args.outbox)
     start_ms = ledger.start_ms()
     publishers = [Publisher(device, ledger, args.broker, args.port, args.mqtt_user, args.mqtt_password) for device in DEVICES]
-    log("simulator_started", run_id=args.run_id, samples_per_device=args.samples, interval_seconds=args.interval_seconds, time_scale=args.time_scale)
+    log("simulator_started", run_id=args.run_id, continuous=args.continuous, samples_per_device=args.samples, interval_seconds=args.interval_seconds, time_scale=args.time_scale)
     next_tick = time.monotonic()
     interrupted = False
     try:
-        while not STOP.is_set() and any(ledger.next_seq(device) < args.samples for device in DEVICES):
+        while not STOP.is_set() and (args.continuous or any(ledger.next_seq(device) < args.samples for device in DEVICES)):
             for publisher in publishers:
                 device = publisher.device_id
                 seq = ledger.next_seq(device)
-                if seq >= args.samples:
+                if not args.continuous and seq >= args.samples:
                     continue
-                ts_ms = start_ms + round(seq * args.interval_seconds * 1000 * args.time_scale)
+                ts_ms = int(time.time() * 1000) if args.continuous else start_ms + round(seq * args.interval_seconds * 1000 * args.time_scale)
                 payload, active = make_sample(device, seq, ts_ms, args.seed, args.run_id)
                 ledger.add(device, seq, ts_ms, payload, active)
                 publisher.publish(seq, payload)
@@ -220,7 +221,8 @@ def main() -> int:
     finally:
         for publisher in publishers:
             publisher.close()
-        ledger.export_fault_labels(args.fault_labels)
+        if not args.continuous:
+            ledger.export_fault_labels(args.fault_labels)
         generated, pending = ledger.counts()
         log("simulator_stopped", generated=generated, pending=pending, interrupted=interrupted)
     return 130 if interrupted else (0 if pending == 0 else 2)

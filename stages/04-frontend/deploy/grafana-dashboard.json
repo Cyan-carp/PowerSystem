@@ -1,0 +1,58 @@
+{
+  "uid": "powersystem-week15",
+  "title": "PowerSystem 第15周运维",
+  "tags": ["powersystem", "stage4"],
+  "timezone": "browser",
+  "schemaVersion": 41,
+  "version": 2,
+  "refresh": "15s",
+  "time": {"from": "now-24h", "to": "now"},
+  "panels": [
+    {
+      "id": 1, "type": "stat", "title": "API 可用", "gridPos": {"h": 6, "w": 6, "x": 0, "y": 0},
+      "datasource": {"type": "prometheus", "uid": "powersystem-prometheus"},
+      "targets": [{"expr": "up{job=\"api\"}", "refId": "A"}],
+      "fieldConfig": {"defaults": {"mappings": [{"type": "value", "options": {"0": {"text": "故障", "color": "red"}, "1": {"text": "正常", "color": "green"}}}], "thresholds": {"mode": "absolute", "steps": [{"color": "red"}, {"color": "green", "value": 1}]}}, "overrides": []},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}}
+    },
+    {
+      "id": 2, "type": "stat", "title": "当前告警", "gridPos": {"h": 6, "w": 6, "x": 6, "y": 0},
+      "datasource": {"type": "prometheus", "uid": "powersystem-prometheus"},
+      "targets": [{"expr": "sum(ALERTS{alertstate=\"firing\"}) or vector(0)", "refId": "A"}],
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}}
+    },
+    {
+      "id": 3, "type": "timeseries", "title": "API 每秒请求", "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
+      "datasource": {"type": "prometheus", "uid": "powersystem-prometheus"},
+      "targets": [{"expr": "sum(rate(powersystem_http_requests_total[5m]))", "legendFormat": "请求每秒", "refId": "A"}]
+    },
+    {
+      "id": 4, "type": "timeseries", "title": "API 平均响应时间", "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8},
+      "datasource": {"type": "prometheus", "uid": "powersystem-prometheus"},
+      "targets": [{"expr": "sum(rate(powersystem_http_request_duration_seconds_sum[5m])) / clamp_min(sum(rate(powersystem_http_requests_total[5m])), 0.00001)", "legendFormat": "秒", "refId": "A"}]
+    },
+    {
+      "id": 5, "type": "timeseries", "title": "主机 CPU 与内存使用率", "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8},
+      "datasource": {"type": "prometheus", "uid": "powersystem-prometheus"},
+      "targets": [
+        {"expr": "100 * (1 - avg(rate(node_cpu_seconds_total{mode=\"idle\"}[5m])))", "legendFormat": "CPU %", "refId": "A"},
+        {"expr": "100 * (1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)", "legendFormat": "内存 %", "refId": "B"}
+      ]
+    },
+    {
+      "id": 6, "type": "timeseries", "title": "磁盘使用率", "gridPos": {"h": 8, "w": 24, "x": 0, "y": 16},
+      "datasource": {"type": "prometheus", "uid": "powersystem-prometheus"},
+      "targets": [{"expr": "100 * (1 - node_filesystem_avail_bytes{mountpoint=\"/\"} / node_filesystem_size_bytes{mountpoint=\"/\"})", "legendFormat": "根文件系统", "refId": "A"}]
+    },
+    {
+      "id": 7, "type": "timeseries", "title": "容器 CPU 使用率", "gridPos": {"h": 8, "w": 12, "x": 0, "y": 24},
+      "datasource": {"type": "prometheus", "uid": "powersystem-prometheus"},
+      "targets": [{"expr": "100 * rate(container_cpu_usage_seconds_total{name=~\"powersystem-stage4.*\"}[5m])", "legendFormat": "{{name}}", "refId": "A"}]
+    },
+    {
+      "id": 8, "type": "timeseries", "title": "容器工作集内存", "gridPos": {"h": 8, "w": 12, "x": 12, "y": 24},
+      "datasource": {"type": "prometheus", "uid": "powersystem-prometheus"},
+      "targets": [{"expr": "container_memory_working_set_bytes{name=~\"powersystem-stage4.*\"}", "legendFormat": "{{name}}", "refId": "A"}]
+    }
+  ]
+}

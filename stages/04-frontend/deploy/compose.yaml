@@ -1,0 +1,238 @@
+name: powersystem-stage4
+
+services:
+  emqx:
+    image: emqx:5.8.8
+    hostname: node1.emqx.com
+    environment:
+      EMQX_NODE_NAME: emqx@node1.emqx.com
+      EMQX_CLUSTER__DISCOVERY_STRATEGY: singleton
+      EMQX_DURABLE_SESSIONS__ENABLE: "true"
+      EMQX_DURABLE_STORAGE__MESSAGES__BACKEND: builtin_local
+    volumes:
+      - emqx-data:/opt/emqx/data
+      - emqx-log:/opt/emqx/log
+    restart: unless-stopped
+
+  tdengine:
+    image: tdengine/tsdb:3.4.2.8
+    environment:
+      TAOS_ROOT_PASSWORD: ${TDENGINE_ROOT_PASSWORD:?set TDENGINE_ROOT_PASSWORD}
+    volumes:
+      - tdengine-data:/var/lib/taos
+      - tdengine-log:/var/log/taos
+      - ${POWERSYSTEM_BACKUP_DIR:?set POWERSYSTEM_BACKUP_DIR}:/backup
+    healthcheck:
+      test: ["CMD", "taos-check", "service"]
+      interval: 10s
+      timeout: 5s
+      retries: 18
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:17.6
+    environment:
+      POSTGRES_DB: powersystem
+      POSTGRES_USER: powersystem
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U powersystem -d powersystem"]
+      interval: 5s
+      timeout: 3s
+      retries: 24
+    restart: unless-stopped
+
+  redis:
+    image: redis:7.4.5-alpine
+    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD:?set REDIS_PASSWORD}"]
+    environment:
+      REDISCLI_AUTH: ${REDIS_PASSWORD:?set REDIS_PASSWORD}
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 24
+    restart: unless-stopped
+
+  ai-predict:
+    build:
+      context: ../../03-ai-prediction
+    environment:
+      STAGE3_MODEL_DIR: /model
+    volumes:
+      - ${POWERSYSTEM_MODEL_DIR:?set POWERSYSTEM_MODEL_DIR}:/model:ro
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8090/health',timeout=5)"]
+      interval: 20s
+      timeout: 8s
+      retries: 12
+    restart: unless-stopped
+
+  gateway:
+    build:
+      context: ../../02-backend
+      args:
+        APP: gateway
+    environment: &backend-env
+      MQTT_BROKER: tcp://emqx:1883
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: powersystem
+      POSTGRES_USER: powersystem
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      REDIS_ADDR: redis:6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?set REDIS_PASSWORD}
+      TDENGINE_URL: http://tdengine:6041
+      TDENGINE_DATABASE: powersystem_stage2
+      TDENGINE_ROOT_PASSWORD: ${TDENGINE_ROOT_PASSWORD:?set TDENGINE_ROOT_PASSWORD}
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET}
+      STAGE2_DATA_DIR: /data
+    volumes:
+      - gateway-state:/data
+    depends_on:
+      postgres: {condition: service_healthy}
+      tdengine: {condition: service_healthy}
+      emqx: {condition: service_started}
+    restart: unless-stopped
+
+  api:
+    build:
+      context: ../../02-backend
+      args:
+        APP: api
+    environment:
+      <<: *backend-env
+      HTTP_ADDR: 0.0.0.0:8080
+      AI_ENABLED: "true"
+      AI_URL: http://ai-predict:8090
+      AI_POLL_SECONDS: "300"
+    volumes:
+      - api-state:/data
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+      tdengine: {condition: service_healthy}
+      emqx: {condition: service_started}
+      ai-predict: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/api/v1/ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
+  simulator:
+    build:
+      context: ../../01-data-chain/simulator
+    command:
+      - --broker
+      - emqx
+      - --continuous
+      - --interval-seconds
+      - "5"
+      - --run-id
+      - stage4-live
+      - --outbox
+      - /data/simulator.sqlite
+      - --fault-labels
+      - /data/fault-labels.csv
+    volumes:
+      - simulator-state:/data
+    depends_on:
+      api: {condition: service_healthy}
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ..
+    ports:
+      - "127.0.0.1:18080:80"
+    depends_on:
+      api: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/"]
+      interval: 15s
+      timeout: 5s
+      retries: 8
+    restart: unless-stopped
+
+  node-exporter:
+    image: prom/node-exporter:v1.9.1
+    command: ["--path.procfs=/host/proc", "--path.sysfs=/host/sys", "--path.rootfs=/host/root", "--collector.filesystem.mount-points-exclude=^/(dev|proc|sys|run/credentials/.+)($$|/)"]
+    pid: host
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/host/root:ro,rslave
+    restart: unless-stopped
+
+  cadvisor:
+    image: ghcr.io/google/cadvisor:0.55.1
+    privileged: true
+    devices:
+      - /dev/kmsg:/dev/kmsg
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker:/var/lib/docker:ro
+    restart: unless-stopped
+
+  prometheus:
+    image: prom/prometheus:v3.6.0
+    command: ["--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.path=/prometheus", "--storage.tsdb.retention.time=15d"]
+    ports:
+      - "127.0.0.1:19090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./alerts.yml:/etc/prometheus/alerts.yml:ro
+      - prometheus-data:/prometheus
+    depends_on:
+      - api
+      - node-exporter
+      - cadvisor
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:12.1.1
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?set GRAFANA_ADMIN_PASSWORD}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_SERVER_ROOT_URL: http://localhost:13000
+    ports:
+      - "127.0.0.1:13000:3000"
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./grafana-datasource.yml:/etc/grafana/provisioning/datasources/powersystem.yml:ro
+      - ./grafana-dashboard-provider.yml:/etc/grafana/provisioning/dashboards/powersystem.yml:ro
+      - ./grafana-dashboard.json:/var/lib/grafana/dashboards/powersystem.json:ro
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+
+  backup-helper:
+    profiles: [maintenance]
+    image: python:3.12-slim
+    volumes:
+      - api-state:/source/api:ro
+      - gateway-state:/source/gateway:ro
+      - simulator-state:/source/simulator:ro
+      - ${POWERSYSTEM_BACKUP_DIR:?set POWERSYSTEM_BACKUP_DIR}:/backup
+      - ./snapshot_queues.py:/scripts/snapshot_queues.py:ro
+
+volumes:
+  emqx-data:
+  emqx-log:
+  tdengine-data:
+  tdengine-log:
+  postgres-data:
+  redis-data:
+  gateway-state:
+  api-state:
+  simulator-state:
+  prometheus-data:
+  grafana-data:

@@ -90,7 +90,7 @@ onUnmounted(() => {
           <router-link to="/alarms" :class="{ active: route.path === '/alarms' }"><el-icon><Bell /></el-icon><span>告警中心</span></router-link>
           <router-link to="/predictions" :class="{ active: route.path === '/predictions' }"><el-icon><DataAnalysis /></el-icon><span>故障预测</span></router-link>
         </nav>
-        <div class="sidebar-foot"><span class="signal-dot" />本地运行环境</div>
+        <div class="sidebar-foot"><span class="signal-dot" />合成数据演示</div>
       </aside>
       <main class="main-content"><router-view /></main>
     </div>

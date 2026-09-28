@@ -1,0 +1,17 @@
+groups:
+  - name: powersystem
+    rules:
+      - alert: PowerSystemAPIDown
+        expr: up{job="api"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: PowerSystem API scrape failed for over one minute
+      - alert: PowerSystemDiskHigh
+        expr: 100 * (1 - node_filesystem_avail_bytes{fstype!~"tmpfs|overlay"} / node_filesystem_size_bytes{fstype!~"tmpfs|overlay"}) > 80
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: A host filesystem is more than 80 percent full

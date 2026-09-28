@@ -48,6 +48,8 @@ func New(cfg config.Config, db *gorm.DB, redis *redis.Client, td *tdengine.Clien
 	s := &Server{cfg: cfg, db: db, redis: redis, td: td, log: log, clients: make(map[*websocket.Conn]struct{})}
 	r := gin.New()
 	r.Use(gin.Recovery())
+	r.Use(httpMetrics.observe())
+	r.GET("/metrics", httpMetrics.serve)
 	r.GET("/api/v1/ping", func(c *gin.Context) { ok(c, gin.H{"status": "ok"}) })
 	r.POST("/api/v1/auth/register", s.register)
 	r.POST("/api/v1/auth/login", s.login)

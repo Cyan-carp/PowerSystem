@@ -14,8 +14,10 @@ from pydantic import BaseModel, Field
 
 from .features import FEATURE_NAMES, extract
 
-DEFAULT_MODEL = Path(__file__).resolve().parents[3] / "artifacts" / "stage3" / "model"
-MODEL_DIR = Path(os.getenv("STAGE3_MODEL_DIR", str(DEFAULT_MODEL)))
+if "STAGE3_MODEL_DIR" in os.environ:
+    MODEL_DIR = Path(os.environ["STAGE3_MODEL_DIR"])
+else:
+    MODEL_DIR = Path(__file__).resolve().parents[3] / "artifacts" / "stage3" / "model"
 app = FastAPI(title="PowerSystem Fault Risk", version="1.0")
 
 

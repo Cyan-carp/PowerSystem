@@ -1,0 +1,33 @@
+name: powersystem-restore
+
+services:
+  postgres:
+    image: postgres:17.6
+    environment:
+      POSTGRES_DB: powersystem
+      POSTGRES_USER: powersystem
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+    volumes:
+      - postgres-restore-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U powersystem -d powersystem"]
+      interval: 5s
+      timeout: 3s
+      retries: 24
+
+  tdengine:
+    image: tdengine/tsdb:3.4.2.8
+    environment:
+      TAOS_ROOT_PASSWORD: ${TDENGINE_ROOT_PASSWORD:?set TDENGINE_ROOT_PASSWORD}
+    volumes:
+      - tdengine-restore-data:/var/lib/taos
+      - ${POWERSYSTEM_BACKUP_DIR:?set POWERSYSTEM_BACKUP_DIR}:/backup:ro
+    healthcheck:
+      test: ["CMD", "taos-check", "service"]
+      interval: 10s
+      timeout: 5s
+      retries: 18
+
+volumes:
+  postgres-restore-data:
+  tdengine-restore-data:
