@@ -2,7 +2,7 @@
 import { onMounted, onUnmounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElNotification } from 'element-plus'
-import { Bell, DataAnalysis, DataBoard, Monitor, Mute, SwitchButton } from '@element-plus/icons-vue'
+import { Bell, DataAnalysis, DataBoard, Lightning, Monitor, Mute, SwitchButton } from '@element-plus/icons-vue'
 import { clearSession, currentUser } from '../lib/auth'
 import { realtime } from '../lib/realtime'
 import { dateTime, levelLabels } from '../lib/format'
@@ -67,31 +67,31 @@ onUnmounted(() => {
 
 <template>
   <div class="app-shell">
-    <aside class="sidebar">
+    <header class="topbar">
       <router-link class="brand" to="/dashboard">
-        <span class="brand-mark">源</span>
-        <span><strong>源网智联</strong><small>新能源设备智能运维</small></span>
+        <span class="brand-mark"><el-icon><Lightning /></el-icon></span>
+        <span class="brand-text"><strong>源网智联</strong><small>新能源设备智能运维平台</small></span>
       </router-link>
-      <div class="nav-caption">运行工作台</div>
-      <nav class="side-nav" aria-label="主导航">
-        <router-link to="/dashboard" :class="{ active: route.path === '/dashboard' }"><el-icon><DataBoard /></el-icon><span>总览大屏</span></router-link>
-        <router-link to="/devices" :class="{ active: route.path.startsWith('/devices') }"><el-icon><Monitor /></el-icon><span>设备管理</span></router-link>
-        <router-link to="/alarms" :class="{ active: route.path === '/alarms' }"><el-icon><Bell /></el-icon><span>告警中心</span></router-link>
-        <router-link to="/predictions" :class="{ active: route.path === '/predictions' }"><el-icon><DataAnalysis /></el-icon><span>故障预测</span></router-link>
-      </nav>
-      <div class="sidebar-foot"><span class="signal-dot" />本地运行环境</div>
-    </aside>
-    <div class="main-column">
-      <header class="topbar">
-        <div class="topbar-context"><span>源网智联</span><span class="slash">/</span><strong>{{ route.path === '/dashboard' ? '运行总览' : route.path.startsWith('/devices') ? '设备管理' : route.path === '/alarms' ? '告警中心' : '故障预测' }}</strong></div>
-        <div class="topbar-actions">
-          <span class="clock">{{ dateTime(now) }}</span>
-          <span class="connection" :class="realtime.connected.value ? 'online' : 'offline'"><span class="signal-dot" />{{ realtime.connected.value ? '实时连接正常' : '实时连接中断' }}</span>
-          <el-button text :aria-label="soundOn ? '静音提示音' : '启用提示音'" @click="toggleSound"><el-icon><Bell v-if="soundOn" /><Mute v-else /></el-icon></el-button>
-          <span class="user-name">{{ currentUser?.real_name || currentUser?.username || '值班员' }}</span>
-          <el-button text title="退出登录" aria-label="退出登录" @click="logout"><el-icon><SwitchButton /></el-icon></el-button>
-        </div>
-      </header>
+      <div class="topbar-context"><span>运行工作台</span><span class="slash">/</span><strong>{{ route.path === '/dashboard' ? '运行总览' : route.path.startsWith('/devices') ? '设备管理' : route.path === '/alarms' ? '告警中心' : '故障预测' }}</strong></div>
+      <div class="topbar-actions">
+        <span class="connection" :class="realtime.connected.value ? 'online' : 'offline'"><span class="signal-dot" />{{ realtime.connected.value ? '实时连接正常' : '实时连接中断' }}</span>
+        <span class="clock">{{ dateTime(now) }}</span>
+        <el-button text :aria-label="soundOn ? '静音提示音' : '启用提示音'" @click="toggleSound"><el-icon><Bell v-if="soundOn" /><Mute v-else /></el-icon></el-button>
+        <span class="user-name">{{ currentUser?.real_name || currentUser?.username || '值班员' }}</span>
+        <el-button text title="退出登录" aria-label="退出登录" @click="logout"><el-icon><SwitchButton /></el-icon></el-button>
+      </div>
+    </header>
+    <div class="app-body">
+      <aside class="sidebar">
+        <div class="nav-caption">功能导航</div>
+        <nav class="side-nav" aria-label="主导航">
+          <router-link to="/dashboard" :class="{ active: route.path === '/dashboard' }"><el-icon><DataBoard /></el-icon><span>总览大屏</span></router-link>
+          <router-link to="/devices" :class="{ active: route.path.startsWith('/devices') }"><el-icon><Monitor /></el-icon><span>设备管理</span></router-link>
+          <router-link to="/alarms" :class="{ active: route.path === '/alarms' }"><el-icon><Bell /></el-icon><span>告警中心</span></router-link>
+          <router-link to="/predictions" :class="{ active: route.path === '/predictions' }"><el-icon><DataAnalysis /></el-icon><span>故障预测</span></router-link>
+        </nav>
+        <div class="sidebar-foot"><span class="signal-dot" />本地运行环境</div>
+      </aside>
       <main class="main-content"><router-view /></main>
     </div>
   </div>

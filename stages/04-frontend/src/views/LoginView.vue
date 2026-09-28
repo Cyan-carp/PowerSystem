@@ -2,6 +2,7 @@
 import { reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
+import { Lightning } from '@element-plus/icons-vue'
 import { api } from '../lib/api'
 import { saveSession } from '../lib/auth'
 import { errorMessage } from '../lib/format'
@@ -29,7 +30,7 @@ async function submit(): Promise<void> {
 <template>
   <div class="login-screen">
     <div class="login-identity">
-      <div class="login-logo">源</div>
+      <div class="login-logo"><el-icon><Lightning /></el-icon></div>
       <span class="eyebrow">POWER SYSTEM OPERATIONS</span>
       <h1>每一台设备的状态，<br />都值得被及时看见。</h1>
       <p>源网智联新能源设备智能运维平台</p>
