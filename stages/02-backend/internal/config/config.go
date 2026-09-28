@@ -5,27 +5,29 @@ import (
 	"net/url"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"time"
 
 	"github.com/spf13/viper"
 )
 
 type Config struct {
-	HTTPAddr      string
-	Broker        string
-	ClientID      string
-	QueuePath     string
-	PostgresDSN   string
-	RedisAddr     string
-	RedisPassword string
-	TDURL         string
-	TDUser        string
-	TDPassword    string
-	TDDatabase    string
-	JWTSecret     string
-	AIURL         string
-	AIEnabled     bool
-	AIPollSeconds int
+	HTTPAddr         string
+	Broker           string
+	ClientID         string
+	QueuePath        string
+	PostgresDSN      string
+	RedisAddr        string
+	RedisPassword    string
+	TDURL            string
+	TDUser           string
+	TDPassword       string
+	TDDatabase       string
+	JWTSecret        string
+	AIURL            string
+	AIEnabled        bool
+	AIPollSeconds    int
+	WSAllowedOrigins []string
 }
 
 var identifier = regexp.MustCompile(`^[a-z][a-z0-9_]{0,63}$`)
@@ -55,6 +57,17 @@ func Load(service string) (Config, error) {
 		TDURL: v.GetString("TDENGINE_URL"), TDUser: v.GetString("TDENGINE_USER"),
 		TDPassword: v.GetString("TDENGINE_ROOT_PASSWORD"), TDDatabase: v.GetString("TDENGINE_DATABASE"),
 		JWTSecret: v.GetString("JWT_SECRET"), AIURL: v.GetString("AI_URL"), AIEnabled: v.GetBool("AI_ENABLED"), AIPollSeconds: v.GetInt("AI_POLL_SECONDS"),
+	}
+	for _, raw := range strings.Split(v.GetString("WS_ALLOWED_ORIGINS"), ",") {
+		origin := strings.TrimSpace(raw)
+		if origin == "" {
+			continue
+		}
+		parsed, err := url.Parse(origin)
+		if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" || parsed.User != nil || parsed.Path != "" || parsed.RawQuery != "" || parsed.Fragment != "" {
+			return Config{}, errors.New("WS_ALLOWED_ORIGINS must contain exact http(s) origins")
+		}
+		cfg.WSAllowedOrigins = append(cfg.WSAllowedOrigins, origin)
 	}
 	u := &url.URL{Scheme: "postgres", User: url.UserPassword(v.GetString("POSTGRES_USER"), v.GetString("POSTGRES_PASSWORD")), Host: v.GetString("POSTGRES_HOST") + ":" + v.GetString("POSTGRES_PORT"), Path: "/" + v.GetString("POSTGRES_DB")}
 	q := u.Query()

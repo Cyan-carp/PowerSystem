@@ -60,6 +60,7 @@ func New(cfg config.Config, db *gorm.DB, redis *redis.Client, td *tdengine.Clien
 	a.GET("/devices/:id/telemetry", s.history)
 	a.GET("/devices/:id/telemetry/latest", s.latest)
 	a.GET("/devices/:id/prediction", s.getPrediction)
+	a.GET("/predictions", s.listPredictions)
 	a.GET("/alarm-rules", s.listRules)
 	a.POST("/alarm-rules", s.createRule)
 	a.GET("/alarm-rules/:id", s.getRule)

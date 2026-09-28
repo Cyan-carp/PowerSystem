@@ -3,7 +3,6 @@ package api
 import (
 	"encoding/json"
 	"net/http"
-	"net/url"
 	"strconv"
 	"time"
 
@@ -36,12 +35,9 @@ func (s *Server) websocket(c *gin.Context) {
 		return
 	}
 	origin := c.GetHeader("Origin")
-	if origin != "" {
-		parsed, parseErr := url.Parse(origin)
-		if parseErr != nil || parsed.Host != c.Request.Host {
-			fail(c, 403, 40301, "origin not allowed")
-			return
-		}
+	if !originAllowed(origin, c.Request.Host, s.cfg.WSAllowedOrigins) {
+		fail(c, 403, 40301, "origin not allowed")
+		return
 	}
 	upgrade := websocket.Upgrader{CheckOrigin: func(_ *http.Request) bool { return true }}
 	conn, err := upgrade.Upgrade(c.Writer, c.Request, nil)
@@ -58,6 +54,18 @@ func (s *Server) websocket(c *gin.Context) {
 			return
 		}
 	}
+}
+
+func originAllowed(origin, requestHost string, extra []string) bool {
+	if origin == "" {
+		return true
+	}
+	for _, allowed := range extra {
+		if origin == allowed {
+			return true
+		}
+	}
+	return origin == "http://"+requestHost || origin == "https://"+requestHost
 }
 func (s *Server) broadcast(event any) {
 	payload, err := json.Marshal(event)

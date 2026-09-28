@@ -43,6 +43,55 @@ type predictionResponse struct {
 	Source       string          `json:"source"`
 }
 
+type predictionListRow struct {
+	DeviceID     int64    `json:"device_id"`
+	DeviceCode   string   `json:"device_code"`
+	Name         string   `json:"name"`
+	StationCode  string   `json:"station_code"`
+	GroupName    string   `json:"group_name"`
+	WindowEndMS  *int64   `json:"window_end_ms"`
+	Probability  *float64 `json:"probability"`
+	Threshold    *float64 `json:"threshold"`
+	RiskLevel    *string  `json:"risk_level"`
+	ModelVersion *string  `json:"model_version"`
+	Source       *string  `json:"source"`
+	Stale        bool     `json:"stale"`
+}
+
+func (s *Server) listPredictions(c *gin.Context) {
+	p, size, valid := page(c)
+	if !valid {
+		return
+	}
+	var total int64
+	if err := s.db.Model(&model.Device{}).Where("deleted_at IS NULL").Count(&total).Error; err != nil {
+		fail(c, 503, 50000, "prediction query failed")
+		return
+	}
+	cutoff := time.Now().Add(-15 * time.Minute).UnixMilli()
+	var rows []predictionListRow
+	err := s.db.Raw(`SELECT d.id AS device_id, d.device_code, d.name, d.station_code, d.group_name,
+		p.window_end_ms, p.probability, p.threshold, p.risk_level, p.model_version, p.source
+		FROM devices AS d
+		LEFT JOIN LATERAL (
+			SELECT window_end_ms, probability, threshold, risk_level, model_version, source
+			FROM prediction_records WHERE device_id = d.id
+			ORDER BY window_end_ms DESC, id DESC LIMIT 1
+		) AS p ON true
+		WHERE d.deleted_at IS NULL
+		ORDER BY CASE WHEN p.window_end_ms IS NULL THEN 2 WHEN p.window_end_ms < ? THEN 1 ELSE 0 END,
+			p.probability DESC NULLS LAST, d.id ASC
+		LIMIT ? OFFSET ?`, cutoff, size, (p-1)*size).Scan(&rows).Error
+	if err != nil {
+		fail(c, 503, 50000, "prediction query failed")
+		return
+	}
+	for i := range rows {
+		rows[i].Stale = rows[i].WindowEndMS != nil && *rows[i].WindowEndMS < cutoff
+	}
+	ok(c, list(rows, p, size, total))
+}
+
 func (s *Server) getPrediction(c *gin.Context) {
 	deviceID, valid := id(c)
 	if !valid {
