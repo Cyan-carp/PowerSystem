@@ -1,0 +1,26 @@
+{
+  "name": "powersystem-frontend",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1 --port 5173 --strictPort",
+    "build": "vue-tsc --noEmit && vite build",
+    "typecheck": "vue-tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@element-plus/icons-vue": "2.3.2",
+    "echarts": "6.1.0",
+    "element-plus": "2.14.6",
+    "vue": "3.5.43",
+    "vue-router": "5.3.1"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "6.0.9",
+    "typescript": "5.9.3",
+    "vite": "8.3.1",
+    "vitest": "5.0.2",
+    "vue-tsc": "3.3.11"
+  }
+}

@@ -143,3 +143,13 @@ tags:
 ## 八、阶段三预测接口落地
 
 阶段三在原设计的 `GET /api/v1/devices/{id}/prediction` 实现 JWT 查询，成功时继续使用 `code/message/data`。返回最近 30 分钟窗口末尾时间、未来一小时故障概率、阈值、风险等级、特征依据、模型版本、来源及 `stale`。无结果为 404；旧结果超过 15 分钟仍可查，但标记过期。Go 后端每五分钟调用本机 FastAPI `POST /predict`，请求包含设备数据库 ID、窗口结束时间和近期电压、电流、温度、功率原始点。数据库按设备、窗口结束时间、模型版本去重；高风险走独立 `ai_failure_risk` 告警指标。详见 [[开发阶段3-AI预测模块/03-预测服务与告警]]。
+
+## 九、阶段四第 13、14 周前端增量契约
+
+| 方法 | 路径 | 约定 |
+| --- | --- | --- |
+| GET | `/api/v1/predictions?page=&page_size=` | JWT；每台未删除设备一行，返回设备 ID、编号、名称、场站、分组及最新预测概要 |
+
+列表延续 `code/message/data` 和 `{list,page,page_size,total}`。有结果行包含 `window_end_ms`、`probability`、`threshold`、`risk_level`、`model_version`、`source`、`stale`；无结果行的预测字段为 `null`，`stale=false`。有效结果按概率降序，过期结果和无结果设备随后。详情及 `top_factors` 仍由 `GET /api/v1/devices/{id}/prediction` 提供。过期界限是窗口结束时间距当前超过 15 分钟，前端须标示“合成数据训练模型”。
+
+本地 Vite 跨端口开发时，Go 后端可通过 `WS_ALLOWED_ORIGINS` 配置精确 WebSocket Origin 白名单；不配置时维持同源校验。前端先用 JWT 调用 `POST /api/v1/ws-ticket`，再用单次 ticket 连接 `/ws/realtime`。详见 [[开发阶段4-前端、上线与沉淀/02-第14周·实时告警与预测]]。
