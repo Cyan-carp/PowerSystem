@@ -59,6 +59,7 @@ func New(cfg config.Config, db *gorm.DB, redis *redis.Client, td *tdengine.Clien
 	a.DELETE("/devices/:id", s.deleteDevice)
 	a.GET("/devices/:id/telemetry", s.history)
 	a.GET("/devices/:id/telemetry/latest", s.latest)
+	a.GET("/devices/:id/prediction", s.getPrediction)
 	a.GET("/alarm-rules", s.listRules)
 	a.POST("/alarm-rules", s.createRule)
 	a.GET("/alarm-rules/:id", s.getRule)
@@ -79,6 +80,9 @@ func (s *Server) Run(ctx context.Context) error {
 	defer stop()
 	s.restoreLatest(ctx)
 	go s.worker(ctx)
+	if s.cfg.AIEnabled {
+		go s.predictionWorker(ctx)
+	}
 	if err := s.subscribe(ctx); err != nil {
 		return err
 	}

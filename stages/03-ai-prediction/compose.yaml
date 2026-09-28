@@ -1,0 +1,10 @@
+services:
+  ai-predict:
+    build: .
+    environment:
+      STAGE3_MODEL_DIR: /model
+    ports:
+      - "127.0.0.1:8090:8090"
+    volumes:
+      - ../../artifacts/stage3/model:/model:ro
+    restart: unless-stopped
