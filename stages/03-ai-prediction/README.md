@@ -39,7 +39,9 @@ $env:AI_POLL_SECONDS = '300'
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\stages\02-backend\scripts\start-stage2.ps1
 ```
 
-首次定时检查约在 API 启动 15 秒后，随后每 5 分钟检查。演示可设置 `AI_POLL_SECONDS=10`，正式运行保持 300。新路由 `GET /api/v1/devices/{id}/prediction` 使用阶段二 Bearer JWT，返回 `code/message/data`。预测结果含概率、阈值、风险等级、特征依据、模型版本、窗口结束时间、数据来源及 `stale`。无预测返回 404；超过 15 分钟的旧结果会标记过期。
+首次定时检查约在 API 启动 15 秒后，随后每 5 分钟检查。演示可设置 `AI_POLL_SECONDS=10`，正式运行保持 300。
+
+新路由 `GET /api/v1/devices/{id}/prediction` 使用阶段二 Bearer JWT，返回 `code/message/data`。预测结果含概率、阈值、风险等级、特征依据、模型版本、窗口结束时间、数据来源及 `stale`。无预测返回 404；超过 15 分钟的旧结果会标记过期。
 
 FastAPI 的 `POST /predict` 只监听本机 127.0.0.1:8090；部署时也可用本目录的 Dockerfile 与 compose.yaml。Go 仅在最新遥测及 30 分钟窗口足够新且完整时调用预测服务。服务不可用时保留上次结果并在查询中标记过期，不产生新高风险告警。
 
@@ -62,7 +64,14 @@ $run = Join-Path .\artifacts\stage3 ("integration-" + (Get-Date -Format 'yyyyMMd
 & $python .\stages\03-ai-prediction\scripts\verify-m3.py --output $run
 ```
 
-`environment.json` 是预检证据；完整运行还写 `summary.json`、`websocket.jsonl` 和 `replay.stderr.log`。预检失败退出码为 2，完整运行中断或断言失败退出码为 1，`--skip-restart` 仅供诊断且不能算 M3 通过。该脚本会调用阶段二已实测的 WebSocket 烟测客户端和本机 Docker CLI；阶段一脚本也支持发现用户目录中的 Docker Desktop CLI。
+`environment.json` 是预检证据；完整运行还写 `summary.json`、`websocket.jsonl` 和 `replay.stderr.log`。退出码含义：
+
+| 退出码 | 含义 |
+| --- | --- |
+| 2 | 预检失败 |
+| 1 | 完整运行中断或断言失败 |
+
+`--skip-restart` 仅供诊断且不能算 M3 通过。该脚本会调用阶段二已实测的 WebSocket 烟测客户端和本机 Docker CLI；阶段一脚本也支持发现用户目录中的 Docker Desktop CLI。
 
 若完整回放已经结束、仅重启步骤因脚本或环境问题中断，可补做一次新鲜窗口的独立重启去重检查，无需再等待 43 分钟。它新建设备并只发送 30 条前兆历史点，验证重启前后各有一条预测和 AI 告警；**此模式不发送真正故障，不能替代上面的完整回放**。测试设备可能留下一条未恢复的合成告警，应按设备编号识别：
 
@@ -94,4 +103,11 @@ go test ./...
 Pop-Location
 ```
 
-完整 M3 需在 Docker/EMQX/TDengine/PostgreSQL/Redis 可用时执行：验证预测在故障发生前产生、结果存库、JWT 查询、AI 告警确认与恢复、WebSocket 推送及服务重启去重。当前合成测试成绩不应表述为真实场站准确率。智能体只规划只读诊断工具，见 [[开发阶段3-AI预测模块/05-智能体接口设计]]。
+完整 M3 需在 Docker/EMQX/TDengine/PostgreSQL/Redis 可用时执行，验证以下链路：
+
+- 预测在故障发生前产生
+- 结果存库、JWT 查询
+- AI 告警确认与恢复、WebSocket 推送
+- 服务重启去重
+
+当前合成测试成绩不应表述为真实场站准确率。智能体只规划只读诊断工具，见 [[开发阶段3-AI预测模块/05-智能体接口设计]]。
