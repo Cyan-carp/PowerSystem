@@ -52,12 +52,20 @@ def check_environment() -> dict[str, object]:
                 ports[name] = True
         except OSError:
             ports[name] = False
-    docker = DOCKER if Path(DOCKER).is_file() else None
+    try:
+        docker = DOCKER if Path(DOCKER).is_file() else None
+    except OSError:
+        docker = None
+    try:
+        paho_available = importlib.util.find_spec("paho.mqtt.client") is not None
+    except ModuleNotFoundError:
+        paho_available = False
     report: dict[str, object] = {
         "checked_at": datetime.now(timezone.utc).isoformat(),
         "docker_cli": bool(docker),
         "model_present": (ROOT / "artifacts" / "stage3" / "model" / "model.json").is_file(),
         "env_present": (ROOT / ".env").is_file(),
+        "paho_mqtt_available": paho_available,
         "ports": ports,
         "ready": False,
     }
@@ -97,6 +105,7 @@ def check_environment() -> dict[str, object]:
                   and containers[name]["health"] in ("", "healthy")
                   for name in ("emqx", "tdengine", "postgres", "redis"))
     report["ready"] = bool(report["docker_engine"] and healthy and report["model_present"]
+                           and report["paho_mqtt_available"]
                            and report["env_present"] and all(ports.values())
                            and report["go_ping"] and report["ai_health"])
     return report
