@@ -14,7 +14,13 @@ New-Item -ItemType Directory -Path $logs -Force | Out-Null
 $pidFile = Join-Path $logs 'ai-process.json'
 if (Test-Path $pidFile) {
     $old = Get-Content -Raw $pidFile | ConvertFrom-Json
-    if (Get-Process -Id $old.pid -ErrorAction SilentlyContinue) { throw 'AI 服务已在运行' }
+    $oldProcess = Get-Process -Id $old.pid -ErrorAction SilentlyContinue
+    if ($oldProcess -and $old.started_at) {
+        $started = ([DateTime]$old.started_at).ToUniversalTime()
+        if ([math]::Abs(($oldProcess.StartTime.ToUniversalTime() - $started).TotalSeconds) -lt 60) {
+            throw 'AI 服务已在运行'
+        }
+    }
 }
 $process = Start-Process -FilePath $Python -ArgumentList @('-m','uvicorn','prediction.app:app','--host','127.0.0.1','--port','8090') -WorkingDirectory $stageRoot -PassThru -WindowStyle Hidden -RedirectStandardOutput (Join-Path $logs 'ai.log') -RedirectStandardError (Join-Path $logs 'ai.stderr.log')
 @{pid=$process.Id;started_at=[DateTime]::UtcNow.ToString('o')} | ConvertTo-Json | Set-Content -LiteralPath $pidFile -Encoding utf8
