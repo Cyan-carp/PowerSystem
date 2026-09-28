@@ -138,3 +138,8 @@ tags:
 | 实时 | `POST /api/v1/ws-ticket`；`GET /ws/realtime?ticket=...` | JWT 换一次性 60 秒票据；WebSocket 推送遥测及告警事件 |
 
 所有阶段二业务 REST 接口均需 Bearer JWT，成功与失败都返回 `code/message/data`；列表默认第 1 页、每页 20 条，上限 100。详情告警不内嵌曲线，可通过关联设备的遥测接口查询。上文列出的预测、导出和报表接口仍是后续阶段规划，M2 不以其上线为前提。运行和自测命令见 [[stages/02-backend/README.md]]。
+
+
+## 八、阶段三预测接口落地
+
+阶段三在原设计的 `GET /api/v1/devices/{id}/prediction` 实现 JWT 查询，成功时继续使用 `code/message/data`。返回最近 30 分钟窗口末尾时间、未来一小时故障概率、阈值、风险等级、特征依据、模型版本、来源及 `stale`。无结果为 404；旧结果超过 15 分钟仍可查，但标记过期。Go 后端每五分钟调用本机 FastAPI `POST /predict`，请求包含设备数据库 ID、窗口结束时间和近期电压、电流、温度、功率原始点。数据库按设备、窗口结束时间、模型版本去重；高风险走独立 `ai_failure_risk` 告警指标。详见 [[开发阶段3-AI预测模块/03-预测服务与告警]]。

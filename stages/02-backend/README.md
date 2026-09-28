@@ -41,7 +41,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\stages\02-backend\scri
 
 - 阶段二网关仅接受 PostgreSQL 中已登记、未删除且场站编号匹配的设备。合法消息先落本地 SQLite，再 ACK MQTT；按设备数据库 ID 创建 TDengine 子表并批量写入，写库失败时保留待写消息。
 - API 服务拥有独立的持久 MQTT 会话。消息先以 `(run_id, device_id, seq)` 写 PostgreSQL 收件表，再 ACK；后台工作者确认 TDengine 已入库后才处理告警。服务或数据库短暂不可用时，待处理消息可恢复；API 重启时会恢复 Redis 最新值缓存。
-- 每设备每指标最多一条未恢复告警。确认只记录人和时间；持续越限不重复，数值恢复后关闭本次事件，再越限才生成新事件。WebSocket 掉线后需重新换票据，并通过 REST 补查告警。
+- 每设备每指标最多一条未恢复告警。语义：确认只记录人和时间；持续越限不重复；数值恢复后关闭本次事件；再越限才生成新事件。WebSocket 掉线后需重新换票据，并通过 REST 补查告警。
 - 数据库设计与迁移脚本以 `deploy/postgres/001_init.sql`、`deploy/tdengine/init.sql` 为准。运行生成物和审查包始终留在被忽略的 `artifacts/` 下，不上传公开仓库。
 
 ## 四、验证与 M2
@@ -61,7 +61,14 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\stages\02-backend\scri
 
 默认每台 1440 条、间隔 5 秒，真实运行约两小时；脚本自动重启 Broker、阶段二网关和 API。输出 `artifacts/stage2/<运行编号>/`，其中 `reconciliation.json`、`summary.md`、`cases.csv` 和 `review-bundle.zip` 用于 M2 审查。短测可用 `-SamplesPerDevice 12 -IntervalSeconds 1 -NoFaults`，但不能代替两小时 M2。故障和恢复时间记录在 `events.jsonl`；对账要求三台设备序号无缺失或重复、模拟器/网关队列及后端收件待处理均清零。
 
-M2 已通过：完整运行 `stage2_20260927_230451_2b69` 实测 7220.4 秒，三台各 1440 条、共 4320/4320，30/30 用例通过；最终代码短回归 `stage2_20260928_010824_32e1` 为 270/270、38/38 用例通过，并验证三类服务故障恢复。详细证据和阶段一回归见 [[开发阶段2-后端主体/04-M2测试与交付]]。
+M2 已通过：
+
+| 运行 | 结果 |
+| --- | --- |
+| 完整运行 `stage2_20260927_230451_2b69` | 实测 7220.4 秒，三台各 1440 条、共 4320/4320，30/30 用例通过 |
+| 最终代码短回归 `stage2_20260928_010824_32e1` | 270/270、38/38 用例通过，并验证三类服务故障恢复 |
+
+详细证据和阶段一回归见 [[开发阶段2-后端主体/04-M2测试与交付]]。
 
 现有 TDengine 容器的 vnode 已满，直接运行阶段一脚本新建验收库会失败。可在不动现有数据卷的前提下执行隔离短回归：
 
