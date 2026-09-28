@@ -30,8 +30,10 @@ func main() {
 	if err != nil {
 		logger.Fatal("postgres", zap.Error(err))
 	}
-	if err = store.Migrate(pg, "deploy/postgres/001_init.sql"); err != nil {
-		logger.Fatal("migration", zap.Error(err))
+	for _, path := range []string{"deploy/postgres/001_init.sql", "deploy/postgres/002_predictions.sql"} {
+		if err = store.Migrate(pg, path); err != nil {
+			logger.Fatal("migration", zap.Error(err))
+		}
 	}
 	if err = store.SeedDemoDevices(pg); err != nil {
 		logger.Fatal("seed_devices", zap.Error(err))

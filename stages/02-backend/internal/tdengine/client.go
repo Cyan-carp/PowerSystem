@@ -124,3 +124,18 @@ func (c *Client) History(ctx context.Context, deviceID int64, metric string, sta
 	}
 	return result.Data, nil
 }
+
+// Window returns the raw multivariate window used by the prediction service.
+func (c *Client) Window(ctx context.Context, deviceID, start, end int64) ([][]any, error) {
+	if deviceID < 1 || start <= 0 || end < start || end-start > 31*60*1000 {
+		return nil, errors.New("invalid prediction window")
+	}
+	result, err := c.SQL(ctx, fmt.Sprintf("SELECT ts,voltage,current,temperature,power FROM %s WHERE ts >= %d AND ts <= %d ORDER BY ts ASC LIMIT 501", c.Table(deviceID), start, end))
+	if err != nil {
+		return nil, err
+	}
+	if len(result.Data) > 500 {
+		return nil, errors.New("prediction window exceeds 500 samples")
+	}
+	return result.Data, nil
+}
