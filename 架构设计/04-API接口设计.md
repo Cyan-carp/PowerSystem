@@ -26,6 +26,8 @@ tags:
 
 ## 二、全生命周期规划接口清单（阶段二实现子集见第七节）
 
+> 本节是设计清单，不等于当前代码的已实现接口。`/telemetry/export`、`/reports/availability` 仍为 FR-11、FR-12 的规划项；实际路由以 `stages/02-backend/internal/api/server.go` 为准。二次开发时先核对当前接口契约，再补迁移和测试。
+
 ### 1. 认证模块（FR-08）
 
 | 方法 | 路径 | 说明 | 鉴权 |
@@ -153,3 +155,7 @@ tags:
 列表延续 `code/message/data` 和 `{list,page,page_size,total}`。有结果行包含 `window_end_ms`、`probability`、`threshold`、`risk_level`、`model_version`、`source`、`stale`；无结果行的预测字段为 `null`，`stale=false`。有效结果按概率降序，过期结果和无结果设备随后。详情及 `top_factors` 仍由 `GET /api/v1/devices/{id}/prediction` 提供。过期界限是窗口结束时间距当前超过 15 分钟，前端须标示“合成数据训练模型”。
 
 本地 Vite 跨端口开发时，Go 后端可通过 `WS_ALLOWED_ORIGINS` 配置精确 WebSocket Origin 白名单；不配置时维持同源校验。前端先用 JWT 调用 `POST /api/v1/ws-ticket`，再用单次 ticket 连接 `/ws/realtime`。详见 [[开发阶段4-前端、上线与沉淀/02-第14周·实时告警与预测]]。
+
+## 相关笔记
+
+- 本模块索引：[[00-索引·架构设计]]

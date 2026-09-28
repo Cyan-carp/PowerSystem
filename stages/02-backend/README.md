@@ -68,7 +68,7 @@ M2 已通过：
 | 完整运行 `stage2_20260927_230451_2b69` | 实测 7220.4 秒，三台各 1440 条、共 4320/4320，30/30 用例通过 |
 | 最终代码短回归 `stage2_20260928_010824_32e1` | 270/270、38/38 用例通过，并验证三类服务故障恢复 |
 
-详细证据和阶段一回归见 [[开发阶段2-后端主体/04-M2测试与交付]]。
+详细证据和阶段一回归见 [04-M2测试与交付](../../开发阶段2-后端主体/04-M2测试与交付.md)。
 
 现有 TDengine 容器的 vnode 已满，直接运行阶段一脚本新建验收库会失败。可在不动现有数据卷的前提下执行隔离短回归：
 
@@ -76,10 +76,10 @@ M2 已通过：
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\stages\02-backend\scripts\regress-stage1-isolated.ps1 -SamplesPerDevice 60 -IntervalSeconds 1
 ```
 
-该脚本使用临时 TDengine 容器与原阶段一模拟器、网关，核对三台设备序号和队列，并注入 Broker 停止与网关重启；结果写入 `artifacts/stage1/<运行编号>/isolated-reconciliation.json`。已通过运行编号为 `stage1_iso_20260928_015551_7664`。阶段二本机测试仍只覆盖三台演示设备的两小时稳定性；NFR-01 的 200 台容量需要另行压测。阶段二笔记索引：[[开发阶段2-后端主体/00-索引·开发阶段2-后端主体]]。
+该脚本使用临时 TDengine 容器与原阶段一模拟器、网关，核对三台设备序号和队列，并注入 Broker 停止与网关重启；结果写入 `artifacts/stage1/<运行编号>/isolated-reconciliation.json`。已通过运行编号为 `stage1_iso_20260928_015551_7664`。阶段二本机测试仍只覆盖三台演示设备的两小时稳定性；NFR-01 的 200 台容量需要另行压测。阶段二笔记索引：[00-索引·开发阶段2-后端主体](../../开发阶段2-后端主体/00-索引·开发阶段2-后端主体.md)。
 
 ## 五、阶段四前端所需增量
 
 - `GET /api/v1/predictions?page=&page_size=` 需要 Bearer JWT，返回每台未删除设备的最新预测概要与 `stale`；无结果设备的预测字段为 `null`。有效结果按概率降序，过期和无结果置后。预测依据继续由设备详情预测接口提供。
 - 本地 Vite 前端从 `http://127.0.0.1:5173` 跨端口代理 WebSocket 时，可在启动 API 前设置 `WS_ALLOWED_ORIGINS=http://127.0.0.1:5173`。该值只接受精确 http(s) Origin；空值维持同源校验。Vite 代理不改写浏览器 Origin。
-- 这两项服务于阶段四第 13、14 周前端，不改变 M2 的既有验收结论。前端运行见 [[stages/04-frontend/README.md]]。
+- 这两项服务于阶段四第 13、14 周前端，不改变 M2 的既有验收结论。前端运行见 [README.md](../04-frontend/README.md)。
