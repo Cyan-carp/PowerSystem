@@ -52,6 +52,24 @@ python -m prediction.replay --lead-minutes 3 --full-cycle
 
 它补入截至当前分钟的 30 个历史点，随后按分钟发送故障及恢复后的正常点，整轮约 43 分钟。演示时将轮询间隔设为 10 秒，检查**故障点发送前**是否已有高风险预测与告警，以及后续是否恢复。阶段二遥测有 ±48 小时时间戳约束，因此多天离线数据不能整批回放进运行库。
 
+需要形成可复核的 M3 证据时，使用 `verify-m3.py`。它先检查 Docker Engine、六个端口和模型，再新建独立的 `INV-M3-*` 测试设备、自动回放、用 JWT 查询预测与告警、核对 PostgreSQL 唯一记录和 WebSocket 事件，最后重启阶段二服务验证去重。运行中不要再手动执行上面的 `prediction.replay`，也不要向同一设备并行发送模拟遥测。完整运行约 43 分钟，报告写入被 Git 忽略的目录：
+
+```powershell
+$python = 'C:\path\to\python3.12.exe' # 换成本机可用的 Python 3.12 路径
+$env:PYTHONPATH = "$(Resolve-Path .\artifacts\stage3\pydeps);$(Resolve-Path .\stages\03-ai-prediction)"
+$run = Join-Path .\artifacts\stage3 ("integration-" + (Get-Date -Format 'yyyyMMdd-HHmmss'))
+& $python .\stages\03-ai-prediction\scripts\verify-m3.py --output $run --preflight-only
+& $python .\stages\03-ai-prediction\scripts\verify-m3.py --output $run
+```
+
+`environment.json` 是预检证据；完整运行还写 `summary.json`、`websocket.jsonl` 和 `replay.stderr.log`。预检失败退出码为 2，完整运行中断或断言失败退出码为 1，`--skip-restart` 仅供诊断且不能算 M3 通过。该脚本会调用阶段二已实测的 WebSocket 烟测客户端和本机 Docker CLI；阶段一脚本也支持发现用户目录中的 Docker Desktop CLI。
+
+若完整回放已经结束、仅重启步骤因脚本或环境问题中断，可补做一次新鲜窗口的独立重启去重检查，无需再等待 43 分钟。它新建设备并只发送 30 条前兆历史点，验证重启前后各有一条预测和 AI 告警；**此模式不发送真正故障，不能替代上面的完整回放**。测试设备可能留下一条未恢复的合成告警，应按设备编号识别：
+
+```powershell
+& $python .\stages\03-ai-prediction\scripts\verify-m3.py --output .\artifacts\stage3\integration-restart --restart-check
+```
+
 停止 AI 服务：`powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\stages\03-ai-prediction\scripts\stop-ai.ps1`。阶段二服务使用自己的 `stop-stage2.ps1`。
 
 ## 三、评估与公开数据
@@ -69,6 +87,7 @@ python -m prediction.inspect_external 'C:\path\to\downloaded-dataset' --out .\ar
 ## 四、检查与工程边界
 
 ```powershell
+$env:PYTHONPATH = "$(Resolve-Path .\artifacts\stage3\pydeps);$(Resolve-Path .\stages\03-ai-prediction)"
 python -m unittest discover -s .\stages\03-ai-prediction\tests -v
 Push-Location .\stages\02-backend
 go test ./...
