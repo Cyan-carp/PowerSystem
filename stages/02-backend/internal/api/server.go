@@ -26,6 +26,7 @@ import (
 	"gorm.io/gorm"
 
 	"powersystem/backend/internal/config"
+	"powersystem/backend/internal/energy"
 	"powersystem/backend/internal/model"
 	"powersystem/backend/internal/service"
 	"powersystem/backend/internal/tdengine"
@@ -55,19 +56,19 @@ func New(cfg config.Config, db *gorm.DB, redis *redis.Client, td *tdengine.Clien
 	r.POST("/api/v1/auth/login", s.login)
 	a := r.Group("/api/v1", s.authorize)
 	a.GET("/devices", s.listDevices)
-	a.POST("/devices", s.createDevice)
+	a.POST("/devices", requireAdmin, s.createDevice)
 	a.GET("/devices/:id", s.getDevice)
-	a.PUT("/devices/:id", s.updateDevice)
-	a.DELETE("/devices/:id", s.deleteDevice)
+	a.PUT("/devices/:id", requireAdmin, s.updateDevice)
+	a.DELETE("/devices/:id", requireAdmin, s.deleteDevice)
 	a.GET("/devices/:id/telemetry", s.history)
 	a.GET("/devices/:id/telemetry/latest", s.latest)
 	a.GET("/devices/:id/prediction", s.getPrediction)
 	a.GET("/predictions", s.listPredictions)
 	a.GET("/alarm-rules", s.listRules)
-	a.POST("/alarm-rules", s.createRule)
+	a.POST("/alarm-rules", requireAdmin, s.createRule)
 	a.GET("/alarm-rules/:id", s.getRule)
-	a.PUT("/alarm-rules/:id", s.updateRule)
-	a.DELETE("/alarm-rules/:id", s.deleteRule)
+	a.PUT("/alarm-rules/:id", requireAdmin, s.updateRule)
+	a.DELETE("/alarm-rules/:id", requireAdmin, s.deleteRule)
 	a.GET("/alarms", s.listAlarms)
 	a.GET("/alarms/:id", s.getAlarm)
 	a.POST("/alarms/:id/ack", s.ackAlarm)
@@ -83,6 +84,7 @@ func (s *Server) Run(ctx context.Context) error {
 	defer stop()
 	s.restoreLatest(ctx)
 	go s.worker(ctx)
+	go s.energyWorker(ctx)
 	if s.cfg.AIEnabled {
 		go s.predictionWorker(ctx)
 	}
@@ -297,11 +299,38 @@ func (s *Server) authorize(c *gin.Context) {
 		return
 	}
 	userID, err := strconv.ParseInt(fmt.Sprint(claims["sub"]), 10, 64)
-	if err != nil {
+	if err != nil || userID < 1 {
 		fail(c, 401, 40101, "invalid token subject")
 		return
 	}
+	var user model.User
+	if err := s.db.Select("id", "role").First(&user, userID).Error; err != nil || (user.Role != "admin" && user.Role != "operator") {
+		fail(c, 401, 40101, "user unavailable")
+		return
+	}
 	c.Set("user_id", userID)
+	c.Set("user_role", user.Role)
+	c.Next()
+}
+func (s *Server) energyWorker(ctx context.Context) {
+	ticker := time.NewTicker(10 * time.Second)
+	defer ticker.Stop()
+	for {
+		if _, err := energy.RebuildPending(ctx, s.db, 12); err != nil && ctx.Err() == nil {
+			s.log.Warn("energy_rebuild_failed", zap.Error(err))
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+	}
+}
+func requireAdmin(c *gin.Context) {
+	if role, ok := c.Get("user_role"); !ok || role != "admin" {
+		fail(c, 403, 40301, "admin role required")
+		return
+	}
 	c.Next()
 }
 func (s *Server) sign(user model.User) (string, error) {

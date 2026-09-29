@@ -103,8 +103,10 @@ onUnmounted(() => { unsubscribe?.(); if (periodic) clearInterval(periodic); if (
       <div class="kpi-card primary"><span>登记设备</span><strong>{{ summary?.device_total ?? '—' }}</strong><small>台设备</small></div>
       <div class="kpi-card"><span>在线设备</span><strong>{{ summary?.online ?? '—' }}</strong><small>{{ summary?.offline ?? '—' }} 台离线</small></div>
       <div class="kpi-card"><span>当前功率</span><strong>{{ summary?.current_power_kw?.toFixed(1) ?? '—' }}</strong><small>kW · 非累计发电量</small></div>
+      <div class="kpi-card"><span>当日发电量</span><strong>{{ summary?.today_energy_kwh?.toFixed(1) ?? '—' }}</strong><small>kWh · 留存累计 {{ summary?.retained_energy_kwh?.toFixed(1) ?? '—' }} kWh</small></div>
       <div class="kpi-card warning"><span>活动告警</span><strong>{{ summary?.active_alarms ?? '—' }}</strong><small>{{ summary?.fault ?? '—' }} 台故障设备</small></div>
       <div class="kpi-card"><span>运行正常占比</span><strong>{{ summary?.operational_health_percent?.toFixed(0) ?? '—' }}<em>%</em></strong><small>依据当前在线状态</small></div>
+      <div class="kpi-card"><span>设备健康度</span><strong>{{ summary?.health_score_percent?.toFixed(0) ?? '—' }}<em v-if="summary?.health_score_percent != null">分</em></strong><small>依据在线、故障与活动告警</small></div>
     </section>
     <div class="dashboard-grid">
       <section class="surface realtime-panel"><div class="surface-head"><div><span class="section-kicker">LIVE TELEMETRY</span><h2>实时功率趋势</h2></div><el-select v-if="devices.length" v-model="selectedId" style="width: 210px" aria-label="选择设备" @change="choose"><el-option v-for="device in devices" :key="device.id" :label="device.name" :value="device.id" /></el-select></div><div class="chart-context"><span>{{ selectedDevice?.device_code || '暂无设备' }}</span><span>近 5 分钟 · kW</span></div><TelemetryChart v-if="points.length" :points="points" metric="power" height="330px" /><div v-else class="empty-box tall">暂无实时曲线数据；等待设备上报。</div></section>

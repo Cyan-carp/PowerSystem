@@ -23,7 +23,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\stages\02-backend\scri
 
 ## 二、接口
 
-公共接口：`GET /api/v1/ping`、`POST /api/v1/auth/register`、`POST /api/v1/auth/login`。注册账号为 `operator`，密码至少 8 位；登录返回 8 小时 JWT。所有业务 REST 接口使用 `Authorization: Bearer <token>`。
+公共接口：`GET /api/v1/ping`、`POST /api/v1/auth/register`、`POST /api/v1/auth/login`。注册账号为 `operator`，密码至少 8 位；登录返回 8 小时 JWT。所有业务 REST 接口使用 `Authorization: Bearer <token>`。阶段四 P0 起设备与告警规则写接口要求数据库当前角色为 `admin`，无令牌返回 401、越权返回 403；告警确认仍允许 `operator`。仅在服务器内使用 `stages/04-frontend/deploy/bootstrap-admin.sh` 创建独立管理员。
 
 | 模块 | 路径 | 行为 |
 | --- | --- | --- |
@@ -42,7 +42,15 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\stages\02-backend\scri
 - 阶段二网关仅接受 PostgreSQL 中已登记、未删除且场站编号匹配的设备。合法消息先落本地 SQLite，再 ACK MQTT；按设备数据库 ID 创建 TDengine 子表并批量写入，写库失败时保留待写消息。
 - API 服务拥有独立的持久 MQTT 会话。消息先以 `(run_id, device_id, seq)` 写 PostgreSQL 收件表，再 ACK；后台工作者确认 TDengine 已入库后才处理告警。服务或数据库短暂不可用时，待处理消息可恢复；API 重启时会恢复 Redis 最新值缓存。
 - 每设备每指标最多一条未恢复告警。语义：确认只记录人和时间；持续越限不重复；数值恢复后关闭本次事件；再越限才生成新事件。WebSocket 掉线后需重新换票据，并通过 REST 补查告警。
-- 数据库设计与迁移脚本以 `deploy/postgres/001_init.sql`、`deploy/tdengine/init.sql` 为准。运行生成物和审查包始终留在被忽略的 `artifacts/` 下，不上传公开仓库。
+- 数据库初始化与增量脚本依次为 `deploy/postgres/001_init.sql`、`002_predictions.sql`、`003_energy.sql`，时序库为 `deploy/tdengine/init.sql`。`003_energy.sql` 为已处理遥测补建待重算日期，API 后台将结果写入 `energy_daily`；部署库的 6 个跨日设备汇总已与原始去重样本独立复算一致。`deploy/postgres/backfill_energy.sql` 可反复标记所有已处理日期，由 API 后台重算；本轮远端连续执行两次均成功。运行生成物和审查包始终留在被忽略的 `artifacts/` 下，不上传公开仓库。
+
+在 R730xd `/opt/powersystem` 中需要主动重算留存历史时执行：
+
+```bash
+docker compose --env-file .env -f stages/04-frontend/deploy/compose.yaml exec -T postgres \
+  psql -v ON_ERROR_STOP=1 -U powersystem -d powersystem -f /dev/stdin \
+  < stages/02-backend/deploy/postgres/backfill_energy.sql
+```
 
 ## 四、验证与 M2
 

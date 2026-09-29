@@ -7,6 +7,7 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
+	"powersystem/backend/internal/energy"
 	"powersystem/backend/internal/model"
 	"powersystem/backend/internal/telemetry"
 )
@@ -55,7 +56,10 @@ func ProcessSample(db *gorm.DB, item model.Inbox, sample telemetry.Sample) (mode
 				events = append(events, AlarmEvent{Type: "alarm_recovered", Data: record})
 			}
 		}
-		return tx.Model(&model.Inbox{}).Where("id=? AND processed_at IS NULL", item.ID).Update("processed_at", now).Error
+		if err := tx.Model(&model.Inbox{}).Where("id=? AND processed_at IS NULL", item.ID).Update("processed_at", now).Error; err != nil {
+			return err
+		}
+		return energy.MarkDirty(tx, item.DeviceID, sample.TS)
 	})
 	return device, events, err
 }

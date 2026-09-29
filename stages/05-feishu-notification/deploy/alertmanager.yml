@@ -1,0 +1,11 @@
+route:
+  receiver: feishu
+  group_by: [alertname]
+  group_wait: 5s
+  group_interval: 1m
+  repeat_interval: 4h
+receivers:
+  - name: feishu
+    webhook_configs:
+      - url: http://feishu-adapter:8091/alertmanager
+        send_resolved: true

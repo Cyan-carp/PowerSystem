@@ -197,6 +197,28 @@ services:
       - cadvisor
     restart: unless-stopped
 
+  alertmanager:
+    image: prom/alertmanager:v0.28.1
+    command: ["--config.file=/etc/alertmanager/alertmanager.yml"]
+    volumes:
+      - ../../05-feishu-notification/deploy/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+    depends_on:
+      - feishu-adapter
+    restart: unless-stopped
+
+  feishu-adapter:
+    build:
+      context: ../../05-feishu-notification/feishu-adapter
+    secrets:
+      - feishu_webhook
+      - feishu_sign
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8091/health',timeout=3)"]
+      interval: 20s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+
   grafana:
     image: grafana/grafana:12.1.1
     environment:
@@ -236,3 +258,9 @@ volumes:
   simulator-state:
   prometheus-data:
   grafana-data:
+
+secrets:
+  feishu_webhook:
+    file: /etc/powersystem/feishu-webhook-url
+  feishu_sign:
+    file: /etc/powersystem/feishu-sign-secret

@@ -136,7 +136,7 @@ tags:
 | 遥测 | `GET /api/v1/devices/{id}/telemetry`、`.../latest` | 指标白名单；历史时间为 RFC3339、≤24 小时、≤5000 点；最新值读 Redis |
 | 规则 | `/api/v1/alarm-rules`、`/api/v1/alarm-rules/{id}` 的 GET/POST/PUT/DELETE | 每设备每指标一条规则；阈值、比较符和级别受校验 |
 | 告警 | `GET /api/v1/alarms`、`/alarms/{id}`；`POST /alarms/{id}/ack` | 列表按状态/级别筛选；确认后持续越限不重报，恢复后可再报 |
-| 总览 | `GET /api/v1/dashboard/summary` | 返回在线/离线/故障数、当前功率、活动告警与基础运行健康比例 |
+| 总览 | `GET /api/v1/dashboard/summary` | 保留在线/离线/故障数、当前功率、活动告警与运行正常占比；阶段四 P0 增加 `today_energy_kwh`、`retained_energy_kwh`、`energy_start_ms`、`energy_updated_at` 和 `health_score_percent`，空数据为 `null`；远端对账与公网接口已核对 |
 | 实时 | `POST /api/v1/ws-ticket`；`GET /ws/realtime?ticket=...` | JWT 换一次性 60 秒票据；WebSocket 推送遥测及告警事件 |
 
 所有阶段二业务 REST 接口均需 Bearer JWT，成功与失败都返回 `code/message/data`；列表默认第 1 页、每页 20 条，上限 100。详情告警不内嵌曲线，可通过关联设备的遥测接口查询。上文列出的预测、导出和报表接口仍是后续阶段规划，M2 不以其上线为前提。运行和自测命令见 [[stages/02-backend/README.md]]。

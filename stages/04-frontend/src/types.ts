@@ -16,6 +16,9 @@ export interface History { device_id: number; metric: Metric; points: [number | 
 export interface Summary {
   device_total: number; online: number; offline: number; fault: number
   current_power_kw: number; active_alarms: number; operational_health_percent: number
+  today_energy_kwh: number | null; retained_energy_kwh: number | null
+  energy_start_ms: number | null; energy_updated_at: string | null
+  health_score_percent: number | null
 }
 export type AlarmLevel = 'urgent' | 'major' | 'minor'
 export type AlarmStatus = 'unhandled' | 'acked' | 'recovered'

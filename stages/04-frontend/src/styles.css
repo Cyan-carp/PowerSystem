@@ -183,7 +183,7 @@ h1, h2, h3, p { margin-top: 0; }
 .surface .content-alert { margin: 14px 16px; }
 
 /* KPI 卡片 */
-.kpi-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px; margin-bottom: 16px; }
+.kpi-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 16px; }
 .kpi-card {
   background: var(--card); border: 1px solid var(--line);
   padding: 15px 16px 13px; min-height: 104px;
