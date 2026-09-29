@@ -3,6 +3,7 @@ package config
 import (
 	"errors"
 	"net/url"
+	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -12,22 +13,25 @@ import (
 )
 
 type Config struct {
-	HTTPAddr         string
-	Broker           string
-	ClientID         string
-	QueuePath        string
-	PostgresDSN      string
-	RedisAddr        string
-	RedisPassword    string
-	TDURL            string
-	TDUser           string
-	TDPassword       string
-	TDDatabase       string
-	JWTSecret        string
-	AIURL            string
-	AIEnabled        bool
-	AIPollSeconds    int
-	WSAllowedOrigins []string
+	HTTPAddr              string
+	Broker                string
+	ClientID              string
+	QueuePath             string
+	PostgresDSN           string
+	RedisAddr             string
+	RedisPassword         string
+	TDURL                 string
+	TDUser                string
+	TDPassword            string
+	TDDatabase            string
+	JWTSecret             string
+	AIURL                 string
+	AIEnabled             bool
+	AIPollSeconds         int
+	WSAllowedOrigins      []string
+	BusinessNotifyEnabled bool
+	BusinessNotifyURL     string
+	BusinessNotifyToken   string
 }
 
 var identifier = regexp.MustCompile(`^[a-z][a-z0-9_]{0,63}$`)
@@ -57,6 +61,21 @@ func Load(service string) (Config, error) {
 		TDURL: v.GetString("TDENGINE_URL"), TDUser: v.GetString("TDENGINE_USER"),
 		TDPassword: v.GetString("TDENGINE_ROOT_PASSWORD"), TDDatabase: v.GetString("TDENGINE_DATABASE"),
 		JWTSecret: v.GetString("JWT_SECRET"), AIURL: v.GetString("AI_URL"), AIEnabled: v.GetBool("AI_ENABLED"), AIPollSeconds: v.GetInt("AI_POLL_SECONDS"),
+		BusinessNotifyEnabled: v.GetBool("FEISHU_BUSINESS_ENABLED"), BusinessNotifyURL: v.GetString("FEISHU_BUSINESS_URL"),
+	}
+	if cfg.BusinessNotifyEnabled && service == "api" {
+		parsed, err := url.Parse(cfg.BusinessNotifyURL)
+		if err != nil || parsed.Scheme != "http" || parsed.Host == "" || parsed.Path != "/business" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
+			return Config{}, errors.New("FEISHU_BUSINESS_URL must be an internal HTTP /business endpoint")
+		}
+		content, err := os.ReadFile(v.GetString("FEISHU_BUSINESS_TOKEN_FILE"))
+		if err != nil {
+			return Config{}, errors.New("FEISHU_BUSINESS_TOKEN_FILE is required and unreadable")
+		}
+		cfg.BusinessNotifyToken = strings.TrimSpace(string(content))
+		if len(cfg.BusinessNotifyToken) < 32 {
+			return Config{}, errors.New("FEISHU_BUSINESS_TOKEN_FILE must contain a 32+ character token")
+		}
 	}
 	for _, raw := range strings.Split(v.GetString("WS_ALLOWED_ORIGINS"), ",") {
 		origin := strings.TrimSpace(raw)

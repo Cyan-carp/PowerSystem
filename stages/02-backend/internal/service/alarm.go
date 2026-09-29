@@ -45,6 +45,9 @@ func ProcessSample(db *gorm.DB, item model.Inbox, sample telemetry.Sample) (mode
 				if err := tx.Create(&record).Error; err != nil {
 					return err
 				}
+				if err := QueueAlarmNotification(tx, device, record, "triggered"); err != nil {
+					return err
+				}
 				events = append(events, AlarmEvent{Type: "alarm_created", Data: record})
 			}
 			if !active && lookup == nil {
@@ -53,6 +56,9 @@ func ProcessSample(db *gorm.DB, item model.Inbox, sample telemetry.Sample) (mode
 				}
 				record.RecoveredAt = &now
 				record.Status = "recovered"
+				if err := QueueAlarmNotification(tx, device, record, "recovered"); err != nil {
+					return err
+				}
 				events = append(events, AlarmEvent{Type: "alarm_recovered", Data: record})
 			}
 		}

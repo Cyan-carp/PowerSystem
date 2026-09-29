@@ -110,6 +110,11 @@ services:
       AI_ENABLED: "true"
       AI_URL: http://ai-predict:8090
       AI_POLL_SECONDS: "300"
+      FEISHU_BUSINESS_ENABLED: "true"
+      FEISHU_BUSINESS_URL: http://feishu-adapter:8091/business
+      FEISHU_BUSINESS_TOKEN_FILE: /run/secrets/feishu_business_token
+    secrets:
+      - feishu_business_token
     volumes:
       - api-state:/data
     depends_on:
@@ -170,18 +175,6 @@ services:
       - /:/host/root:ro,rslave
     restart: unless-stopped
 
-  cadvisor:
-    image: ghcr.io/google/cadvisor:0.55.1
-    privileged: true
-    devices:
-      - /dev/kmsg:/dev/kmsg
-    volumes:
-      - /:/rootfs:ro
-      - /var/run:/var/run:ro
-      - /sys:/sys:ro
-      - /var/lib/docker:/var/lib/docker:ro
-    restart: unless-stopped
-
   prometheus:
     image: prom/prometheus:v3.6.0
     command: ["--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.path=/prometheus", "--storage.tsdb.retention.time=15d"]
@@ -194,7 +187,6 @@ services:
     depends_on:
       - api
       - node-exporter
-      - cadvisor
     restart: unless-stopped
 
   alertmanager:
@@ -212,6 +204,7 @@ services:
     secrets:
       - feishu_webhook
       - feishu_sign
+      - feishu_business_token
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8091/health',timeout=3)"]
       interval: 20s
@@ -264,3 +257,5 @@ secrets:
     file: /etc/powersystem/feishu-webhook-url
   feishu_sign:
     file: /etc/powersystem/feishu-sign-secret
+  feishu_business_token:
+    file: /etc/powersystem/business-notify-token

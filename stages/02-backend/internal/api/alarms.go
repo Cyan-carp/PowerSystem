@@ -1,6 +1,7 @@
 package api
 
 import (
+	"errors"
 	"math"
 	"net/http"
 	"time"
@@ -9,6 +10,7 @@ import (
 	"gorm.io/gorm"
 
 	"powersystem/backend/internal/model"
+	"powersystem/backend/internal/service"
 	"powersystem/backend/internal/telemetry"
 )
 
@@ -105,7 +107,7 @@ func (s *Server) updateRule(c *gin.Context) {
 		}
 		if !rule.Enabled {
 			now := time.Now().UTC()
-			return tx.Model(&model.AlarmRecord{}).Where("device_id=? AND metric=? AND recovered_at IS NULL", rule.DeviceID, rule.Metric).Updates(map[string]any{"status": "recovered", "recovered_at": now, "updated_at": now}).Error
+			return s.closeRuleAlarms(tx, rule.DeviceID, rule.Metric, now)
 		}
 		return nil
 	}); err != nil {
@@ -129,12 +131,35 @@ func (s *Server) deleteRule(c *gin.Context) {
 			return err
 		}
 		now := time.Now().UTC()
-		return tx.Model(&model.AlarmRecord{}).Where("device_id=? AND metric=? AND recovered_at IS NULL", rule.DeviceID, rule.Metric).Updates(map[string]any{"status": "recovered", "recovered_at": now, "updated_at": now}).Error
+		return s.closeRuleAlarms(tx, rule.DeviceID, rule.Metric, now)
 	}); err != nil {
 		fail(c, 500, 50000, "rule delete failed")
 		return
 	}
 	ok(c, gin.H{"id": ruleID, "deleted": true})
+}
+func (s *Server) closeRuleAlarms(tx *gorm.DB, deviceID int64, metric string, now time.Time) error {
+	var records []model.AlarmRecord
+	if err := tx.Where("device_id=? AND metric=? AND recovered_at IS NULL", deviceID, metric).Find(&records).Error; err != nil {
+		return err
+	}
+	if len(records) == 0 {
+		return nil
+	}
+	var device model.Device
+	if err := tx.First(&device, deviceID).Error; err != nil {
+		return err
+	}
+	for _, record := range records {
+		if err := tx.Model(&record).Updates(map[string]any{"status": "recovered", "recovered_at": now, "updated_at": now}).Error; err != nil {
+			return err
+		}
+		record.RecoveredAt = &now
+		if err := service.QueueAlarmNotification(tx, device, record, "closed"); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 func (s *Server) listAlarms(c *gin.Context) {
 	p, size, valid := page(c)
@@ -187,18 +212,31 @@ func (s *Server) ackAlarm(c *gin.Context) {
 	}
 	now := time.Now().UTC()
 	userID := c.GetInt64("user_id")
-	result := s.db.Model(&model.AlarmRecord{}).Where("id=? AND status='unhandled' AND recovered_at IS NULL", alarmID).Updates(map[string]any{"status": "acked", "acked_by": userID, "acked_at": now, "updated_at": now})
-	if result.Error != nil {
-		fail(c, 500, 50000, "ack failed")
-		return
-	}
-	if result.RowsAffected == 0 {
+	var alarm model.AlarmRecord
+	errConflict := errors.New("alarm already acknowledged or recovered")
+	err := s.db.Transaction(func(tx *gorm.DB) error {
+		result := tx.Model(&model.AlarmRecord{}).Where("id=? AND status='unhandled' AND recovered_at IS NULL", alarmID).Updates(map[string]any{"status": "acked", "acked_by": userID, "acked_at": now, "updated_at": now})
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			return errConflict
+		}
+		if err := tx.First(&alarm, alarmID).Error; err != nil {
+			return err
+		}
+		var device model.Device
+		if err := tx.First(&device, alarm.DeviceID).Error; err != nil {
+			return err
+		}
+		return service.QueueAlarmNotification(tx, device, alarm, "acknowledged")
+	})
+	if errors.Is(err, errConflict) {
 		fail(c, 409, 40001, "alarm is already acknowledged or recovered")
 		return
 	}
-	var alarm model.AlarmRecord
-	if s.db.First(&alarm, alarmID).Error != nil {
-		fail(c, 500, 50000, "ack read failed")
+	if err != nil {
+		fail(c, 500, 50000, "ack failed")
 		return
 	}
 	s.broadcast(gin.H{"type": "alarm_acked", "data": alarm})

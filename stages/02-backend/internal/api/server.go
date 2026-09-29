@@ -85,6 +85,9 @@ func (s *Server) Run(ctx context.Context) error {
 	s.restoreLatest(ctx)
 	go s.worker(ctx)
 	go s.energyWorker(ctx)
+	if s.cfg.BusinessNotifyEnabled {
+		go s.businessNotificationWorker(ctx)
+	}
 	if s.cfg.AIEnabled {
 		go s.predictionWorker(ctx)
 	}

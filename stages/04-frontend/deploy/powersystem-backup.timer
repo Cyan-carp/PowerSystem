@@ -1,0 +1,10 @@
+[Unit]
+Description=Daily encrypted PowerSystem backup
+
+[Timer]
+OnCalendar=*-*-* 02:30:00
+RandomizedDelaySec=15m
+Persistent=true
+
+[Install]
+WantedBy=timers.target

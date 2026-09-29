@@ -156,6 +156,10 @@ tags:
 
 本地 Vite 跨端口开发时，Go 后端可通过 `WS_ALLOWED_ORIGINS` 配置精确 WebSocket Origin 白名单；不配置时维持同源校验。前端先用 JWT 调用 `POST /api/v1/ws-ticket`，再用单次 ticket 连接 `/ws/realtime`。详见 [[开发阶段4-前端、上线与沉淀/02-第14周·实时告警与预测]]。
 
+## 十、第一版阶段五内部通知接口
+
+`feishu-adapter` 仅在 Compose 内网监听 `POST /business`。Go API 使用私有文件中的独立令牌设置 `X-PowerSystem-Token`，发送告警事件 ID、类别（设备/AI）、状态（触发、确认、恢复、配置关闭）、设备与场站编号、级别、指标、触发记录值、阈值和事件时间。适配器校验令牌及字段后向飞书发送签名文本；只有飞书返回成功才向 Go API 返回 200。外部用户不经此接口，业务 REST 和 WebSocket 契约保持不变。失败任务留在 PostgreSQL 重试表；接口的 200 仍须配合群内可见性验证。
+
 ## 相关笔记
 
 - 本模块索引：[[00-索引·架构设计]]

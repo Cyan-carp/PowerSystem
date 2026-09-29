@@ -1,0 +1,13 @@
+[Unit]
+Description=Restrict PowerSystem FRP web port to loopback
+After=network-online.target
+Before=frps.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/powersystem-public-firewall
+
+[Install]
+WantedBy=multi-user.target

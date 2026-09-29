@@ -43,16 +43,6 @@
       "id": 6, "type": "timeseries", "title": "磁盘使用率", "gridPos": {"h": 8, "w": 24, "x": 0, "y": 16},
       "datasource": {"type": "prometheus", "uid": "powersystem-prometheus"},
       "targets": [{"expr": "100 * (1 - node_filesystem_avail_bytes{mountpoint=\"/\"} / node_filesystem_size_bytes{mountpoint=\"/\"})", "legendFormat": "根文件系统", "refId": "A"}]
-    },
-    {
-      "id": 7, "type": "timeseries", "title": "容器 CPU 使用率", "gridPos": {"h": 8, "w": 12, "x": 0, "y": 24},
-      "datasource": {"type": "prometheus", "uid": "powersystem-prometheus"},
-      "targets": [{"expr": "100 * rate(container_cpu_usage_seconds_total{name=~\"powersystem-stage4.*\"}[5m])", "legendFormat": "{{name}}", "refId": "A"}]
-    },
-    {
-      "id": 8, "type": "timeseries", "title": "容器工作集内存", "gridPos": {"h": 8, "w": 12, "x": 12, "y": 24},
-      "datasource": {"type": "prometheus", "uid": "powersystem-prometheus"},
-      "targets": [{"expr": "container_memory_working_set_bytes{name=~\"powersystem-stage4.*\"}", "legendFormat": "{{name}}", "refId": "A"}]
     }
   ]
 }

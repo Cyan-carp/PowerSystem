@@ -42,9 +42,10 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\stages\02-backend\scri
 - 阶段二网关仅接受 PostgreSQL 中已登记、未删除且场站编号匹配的设备。合法消息先落本地 SQLite，再 ACK MQTT；按设备数据库 ID 创建 TDengine 子表并批量写入，写库失败时保留待写消息。
 - API 服务拥有独立的持久 MQTT 会话。消息先以 `(run_id, device_id, seq)` 写 PostgreSQL 收件表，再 ACK；后台工作者确认 TDengine 已入库后才处理告警。服务或数据库短暂不可用时，待处理消息可恢复；API 重启时会恢复 Redis 最新值缓存。
 - 每设备每指标最多一条未恢复告警。语义：确认只记录人和时间；持续越限不重复；数值恢复后关闭本次事件；再越限才生成新事件。WebSocket 掉线后需重新换票据，并通过 REST 补查告警。
+- 第一版阶段五将设备越限、AI 风险、确认、恢复和规则关闭事件与告警状态同事务写入 `business_notification_outbox`（`deploy/postgres/004_business_notifications.sql`）；API 后台按事件编号向内网飞书适配器投递，失败保留并重试。业务通知为至少一次投递，群内可能出现带同一事件编号的重复消息。目标服务器及群内验收见 [[开发阶段5-飞书告警通知/02-验证与运维]]。
 - 数据库初始化与增量脚本依次为 `deploy/postgres/001_init.sql`、`002_predictions.sql`、`003_energy.sql`，时序库为 `deploy/tdengine/init.sql`。`003_energy.sql` 为已处理遥测补建待重算日期，API 后台将结果写入 `energy_daily`；部署库的 6 个跨日设备汇总已与原始去重样本独立复算一致。`deploy/postgres/backfill_energy.sql` 可反复标记所有已处理日期，由 API 后台重算；本轮远端连续执行两次均成功。运行生成物和审查包始终留在被忽略的 `artifacts/` 下，不上传公开仓库。
 
-在 R730xd `/opt/powersystem` 中需要主动重算留存历史时执行：
+上述历史电量说明记录 `001`～`003` 的阶段四状态；当前 API 还会执行 `004_business_notifications.sql`。在 R730xd `/opt/powersystem` 中需要主动重算留存历史时执行：
 
 ```bash
 docker compose --env-file .env -f stages/04-frontend/deploy/compose.yaml exec -T postgres \

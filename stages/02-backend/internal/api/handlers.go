@@ -181,7 +181,16 @@ func (s *Server) deleteDevice(c *gin.Context) {
 		if err := tx.Model(&model.AlarmRule{}).Where("device_id=?", deviceID).Update("enabled", false).Error; err != nil {
 			return err
 		}
-		return tx.Model(&model.AlarmRecord{}).Where("device_id=? AND recovered_at IS NULL", deviceID).Updates(map[string]any{"status": "recovered", "recovered_at": now, "updated_at": now}).Error
+		var metrics []string
+		if err := tx.Model(&model.AlarmRecord{}).Where("device_id=? AND recovered_at IS NULL", deviceID).Distinct("metric").Pluck("metric", &metrics).Error; err != nil {
+			return err
+		}
+		for _, metric := range metrics {
+			if err := s.closeRuleAlarms(tx, deviceID, metric, now); err != nil {
+				return err
+			}
+		}
+		return nil
 	})
 	if err != nil {
 		fail(c, 500, 50000, "device delete failed")

@@ -22,4 +22,9 @@ if [ ! -e /etc/powersystem/backup-passphrase ]; then
   openssl rand -hex 48 > /etc/powersystem/backup-passphrase
   chmod 600 /etc/powersystem/backup-passphrase
 fi
+if [ ! -e /etc/powersystem/business-notify-token ]; then
+  umask 077
+  openssl rand -hex 32 > /etc/powersystem/business-notify-token
+  chmod 600 /etc/powersystem/business-notify-token
+fi
 echo "PowerSystem directories and private configuration are ready"

@@ -1,0 +1,8 @@
+[Unit]
+Description=Renew PowerSystem IP certificate and reload Nginx
+Requires=docker.service
+After=network-online.target docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/powersystem-cert-renew

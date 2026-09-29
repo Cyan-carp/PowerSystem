@@ -1,0 +1,11 @@
+[Unit]
+Description=Create and transfer encrypted PowerSystem backup
+Requires=docker.service
+After=network-online.target docker.service
+
+[Service]
+Type=oneshot
+User=root
+UMask=0077
+WorkingDirectory=/opt/powersystem
+ExecStart=/bin/bash /opt/powersystem/stages/04-frontend/deploy/backup.sh
