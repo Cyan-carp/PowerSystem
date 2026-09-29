@@ -6,6 +6,7 @@ __pycache__/
 *.test
 *.out
 artifacts/
+runtime/
 data/
 .obsidian/workspace.json
 .workbuddy/
