@@ -4,7 +4,7 @@
 
 ## 一、环境与启动
 
-依赖 Windows PowerShell 5.1+、Docker Desktop、Go 1.24+、项目已有 `.venv`。所有命令从仓库根目录执行：
+依赖 Windows PowerShell 5.1+、Docker Desktop、Go 1.24+ 和可运行的 Python 3.12 环境。阶段一预检会准备 `.venv`；若它在含中文的仓库路径下启动失败，按下文烟测说明改用其他已安装依赖的解释器。所有命令从仓库根目录执行：
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\stages\02-backend\scripts\preflight-stage2.ps1
@@ -49,7 +49,8 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\stages\02-backend\scri
 短时功能用例（自动创建一台设备并验证 MQTT→入库→告警→WebSocket）：
 
 ```powershell
-.\.venv\Scripts\python.exe .\stages\02-backend\scripts\smoke-stage2.py --output .\artifacts\stage2\smoke-cases.csv
+$python = 'C:\path\to\python3.12.exe' # 改为本机已安装 paho-mqtt 的可用解释器
+& $python .\stages\02-backend\scripts\smoke-stage2.py --output .\artifacts\stage2\smoke-cases.csv
 ```
 
 自动运行、故障注入、对账和审查包：

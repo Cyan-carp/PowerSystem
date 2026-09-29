@@ -16,7 +16,7 @@ tags:
 
 ## 一、本机启动
 
-项目根目录是 `C:\Users\23103\Desktop\新能源设备智能运维平台\PowerSystem`。在此处执行：
+在克隆后的 `PowerSystem` 仓库根目录执行，换机后不依赖固定的本机绝对路径：
 
 ```
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\stages\01-data-chain\scripts\preflight-stage1.ps1
@@ -56,7 +56,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\stages\01-data-chain\s
 | 提交项 | `go.sum` 和依赖锁定文件提交 |
 | 远端 | `origin` 指向公开仓库 `https://github.com/Cyan-carp/PowerSystem.git` |
 
-> 首次一小时 M1 已于 2026-09-27 审查通过，当时 `main` 与 `dev` 均指向合并提交 `0a367e8`；本次目录整理不会改写该提交或标签。
+> 首次一小时 M1 已于 2026-09-27 审查通过，当时 `main` 与 `dev` 均指向合并提交 `0a367e8`；后续目录整理没有改写该提交或标签。当前分支状态以 Git 为准。
 
 ## 相关笔记
 

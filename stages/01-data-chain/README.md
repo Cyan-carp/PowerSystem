@@ -2,7 +2,7 @@
 
 > 本地链路：**3 台 100 kW 光伏逆变器模拟器 → MQTT QoS 1 → EMQX → Go 网关 → TDengine**。
 >
-> 当前只实现阶段一；Redis、告警、前端和业务库属于后续阶段。
+> 本说明只覆盖阶段一运行与 M1 验收；Redis、告警、前端和业务库由后续阶段实现，运行入口见仓库根 [README](../../README.md)。
 
 ## 一、环境要求
 
@@ -26,10 +26,9 @@
 
 ## 三、从项目根目录执行
 
-在当前 PowerShell 窗口**先执行第一行切换目录**。看到提示符变为 `PS C:\Users\23103\Desktop\新能源设备智能运维平台\PowerSystem>` 后，再依次执行预检和正式测试：
+先在 PowerShell 中进入克隆后的 `PowerSystem` 仓库根目录，确认该目录下能看到 `stages/` 和 `.env.example`，再依次执行预检和正式测试：
 
 ```powershell
-Set-Location -LiteralPath 'C:\Users\23103\Desktop\新能源设备智能运维平台\PowerSystem'
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\stages\01-data-chain\scripts\preflight-stage1.ps1
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\stages\01-data-chain\scripts\run-stage1-test.ps1
 ```
@@ -61,15 +60,15 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\stages\01-data-chain\s
 
 > 无需人工持续监视，但应保持终端、电脑和 Docker Desktop 运行。
 
-## 五、交给我审查
+## 五、验收材料与复核
 
 | 情况 | 做法 |
 | --- | --- |
-| 正常完成 | 发该次 `review-bundle.zip` 的绝对路径 |
-| 脚本失败 / 主动中断 | 发审查包绝对路径、终端最后错误文字及中断原因 |
-| 重启 / 断电 / 强制结束 | 重新打开 Docker Desktop 后，在项目根目录运行 `collect-stage1-test.ps1 -RunId <运行编号>`，发重新生成的审查包绝对路径及大约中断时间；Docker Desktop 窗口若显示未写日志的错误，再附截图 |
+| 正常完成 | 记录并提供该次 `review-bundle.zip` 的绝对路径 |
+| 脚本失败 / 主动中断 | 保留审查包、终端最后错误文字及中断原因 |
+| 重启 / 断电 / 强制结束 | 重新打开 Docker Desktop 后，在项目根目录运行 `powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\stages\01-data-chain\scripts\collect-stage1-test.ps1 -RunId <运行编号>`，记录重新生成的审查包路径及大约中断时间；Docker Desktop 窗口若显示未写日志的错误，再附截图 |
 
-我会核对：每台 720 条、序号连续、无重复、待发/待写队列清零和恢复耗时。首次一小时 M1 已于 2026-09-27 审查通过，结果见 [04-阶段一测试与交付](../../开发阶段1-数据链路/04-阶段一测试与交付.md)。
+审查者应核对每台 720 条、序号连续、无重复、待发/待写队列清零和恢复耗时。首次一小时 M1 已于 2026-09-27 审查通过，结果见 [04-阶段一测试与交付](../../开发阶段1-数据链路/04-阶段一测试与交付.md)。
 
 **运行编号找回**：从 `artifacts/stage1/` 下的文件夹名找回。
 
