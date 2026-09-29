@@ -13,6 +13,6 @@
 | 阶段三：AI 预测 | [stages/03-ai-prediction/README.md](stages/03-ai-prediction/README.md) | [阶段三索引](开发阶段3-AI预测模块/00-索引·开发阶段3-AI预测模块.md) | 完整 M3 自动验收已通过；公开数据已审计，真实场站提前预测尚未验证 |
 | 阶段四：前端、上线与沉淀 | [stages/04-frontend/README.md](stages/04-frontend/README.md) | [阶段四索引](开发阶段4-前端、上线与沉淀/00-索引·开发阶段4-前端、上线与沉淀.md) | 第 13、14 周前端和第 15 周服务器部署已实施；第 16 周与 M4 待验收 |
 
-阶段一的预检、测试、断电后收集和停止服务命令，均见[阶段一运行说明](stages/01-data-chain/README.md)。阶段一隔离短回归 180/180 通过；现有 TDengine vnode 已满，标准脚本新建验收库受限，详情见 [M2 测试与交付](开发阶段2-后端主体/04-M2测试与交付.md)。项目生成物与迁移方法见 [文件位置与迁移清单](开发阶段1-数据链路/05-项目文件位置与迁移清单.md)。
+阶段一的预检、测试、断电后收集和停止服务命令，均见[阶段一运行说明](stages/01-data-chain/README.md)。阶段一隔离短回归 180/180 通过；现有 TDengine vnode 已满，标准脚本新建验收库受限，详情见 [M2 测试与交付](开发阶段2-后端主体/04-M2测试与交付.md)。当前生成物与跨阶段迁移方法见[运行产物说明](运行产物说明.md)和[运维与二次开发手册](平台运维与二次开发手册.md)；阶段一当时的整理结果见[阶段一目录迁移记录](开发阶段1-数据链路/05-阶段一目录迁移记录.md)。
 
 公开仓库为 [Cyan-carp/PowerSystem](https://github.com/Cyan-carp/PowerSystem)，阶段一发布见 [阶段1-数据链路](https://github.com/Cyan-carp/PowerSystem/releases/tag/stage1-data-chain)，阶段三正式发布见 [stage3-ai-prediction](https://github.com/Cyan-carp/PowerSystem/releases/tag/stage3-ai-prediction)。首次 M1 验收记录见 [阶段一测试与交付](开发阶段1-数据链路/04-阶段一测试与交付.md)。
