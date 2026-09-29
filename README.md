@@ -15,4 +15,4 @@
 
 阶段一的预检、测试、断电后收集和停止服务命令，均见[阶段一运行说明](stages/01-data-chain/README.md)。阶段一隔离短回归 180/180 通过；现有 TDengine vnode 已满，标准脚本新建验收库受限，详情见 [M2 测试与交付](开发阶段2-后端主体/04-M2测试与交付.md)。项目生成物与迁移方法见 [文件位置与迁移清单](开发阶段1-数据链路/05-项目文件位置与迁移清单.md)。
 
-公开仓库为 [Cyan-carp/PowerSystem](https://github.com/Cyan-carp/PowerSystem)，阶段一发布见 [阶段1-数据链路](https://github.com/Cyan-carp/PowerSystem/releases/tag/stage1-data-chain)，阶段三隔离版本见 [stage3-ai-prediction](https://github.com/Cyan-carp/PowerSystem/tree/stage3-ai-prediction)。首次 M1 验收记录见 [阶段一测试与交付](开发阶段1-数据链路/04-阶段一测试与交付.md)。
+公开仓库为 [Cyan-carp/PowerSystem](https://github.com/Cyan-carp/PowerSystem)，阶段一发布见 [阶段1-数据链路](https://github.com/Cyan-carp/PowerSystem/releases/tag/stage1-data-chain)，阶段三正式发布见 [stage3-ai-prediction](https://github.com/Cyan-carp/PowerSystem/releases/tag/stage3-ai-prediction)。首次 M1 验收记录见 [阶段一测试与交付](开发阶段1-数据链路/04-阶段一测试与交付.md)。
