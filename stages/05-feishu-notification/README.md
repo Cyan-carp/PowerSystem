@@ -58,10 +58,12 @@ docker compose --env-file .env -f stages/04-frontend/deploy/compose.yaml ps feis
 docker compose --env-file .env -f stages/04-frontend/deploy/compose.yaml exec -T postgres psql -U powersystem -d powersystem -Atqc "SELECT to_regclass('public.business_notification_outbox') IS NOT NULL"
 ```
 
-部署后用可控设备规则和 AI 风险场景分别检查触发、确认、恢复、重复/失败重试，以及群内可见性。2026-09-29 已在 R730xd 用 `verify-business-notifications.py` 核对设备事件五项、适配器停机重试及机器人 HTTP 成功响应；随后真实模型对合成设备产生 AI 高风险与低风险恢复，两条业务事件均标记发送成功。项目所有者确认群里可见设备和 AI 新消息，见 [阶段五验证记录](../../开发阶段5-飞书告警通知/02-验证与运维.md)。机器人 URL、签名密钥与内部令牌不写入仓库、日志摘要或公开笔记。
+部署后用可控设备规则和 AI 风险场景分别检查触发、确认、恢复、重复/失败重试，以及群内可见性。2026-09-29 已在 R730xd 用 `verify-business-notifications.py` 核对设备事件五项、适配器停机重试及机器人 HTTP 成功响应；随后真实模型对合成设备产生 AI 高风险与低风险恢复，两条业务事件均标记发送成功。项目所有者确认群里可见设备和 AI 新消息，见 [阶段五测试与交付](../../开发阶段5-飞书告警通知/03-阶段五测试与交付.md)。机器人 URL、签名密钥与内部令牌不写入仓库、日志摘要或公开笔记。
 
 ## 相关笔记
 
 - 专题索引：[开发阶段5-飞书告警通知](../../开发阶段5-飞书告警通知/00-索引·开发阶段5-飞书告警通知.md)
+- 运维与复测：[02-运维与复测](../../开发阶段5-飞书告警通知/02-运维与复测.md)
+- 正式测试交付：[03-阶段五测试与交付](../../开发阶段5-飞书告警通知/03-阶段五测试与交付.md)
 - 统一部署：[阶段四服务器部署说明](../04-frontend/deploy/README.md)
 - 工程规范：[项目工程规范](../../项目工程规范.md)
