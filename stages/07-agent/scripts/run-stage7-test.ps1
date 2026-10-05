@@ -6,7 +6,7 @@ $dir=$null
 try {
     if ($ConfigFile) { Set-Stage7Environment -ConfigFile $ConfigFile } else { Set-Stage7Environment }
     $run='stage7_'+(Get-Date -Format 'yyyyMMdd_HHmmss')+'_'+([Guid]::NewGuid().ToString('N').Substring(0,4))
-    $dir=Join-Path $Stage7Repo "artifacts/stage7/$run"
+    $dir=Join-Path $Stage7Repo "artifacts/stage7-智能体/$run"
     New-Item -ItemType Directory -Path $dir -Force | Out-Null
     $record=@{run_id=$run;at=[DateTime]::UtcNow.ToString('o');fixture=[bool]$Fixture;offline_passed=$false;model_probe_passed=$false;integration_passed=$false;real_model_validated=$false;milestone_passed=$false;failed_stage='offline'}
     & $Stage7Python -m unittest discover -s stages/07-agent/tests -v *> (Join-Path $dir 'offline-tests.log')

@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -30,6 +31,19 @@ func (s *Server) agentChat(c *gin.Context) {
 		fail(c, 400, 40001, "invalid agent request")
 		return
 	}
+	admissionCtx, admissionCancel := context.WithTimeout(c.Request.Context(), 2*time.Second)
+	release, retry, admissionErr := s.admitChat(admissionCtx, c.GetInt64("user_id"))
+	admissionCancel()
+	if admissionErr != nil {
+		fail(c, 503, 50301, "问答调用保护暂不可用，请稍后重试")
+		return
+	}
+	if retry > 0 {
+		c.Header("Retry-After", strconv.Itoa(retry))
+		fail(c, 429, 42901, "问答请求已达限制，请稍后重试")
+		return
+	}
+	defer release()
 	body, _ := json.Marshal(struct {
 		agentChatInput
 		UserID int64 `json:"user_id"`

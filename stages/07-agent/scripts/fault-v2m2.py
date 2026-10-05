@@ -11,9 +11,8 @@ from agent.config import Config
 
 spec=importlib.util.spec_from_file_location('smoke',Path(__file__).with_name('smoke-v2m2.py'))
 smoke=importlib.util.module_from_spec(spec);spec.loader.exec_module(smoke)
-state=Path('artifacts/stage7/v2m2/fault-20261001/state.json')
 
-async def run(mode):
+async def run(mode, state):
     cfg=Config.load();state.parent.mkdir(parents=True,exist_ok=True)
     redis=Redis.from_url(cfg.redis_url,decode_responses=True)
     async with httpx.AsyncClient(timeout=10,trust_env=False) as client:
@@ -48,5 +47,5 @@ async def run(mode):
     await redis.aclose()
 
 if __name__=='__main__':
-    parser=argparse.ArgumentParser();parser.add_argument('mode',choices=['deposit','verify'])
-    asyncio.run(run(parser.parse_args().mode))
+    parser=argparse.ArgumentParser();parser.add_argument('mode',choices=['deposit','verify']);parser.add_argument('--output',type=Path,required=True)
+    args=parser.parse_args();asyncio.run(run(args.mode,args.output/'state.json'))

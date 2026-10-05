@@ -160,6 +160,21 @@ tags:
 
 `feishu-adapter` 仅在 Compose 内网监听 `POST /business`。Go API 使用私有文件中的独立令牌设置 `X-PowerSystem-Token`，发送告警事件 ID、类别（设备/AI）、状态（触发、确认、恢复、配置关闭）、设备与场站编号、级别、指标、触发记录值、阈值和事件时间。适配器校验令牌及字段后向飞书发送签名文本；只有飞书返回成功才向 Go API 返回 200。外部用户不经此接口，业务 REST 和 WebSocket 契约保持不变。失败任务留在 PostgreSQL 重试表；接口的 200 仍须配合群内可见性验证。
 
+## 十一、第二版智能体接口（v2.0.0 生效）
+
+保留第一版历史接口及验收。当前接口仍返回 `code/message/data`，Go 是业务鉴权入口，Agent 只在 Compose 内网服务。详见 [[第二版-智能体升级/开发阶段1-基础服务与只读工具链/02-Agent服务与模型接入]] 和 [[stages/07-agent/README]]。
+
+| 方法与路径 | 权限与含义 |
+| --- | --- |
+| `POST /api/v1/agent/chat` | JWT；仅允许 message/session_id；429附Retry-After，Redis检查失败503；同用户10次/滚动60秒、并发1、全站并发4 |
+| `GET /api/v1/agent/knowledge/{id}` | JWT；读取受控知识片段，非法ID400、缺失404，上游不可用503 |
+| `GET /api/v1/agent/interpretations`、`/{id}` | JWT；已持久化的事件解读、证据快照与状态 |
+| `POST /api/v1/agent/interpretations/{id}/read` | JWT；只记录解读阅读状态，不确认原告警 |
+| `GET /api/v1/agent/model-status`、`POST /api/v1/agent/model-probe` | 管理员；探测有独立保护，原始凭据不回传 |
+| `/internal/agent/*` | 公网403；内部只读工具贯通用户JWT，解读以独立服务令牌接收Go快照，监控入口使用独立令牌 |
+
+业务写操作仍由原 API 和人工动作承担。自动告警解读不使用交互问答额度；匿名或过期JWT401、角色和跨用户会话403、伪造身份400。WebSocket沿用一次性票据及当前同源策略，增加解读事件推送。
+
 ## 相关笔记
 
 - 本模块索引：[[00-索引·架构设计]]

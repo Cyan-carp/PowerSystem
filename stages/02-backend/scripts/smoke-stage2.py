@@ -129,16 +129,17 @@ def main() -> int:
         token = data["data"]["token"]
         status, _ = request(base, "GET", "/api/v1/devices", token="invalid")
         check("07 invalid token", status == 401)
-        status, data = request(base, "POST", "/api/v1/devices", {"device_code": device_code, "name": "Smoke", "dev_type": "inverter", "station_code": "ST-01", "group_name": "smoke"}, token)
+        test_group = "smoke-" + unique
+        status, data = request(base, "POST", "/api/v1/devices", {"device_code": device_code, "name": "Smoke", "dev_type": "inverter", "station_code": "ST-01", "group_name": test_group}, token)
         check("08 create dynamic device", status == 201)
         device_id = data["data"]["id"]
-        status, data = request(base, "GET", "/api/v1/devices?group_name=smoke&page=1&page_size=2", token=token)
+        status, data = request(base, "GET", f"/api/v1/devices?group_name={test_group}&page=1&page_size=2", token=token)
         check("09 filter and pagination", status == 200 and any(item["id"] == device_id for item in data["data"]["list"]))
         status, data = request(base, "GET", f"/api/v1/devices/{device_id}", token=token)
         check("10 device detail", status == 200 and data["data"]["device_code"] == device_code)
         status, _ = request(base, "GET", "/api/v1/devices?page=0", token=token)
         check("10a invalid pagination", status == 400)
-        status, data = request(base, "PUT", f"/api/v1/devices/{device_id}", {"name": "Smoke updated", "dev_type": "inverter", "group_name": "smoke"}, token)
+        status, data = request(base, "PUT", f"/api/v1/devices/{device_id}", {"name": "Smoke updated", "dev_type": "inverter", "group_name": test_group}, token)
         check("11 update device", status == 200 and data["data"]["name"] == "Smoke updated")
         status, _ = request(base, "GET", f"/api/v1/devices/{device_id}/telemetry/latest", token=token)
         check("12 latest empty", status == 404)

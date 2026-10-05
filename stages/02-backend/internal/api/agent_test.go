@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"github.com/gin-gonic/gin"
 	"net/http"
@@ -10,7 +11,17 @@ import (
 	"testing"
 )
 
+type allowedChatGate struct{}
+
+func (allowedChatGate) acquire(context.Context, int64) (chatLease, int, error) {
+	return chatLease{}, 0, nil
+}
+func (allowedChatGate) release(context.Context, chatLease) error { return nil }
+
 func agentRouter(s *Server) *gin.Engine {
+	if s.chatGate == nil {
+		s.chatGate = allowedChatGate{}
+	}
 	r := gin.New()
 	r.POST("/agent", func(c *gin.Context) { c.Set("user_id", int64(17)) }, s.agentChat)
 	return r

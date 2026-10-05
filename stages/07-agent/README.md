@@ -208,7 +208,7 @@ bash stages/07-agent/deploy/verify-bocha-release.sh /opt/powersystem/runtime/<�
 
 ```bash
 python3 stages/07-agent/deploy/acceptance-v2m3.py --output runtime/<本次发布目录>/acceptance
-python3 stages/07-agent/deploy/observe.py --seconds 1800 --output runtime/<本次发布目录>/observation.json
+python3 stages/07-agent/deploy/observe.py --url https://<管理员提供的入口> --seconds 1800 --output runtime/<本次发布目录>/observation.json
 ```
 
 停止 Agent 的受控故障检查增加 `--fault-check`，检查结束立即按既有 Compose 恢复；不得留下停止状态。观察是只读采样，不调用模型。缺口记录、索引和可选搜索密钥进入统一加密备份；隔离恢复核对索引哈希和 JSONL。对任一新候选而言，没有真实搜索五例及完整服务器证据时不得签收。
@@ -259,3 +259,48 @@ python3 stages/07-agent/deploy/finalize-bocha-review.py --run runtime/<本轮发
 V2-M3 合成演示与公开资料辅助建议范围技术验收通过，可以进入 V2-M4；专业来源审核按所有者授权暂缓，真实设备适用性尚未验证。
 
 最终候选 `runtime/manual-advice-20261005T004409Z/`：本机 Agent 71/71，前端 13/13、类型／构建及 Go 全量通过；服务器严格七题 60/60、原五题联网 5/5，实际浏览器完整五题及两处面板、六类指南、来源阅读、取消与新会话通过。实际回退、最终加密备份与隔离恢复通过；独立观察 1800.52 秒、60 次采样全部通过，业务服务健康且重启为零。来源与待补知识不虚报为专业已审核。证据见 [[第二版-智能体升级/开发阶段3-使用引导与值班问答/05-V2-M3测试与交付#十一、当天最终候选与真实页面验收（2026-10-05）]]。
+
+
+## 12. V2-M4 整体测试与发布
+
+阶段索引见[测试、安全复核与交付](../../第二版-智能体升级/开发阶段4-测试、安全复核与交付/00-索引·测试、安全复核与交付.md)，正式结论见[测试与交付](../../第二版-智能体升级/开发阶段4-测试、安全复核与交付/05-V2-M4测试与交付.md)。目前实施中，不能将本机基础检查视为阶段签收。
+
+### 步骤1 · 本机基础套件
+
+使用已有 Python 和 Node24，不升级锁文件。`--node`指定Node24可执行文件，`--npm-cli`指定现有npm入口。套件创建仅绑定回环16379的临时Redis，结束时仅停止自身容器。已有Redis、数据库和历史卷保留。
+
+```powershell
+python -X utf8 stages/07-agent/scripts/v2m4-suite.py --output artifacts/stage7-智能体/v2m4/<运行编号>/local-suite --node <Node24路径> --npm-cli <npm-cli.js路径>
+```
+
+### 步骤2 · 本机真实模型与隔离测试
+
+旧私有配置若仍指向迁移前目录，为本轮创建独立配置，明确指定 `AGENT_PYTHON_EXECUTABLE`；不覆盖原密钥。所有测试设备、告警和规则带本轮编号，业务通知关闭。
+
+```powershell
+stages/07-agent/scripts/start-local-backend.ps1 -ConfigFile <本轮私有配置>
+stages/07-agent/scripts/start-agent.ps1 -ConfigFile <本轮私有配置>
+python -X utf8 stages/07-agent/scripts/smoke-v2m2.py --real --groups 10 --output artifacts/stage7-智能体/v2m4/<运行编号>/real-interpretations
+```
+
+故障脚本 `fault-v2m2.py deposit|verify --output <本轮目录>` 的前后两步使用同一目录。阶段签收仍须完成主链路专项、来源抽查、服务器和页面门槛。
+
+### 步骤3 · 受审发布与实际回退
+
+固定候选提交后打包公开文件，先扫描秘密及链接，再沿用既有目标完成更新前加密备份和云端摘要核对。服务器没有Git元数据，核对文件清单及镜像标签。
+
+```bash
+export POWERSYSTEM_PUBLIC_URL=https://<管理员提供的入口>
+bash stages/07-agent/deploy/v2m4-release.sh <受审包> <SHA256>
+bash stages/07-agent/deploy/v2m4-verify.sh /opt/powersystem/runtime/v2m4-<本轮编号>
+```
+
+### 步骤4 · 完整观察与证据汇总
+
+在最终代码、配置、知识和镜像固定后执行。输出路径必须未存在，不复用中断批次。
+
+```bash
+python3 stages/07-agent/deploy/observe.py --url "$POWERSYSTEM_PUBLIC_URL" --seconds 1800 --images runtime/v2m4-<本轮编号>/current-images.json --output runtime/v2m4-<本轮编号>/observation-final.json
+```
+
+`v2m4-evidence.py --run <本轮目录> --gate <门槛> --result passed|failed|interrupted|skipped --evidence <文件...>`登记本轮文件SHA256；不带`--gate`核对所有门槛，缺项或摘要变化退出非零。真实来源的专业审核仍为pending，不因技术签收自动补库。

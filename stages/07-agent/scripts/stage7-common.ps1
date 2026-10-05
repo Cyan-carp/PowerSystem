@@ -2,17 +2,19 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $Stage7Root = Split-Path -Parent $PSScriptRoot
 $Stage7Repo = Split-Path -Parent (Split-Path -Parent $Stage7Root)
-$Stage7Runtime = Join-Path $Stage7Repo 'artifacts/stage7/runtime'
-$Stage7Python = Join-Path $Stage7Repo '.venv/Scripts/python.exe'
+$Stage7Runtime = Join-Path $Stage7Repo 'artifacts/stage7-智能体/runtime'
+$Stage7Python = if ($env:AGENT_PYTHON_EXECUTABLE) { $env:AGENT_PYTHON_EXECUTABLE } else { Join-Path $Stage7Repo '.venv/Scripts/python.exe' }
+$Stage7Dependencies = Join-Path $Stage7Repo 'artifacts/stage7-智能体/pydeps'
+if (-not (Test-Path -LiteralPath $Stage7Dependencies)) { $Stage7Dependencies = Join-Path $Stage7Repo 'artifacts/stage7/pydeps' }
 function Set-Stage7Environment {
     param([string]$ConfigFile = (Join-Path $Stage7Root '.env'))
     foreach ($file in @((Join-Path $Stage7Repo '.env'), $ConfigFile)) {
         if (-not (Test-Path -LiteralPath $file)) { throw "Missing private configuration: $file" }
-        foreach ($line in Get-Content -LiteralPath $file) {
+        foreach ($line in Get-Content -LiteralPath $file -Encoding utf8) {
             if ($line -match '^([A-Z][A-Z0-9_]*)=(.*)$') { Set-Item -Path "Env:$($Matches[1])" -Value $Matches[2] }
         }
     }
-    $env:PYTHONPATH = (Join-Path $Stage7Repo 'artifacts/stage7/pydeps') + ';' + $Stage7Root
+    $env:PYTHONPATH = $Stage7Dependencies + ';' + $Stage7Root + ';' + (Join-Path $Stage7Repo '.venv/Lib/site-packages')
     $env:PYTHONIOENCODING = 'utf-8'
     foreach ($name in @('AGENT_SERVICE_TOKEN_FILE','AGENT_LLM_API_KEY_FILE','AGENT_MONITOR_TOKEN_FILE','AGENT_AUDIT_DIR','AGENT_SEARCH_KEY_FILE','AGENT_MISSES_DIR','AGENT_KNOWLEDGE_PATH')) {
         $value=[Environment]::GetEnvironmentVariable($name)

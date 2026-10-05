@@ -42,6 +42,7 @@ type Server struct {
 	router    *gin.Engine
 	clients   map[*websocket.Conn]struct{}
 	clientsMu sync.Mutex
+	chatGate  chatAdmission
 }
 
 func New(cfg config.Config, db *gorm.DB, redis *redis.Client, td *tdengine.Client, log *zap.Logger) *Server {
