@@ -285,6 +285,14 @@ python -X utf8 stages/07-agent/scripts/smoke-v2m2.py --real --groups 10 --output
 
 故障脚本 `fault-v2m2.py deposit|verify --output <本轮目录>` 的前后两步使用同一目录。阶段签收仍须完成主链路专项、来源抽查、服务器和页面门槛。
 
+主链路专项使用现有 PowerShell 7，停止后实测 Agent 不可达，恢复后实测健康；不能只根据命令退出码认定故障。占满测试仅为隔离环境的 Go 接纳池设置四个本轮租约，验证429及告警链路，不计为四次真实模型调用。
+
+```powershell
+python -X utf8 stages/07-agent/scripts/main-chain-v2m4.py --config <本轮私有配置> --output artifacts/stage7-智能体/v2m4/<运行编号>/main-chain
+python -X utf8 stages/07-agent/scripts/v2m4-audit.py --config .env <本轮私有配置> --output artifacts/stage7-智能体/v2m4/<运行编号>/credential-scan.json
+python -X utf8 stages/07-agent/scripts/v2m4-package.py --commit <候选提交> --base <前三阶段提交> --output artifacts/stage7-智能体/v2m4/<运行编号>/package
+```
+
 ### 步骤3 · 受审发布与实际回退
 
 固定候选提交后打包公开文件，先扫描秘密及链接，再沿用既有目标完成更新前加密备份和云端摘要核对。服务器没有Git元数据，核对文件清单及镜像标签。
@@ -294,6 +302,20 @@ export POWERSYSTEM_PUBLIC_URL=https://<管理员提供的入口>
 bash stages/07-agent/deploy/v2m4-release.sh <受审包> <SHA256>
 bash stages/07-agent/deploy/v2m4-verify.sh /opt/powersystem/runtime/v2m4-<本轮编号>
 ```
+
+本轮服务器测试与匿名安全检查统一指定输出目录。事件脚本最多安排七个通知事件；首次失败于监控接纳之前时，`--resume-state <原批次/state.json>`核对归属并复用原两条业务告警，不再次触发，原失败证据保留。已接纳监控的批次不自动续跑，避免重复通知。
+
+```bash
+python3 stages/07-agent/deploy/limits-v2m4.py --url "$POWERSYSTEM_PUBLIC_URL" --output runtime/v2m4-<本轮编号>/limits
+python3 stages/07-agent/deploy/acceptance-v2m3.py --search-configured --url "$POWERSYSTEM_PUBLIC_URL" --output runtime/v2m4-<本轮编号>/chat
+python3 stages/07-agent/deploy/acceptance-bocha.py --output runtime/v2m4-<本轮编号>/search
+python3 stages/07-agent/deploy/finalize-bocha-review.py --run runtime/v2m4-<本轮编号>/search --mode development-assumed --authorization <所有者开发验收授权依据>
+python3 stages/07-agent/deploy/events-v2m4.py --url "$POWERSYSTEM_PUBLIC_URL" --output runtime/v2m4-<本轮编号>/events
+python3 stages/07-agent/deploy/inventory-v2m4.py --output runtime/v2m4-<本轮编号>/inventory.json
+python3 stages/07-agent/deploy/security-v2m4.py --url "$POWERSYSTEM_PUBLIC_URL" --output runtime/v2m4-<本轮编号>/public-security
+```
+
+限额验收后等待滚动窗口恢复再跑真实问答，不能靠新会话绕过额度。TCP接连异常必须结合独立外部视角、协议与主机映射复核；共享端口不据端口号推断项目暴露。扫描仅输出位置和计数，不打印凭据原文。双链示例和代码中的`[[proxies]]`不作为缺失笔记。
 
 ### 步骤4 · 完整观察与证据汇总
 

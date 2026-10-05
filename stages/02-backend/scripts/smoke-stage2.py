@@ -27,7 +27,9 @@ def request(base: str, method: str, path: str, body: dict | None = None, token: 
         headers["Authorization"] = f"Bearer {token}"
     req = urllib.request.Request(base + path, data=data, headers=headers, method=method)
     try:
-        with urllib.request.urlopen(req, timeout=10) as response:
+        # This is a loopback isolation test; system proxies must not route the
+        # local business requests through an unrelated external connection.
+        with urllib.request.build_opener(urllib.request.ProxyHandler({})).open(req, timeout=10) as response:
             return response.status, json.load(response)
     except urllib.error.HTTPError as error:
         return error.code, json.load(error)

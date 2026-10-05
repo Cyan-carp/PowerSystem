@@ -6,6 +6,7 @@ import json
 import os
 import subprocess
 import sys
+import shutil
 import time
 from pathlib import Path
 from uuid import uuid4
@@ -19,6 +20,13 @@ def main(args):
     output=args.output;output.mkdir(parents=True,exist_ok=True)
     cfg=Config.load()
     if cfg.backend_url!='http://127.0.0.1:8080': raise ValueError('local acceptance only')
+    shell=shutil.which('pwsh')
+    if not shell:raise ValueError('PowerShell 7 required for UTF-8 script paths')
+    import httpx
+    def agent_alive():
+        try:return httpx.get('http://127.0.0.1:8092/health',timeout=2,trust_env=False).status_code==200
+        except httpx.RequestError:return False
+    if not agent_alive():raise ValueError('normal mode requires a healthy Agent')
     spec=importlib.util.spec_from_file_location('smoke',ROOT/'stages/07-agent/scripts/smoke-v2m2.py')
     smoke=importlib.util.module_from_spec(spec);spec.loader.exec_module(smoke)
     redis=Redis.from_url(cfg.redis_url,decode_responses=True)
@@ -30,13 +38,15 @@ def main(args):
     def save(): (output/'summary.json').write_text(json.dumps({'completed':len(rows)==30,'passed':len(rows)==30 and all(x['passed'] for x in rows),'cases':rows},indent=2),encoding='utf-8')
     def agent_start():
         with (output/'agent-restarted.log').open('a',encoding='utf-8') as log:
-            subprocess.run(['powershell','-NoProfile','-File',str(ROOT/'stages/07-agent/scripts/start-agent.ps1'),'-ConfigFile',str(args.config)],cwd=ROOT,check=True,stdout=log,stderr=subprocess.STDOUT)
+            subprocess.run([shell,'-NoProfile','-File',str(ROOT/'stages/07-agent/scripts/start-agent.ps1'),'-ConfigFile',str(args.config)],cwd=ROOT,check=True,stdout=log,stderr=subprocess.STDOUT)
+        if not agent_alive():raise AssertionError('Agent not restored')
     stopped=False
     try:
         for mode in ('normal','agent-down','chat-full'):
             if mode=='agent-down':
-                subprocess.run(['powershell','-NoProfile','-File',str(ROOT/'stages/07-agent/scripts/stop-agent.ps1')],cwd=ROOT,check=True)
+                subprocess.run([shell,'-NoProfile','-File',str(ROOT/'stages/07-agent/scripts/stop-agent.ps1')],cwd=ROOT,check=True)
                 stopped=True
+                if agent_alive():raise AssertionError('Agent stop did not take effect')
             if mode=='chat-full':agent_start();stopped=False
             for i in range(10):
                 if mode=='chat-full':

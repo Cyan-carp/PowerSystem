@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -124,8 +125,8 @@ func TestRedisChatAdmissionIntegration(t *testing.T) {
 	}
 	clean := func() {
 		keys := []string{"stage7:chat:leases"}
-		for i := int64(1); i <= 6; i++ {
-			keys = append(keys, chatKeys(string(rune('0' + i)))[1:]...)
+		for i := int64(1); i <= 20; i++ {
+			keys = append(keys, chatKeys(strconv.FormatInt(i, 10))[1:]...)
 		}
 		if err := r.Del(ctx, keys...).Err(); err != nil {
 			t.Fatal(err)
@@ -207,4 +208,38 @@ func TestRedisChatAdmissionIntegration(t *testing.T) {
 		t.Fatal("lease not 50 seconds", ttl)
 	}
 	g.release(ctx, lease)
+	clean()
+	// Simultaneous users must still admit exactly four. Sequential capacity
+	// checks alone would not expose an accidental read-then-write race.
+	type admissionResult struct {
+		lease chatLease
+		retry int
+		err   error
+	}
+	start := make(chan struct{})
+	results := make(chan admissionResult, 20)
+	for i := int64(1); i <= 20; i++ {
+		go func(user int64) {
+			<-start
+			lease, retry, err := g.acquire(ctx, user)
+			results <- admissionResult{lease, retry, err}
+		}(i)
+	}
+	close(start)
+	admitted := []chatLease{}
+	for i := 0; i < 20; i++ {
+		result := <-results
+		if result.err != nil {
+			t.Fatal(result.err)
+		}
+		if result.retry == 0 {
+			admitted = append(admitted, result.lease)
+		}
+	}
+	if len(admitted) != 4 {
+		t.Fatalf("concurrent admissions=%d", len(admitted))
+	}
+	for _, lease := range admitted {
+		g.release(ctx, lease)
+	}
 }

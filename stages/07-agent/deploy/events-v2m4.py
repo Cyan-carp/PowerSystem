@@ -32,6 +32,19 @@ def main(args):
             headers={'Content-Type':'application/json','Authorization':'Bearer '+jwt})
         with opener.open(req,timeout=50) as result:return json.load(result)['data']
     cases=[];state={'run_id':uuid4().hex[:8],'devices':[],'rules':[],'alarm_ids':[],'monitor_key':None,'notification_budget':7}
+    if args.resume_state:
+        original=args.resume_state.read_bytes();state=json.loads(original)
+        if state.get('monitor_key') is not None or len(state['devices'])!=2 or len(state['alarm_ids'])!=2:raise ValueError('resume only before monitor acceptance')
+        expected=['INV-V2M4-'+state['run_id']+'-'+suffix for suffix in ('temperature','ai')]
+        if [d['code'] for d in state['devices']]!=expected:raise ValueError('unowned event assets')
+        for d in state['devices']:
+            if sql('SELECT device_code FROM devices WHERE id='+str(d['id']))!=d['code']:raise ValueError('event ownership mismatch')
+            sql('UPDATE devices SET deleted_at=NULL WHERE id='+str(d['id']))
+        for identifier in state['alarm_ids']:
+            if int(sql('SELECT device_id FROM alarm_records WHERE id='+str(identifier))) not in [d['id'] for d in state['devices']]:raise ValueError('alarm ownership mismatch')
+            sql("UPDATE alarm_records SET recovered_at=NULL,status='unhandled' WHERE id="+str(identifier))
+        for identifier in state['rules']:sql('UPDATE alarm_rules SET enabled=true WHERE id='+str(identifier))
+        state['resume_source_sha256']=hashlib.sha256(original).hexdigest()
     def save(): (args.output/'state.json').write_text(json.dumps(state,indent=2))
     def check(name,passed,detail=None):
         cases.append({'case':name,'passed':bool(passed),'detail':detail})
@@ -54,17 +67,23 @@ def main(args):
     publish_code="import json,sys;from paho.mqtt.publish import multiple;p=json.load(sys.stdin);multiple([{'topic':'device/telemetry','payload':json.dumps(x),'qos':1} for x in p],hostname='emqx');print(json.dumps({'published':len(p)}))"
     save()
     try:
-        for suffix in ('temperature','ai'):
+        for suffix in (() if args.resume_state else ('temperature','ai')):
             code='INV-V2M4-'+state['run_id']+'-'+suffix
             d=api('POST','/api/v1/devices',{'device_code':code,'name':'V2-M4 synthetic '+suffix+' test','dev_type':'inverter','vendor':'synthetic','station_code':'ST-V2M4','group_name':'v2m4-'+state['run_id']})
             state['devices'].append({'id':d['id'],'code':code});save()
         device,ai=state['devices']
-        rule=api('POST','/api/v1/alarm-rules',{'device_id':device['id'],'metric':'temperature','operator':'>','threshold':60,'level':'major','enabled':True})
-        state['rules'].append(rule['id']);save()
+        if not args.resume_state:
+            rule=api('POST','/api/v1/alarm-rules',{'device_id':device['id'],'metric':'temperature','operator':'>','threshold':60,'level':'major','enabled':True})
+            state['rules'].append(rule['id']);save()
         def sample(seq,temp):return {'schema_version':1,'run_id':'v2m4-'+state['run_id'],'device_id':device['code'],'station_id':'ST-V2M4','seq':seq,'ts_ms':int(time.time()*1000),'voltage':400,'current':10,'temperature':temp,'power':6.86,'status':1,'fault_code':0}
-        started=time.monotonic();inside('simulator',publish_code,[sample(0,70)])
-        alarm=int(wait('temperature alarm',lambda:sql("SELECT id FROM alarm_records WHERE device_id="+str(device['id'])+" AND metric='temperature' ORDER BY id DESC LIMIT 1"),10))
-        state['alarm_ids'].append(alarm);save();check('MQTT original alarm under 10 seconds',time.monotonic()-started<=10)
+        if args.resume_state:
+            alarm=state['alarm_ids'][0]
+            prior=json.loads((args.resume_state.parent/'cases.json').read_text())
+            check('original MQTT under 10 seconds evidence retained',any(x['case']=='MQTT original alarm under 10 seconds' and x['passed'] for x in prior))
+        else:
+            started=time.monotonic();inside('simulator',publish_code,[sample(0,70)])
+            alarm=int(wait('temperature alarm',lambda:sql("SELECT id FROM alarm_records WHERE device_id="+str(device['id'])+" AND metric='temperature' ORDER BY id DESC LIMIT 1"),10))
+            state['alarm_ids'].append(alarm);save();check('MQTT original alarm under 10 seconds',time.monotonic()-started<=10)
         # Build precursor and recovery windows with the same synthetic generator
         # used by the first-version prediction replay. Probe before publishing.
         ai_code=r"""import json,sys,time,math,urllib.request
@@ -79,13 +98,14 @@ with urllib.request.urlopen(req,timeout=10) as r:prediction=json.load(r)
 assert prediction['risk_level']==p['expected']
 multiple([{'topic':'device/telemetry','payload':json.dumps(x),'qos':1} for x in points],hostname='emqx')
 print(json.dumps({'window_end_ms':end,'prediction':prediction,'published':30}))"""
-        high=inside('simulator',ai_code,{'id':ai['id'],'code':ai['code'],'run':'v2m4-ai-'+state['run_id'],'lead':3,'expected':'high'})
+        high=json.loads((args.resume_state.parent/'ai-high.json').read_text()) if args.resume_state else inside('simulator',ai_code,{'id':ai['id'],'code':ai['code'],'run':'v2m4-ai-'+state['run_id'],'lead':3,'expected':'high'})
         (args.output/'ai-high.json').write_text(json.dumps(high,indent=2))
         high_payload={'id':ai['id'],'code':ai['code'],'run':'v2m4-ai-'+state['run_id'],'lead':3,'expected':'high'}
         ai_alarm=int(wait('real AI risk alarm',lambda:sql("SELECT id FROM alarm_records WHERE device_id="+str(ai['id'])+" AND metric='ai_failure_risk' AND recovered_at IS NULL ORDER BY id DESC LIMIT 1"),refresh=lambda:inside('simulator',ai_code,high_payload)))
-        state['alarm_ids'].append(ai_alarm);save();check('real prediction model creates AI alarm',True)
+        if not args.resume_state:state['alarm_ids'].append(ai_alarm)
+        save();check('real prediction model creates AI alarm',True)
         starts=datetime.now(timezone.utc).isoformat();fingerprint='v2m4-'+state['run_id']
-        batch={'version':'4','groupKey':'v2m4-'+state['run_id'],'status':'firing','receiver':'agent','alerts':[{'status':'firing','labels':{'alertname':'PowerSystemAPIDown','severity':'critical','test_run':state['run_id']},'annotations':{'summary':'V2-M4 合成监控通知测试 '+state['run_id']},'startsAt':starts,'endsAt':'0001-01-01T00:00:00Z','fingerprint':fingerprint}]}
+        batch={'version':'4','groupKey':'v2m4-'+state['run_id'],'status':'firing','receiver':'agent','groupLabels':{},'commonLabels':{},'commonAnnotations':{},'alerts':[{'status':'firing','labels':{'alertname':'PowerSystemAPIDown','severity':'critical','test_run':state['run_id']},'annotations':{'summary':'V2-M4 合成监控通知测试 '+state['run_id']},'startsAt':starts,'endsAt':'0001-01-01T00:00:00Z','fingerprint':fingerprint}]}
         monitor_code="import sys,json,urllib.request;from agent.config import Config;c=Config.load();p=json.load(sys.stdin);r=urllib.request.Request('http://127.0.0.1:8092/internal/agent/monitor-events',data=json.dumps(p).encode(),headers={'Authorization':'Bearer '+c.monitor_token,'Content-Type':'application/json'});print(json.dumps({'http':urllib.request.urlopen(r,timeout=10).status}))"
         check('monitor accepted',inside('agent',monitor_code,batch)['http']==200)
         state['monitor_key']='monitor:'+fingerprint+':'+datetime.fromisoformat(starts).strftime('%Y-%m-%dT%H:%M:%S.%f').rstrip('0')+'Z';save()
@@ -128,11 +148,11 @@ print(json.dumps({'window_end_ms':end,'prediction':prediction,'published':30}))"
         for device in state['devices']:
             # On interruption retire only this run's synthetic alarms, without
             # generating additional notification events beyond the budget.
-            sql('UPDATE alarm_records SET recovered_at=now() WHERE recovered_at IS NULL AND device_id='+str(device['id']))
+            sql("UPDATE alarm_records SET recovered_at=now(),status='recovered' WHERE recovered_at IS NULL AND device_id="+str(device['id']))
             sql('UPDATE devices SET deleted_at=now() WHERE id='+str(device['id']))
         save()
 
 
 if __name__=='__main__':
-    parser=argparse.ArgumentParser();parser.add_argument('--project',type=Path,default=Path('/opt/powersystem'));parser.add_argument('--url',required=True);parser.add_argument('--output',type=Path,required=True)
+    parser=argparse.ArgumentParser();parser.add_argument('--project',type=Path,default=Path('/opt/powersystem'));parser.add_argument('--url',required=True);parser.add_argument('--output',type=Path,required=True);parser.add_argument('--resume-state',type=Path)
     args=parser.parse_args();args.url=args.url.rstrip('/');main(args)
