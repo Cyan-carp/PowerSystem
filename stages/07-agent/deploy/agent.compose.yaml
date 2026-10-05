@@ -1,0 +1,47 @@
+# Optional V2-M2 overlay for the stage4 unified stack.
+# Add with -f only after private files, audit directory ownership and backup
+# inclusion have been verified. API has no depends_on agent.
+services:
+  agent:
+    profiles: [agent]
+    build:
+      context: ../../07-agent
+    environment:
+      AGENT_BACKEND_URL: http://api:8080
+      AGENT_LLM_BASE_URL: ${AGENT_LLM_BASE_URL:-}
+      AGENT_LLM_MODEL: ${AGENT_LLM_MODEL:-}
+      AGENT_LLM_API_KEY_FILE: /run/secrets/agent_llm_key
+      AGENT_SERVICE_TOKEN_FILE: /run/secrets/agent_service_token
+      AGENT_MONITOR_TOKEN_FILE: /run/secrets/agent_monitor_token
+      AGENT_REDIS_URL: ${AGENT_REDIS_URL:?set internal authenticated Redis URL}
+      AGENT_AUDIT_DIR: /audit
+      AGENT_MISSES_DIR: /knowledge-misses
+    secrets: [agent_llm_key, agent_service_token, agent_monitor_token]
+    volumes:
+      - "${AGENT_AUDIT_HOST_DIR:?set writable audit directory}:/audit"
+      - "${AGENT_MISSES_HOST_DIR:-../../../runtime/agent-knowledge-misses}:/knowledge-misses"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8092/health',timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+  api:
+    environment:
+      AGENT_ENABLED: "true"
+      AGENT_INTERPRET_ENABLED: ${AGENT_INTERPRET_ENABLED:-true}
+      AGENT_URL: http://agent:8092
+      AGENT_SERVICE_TOKEN_FILE: /run/secrets/agent_service_token
+    secrets: [agent_service_token]
+  alertmanager:
+    group_add: ["10001"]
+    volumes:
+      - ./../../07-agent/deploy/alertmanager-agent.yml:/etc/alertmanager/alertmanager.yml:ro
+    secrets: [agent_monitor_token]
+secrets:
+  agent_llm_key:
+    file: ${AGENT_LLM_API_KEY_FILE:?set key file or empty local Ollama key file}
+  agent_service_token:
+    file: ${AGENT_SERVICE_TOKEN_FILE:?set service token file}
+  agent_monitor_token:
+    file: ${AGENT_MONITOR_TOKEN_FILE:?set independent monitor token file}

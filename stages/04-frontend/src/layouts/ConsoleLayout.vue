@@ -2,10 +2,12 @@
 import { onMounted, onUnmounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElNotification } from 'element-plus'
-import { Bell, DataAnalysis, DataBoard, Lightning, Monitor, Mute, SwitchButton } from '@element-plus/icons-vue'
+import { ChatDotSquare, Bell, DataAnalysis, DataBoard, Lightning, Monitor, Mute, SwitchButton } from '@element-plus/icons-vue'
 import { clearSession, currentUser } from '../lib/auth'
 import { realtime } from '../lib/realtime'
 import { dateTime, levelLabels } from '../lib/format'
+import PageHelp from '../components/PageHelp.vue'
+import InterpretationPanel from '../components/InterpretationPanel.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -72,8 +74,10 @@ onUnmounted(() => {
         <span class="brand-mark"><el-icon><Lightning /></el-icon></span>
         <span class="brand-text"><strong>源网智联</strong><small>新能源设备智能运维平台</small></span>
       </router-link>
-      <div class="topbar-context"><span>运行工作台</span><span class="slash">/</span><strong>{{ route.path === '/dashboard' ? '运行总览' : route.path.startsWith('/devices') ? '设备管理' : route.path === '/alarms' ? '告警中心' : '故障预测' }}</strong></div>
+      <div class="topbar-context"><span>运行工作台</span><span class="slash">/</span><strong>{{ route.meta.title || '运行工作台' }}</strong></div>
       <div class="topbar-actions">
+        <PageHelp />
+        <InterpretationPanel />
         <span class="connection" :class="realtime.connected.value ? 'online' : 'offline'"><span class="signal-dot" />{{ realtime.connected.value ? '实时连接正常' : '实时连接中断' }}</span>
         <span class="clock">{{ dateTime(now) }}</span>
         <el-button text :aria-label="soundOn ? '静音提示音' : '启用提示音'" @click="toggleSound"><el-icon><Bell v-if="soundOn" /><Mute v-else /></el-icon></el-button>
@@ -89,6 +93,7 @@ onUnmounted(() => {
           <router-link to="/devices" :class="{ active: route.path.startsWith('/devices') }"><el-icon><Monitor /></el-icon><span>设备管理</span></router-link>
           <router-link to="/alarms" :class="{ active: route.path === '/alarms' }"><el-icon><Bell /></el-icon><span>告警中心</span></router-link>
           <router-link to="/predictions" :class="{ active: route.path === '/predictions' }"><el-icon><DataAnalysis /></el-icon><span>故障预测</span></router-link>
+          <router-link to="/agent" :class="{ active: route.name === 'agent-chat' }"><el-icon><ChatDotSquare /></el-icon><span>值班问答</span></router-link>
         </nav>
         <div class="sidebar-foot"><span class="signal-dot" />合成数据演示</div>
       </aside>

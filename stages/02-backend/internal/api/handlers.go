@@ -88,6 +88,13 @@ func (s *Server) listDevices(c *gin.Context) {
 		return
 	}
 	query := s.db.Model(&model.Device{}).Where("deleted_at IS NULL")
+	if keyword := strings.TrimSpace(c.Query("keyword")); keyword != "" {
+		if len(keyword) > 128 {
+			fail(c, 400, 40001, "keyword exceeds 128 bytes")
+			return
+		}
+		query = query.Where("strpos(lower(name),lower(?)) > 0 OR strpos(lower(device_code),lower(?)) > 0", keyword, keyword)
+	}
 	if group := c.Query("group_name"); group != "" {
 		query = query.Where("group_name=?", group)
 	}

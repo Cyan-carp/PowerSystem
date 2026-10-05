@@ -40,7 +40,33 @@ export interface Prediction {
   source: string; created_at: string; stale: boolean
 }
 export type RealtimeEvent =
+  | { type: 'interpretation_updated'; data: { id?: number; status?: string; updated_at: string } }
+  | { type: 'agent_model_updated'; data: { available: boolean } }
   | { type: 'connected' | 'disconnected' }
   | { type: 'telemetry'; data: Telemetry }
   | { type: 'alarm_created' | 'alarm_acked' | 'alarm_recovered'; data: Alarm }
   | { type: 'prediction'; data: { device_id: number } }
+
+export interface AgentEvidence {
+  id: string; tool: string; status: string; source: string; collected_at: string; data_time: string | null
+  data: Record<string, unknown>
+}
+export interface AgentClaim { text: string; evidence_ids: string[]; equipment_operation?: boolean }
+export interface Interpretation {
+  id: number; event_key: string; category: 'device_alarm' | 'prediction_risk' | 'platform_monitor'
+  alarm_id: number | null; level: AlarmLevel; occurred_at: string; updated_at: string
+  task_status: 'pending' | 'running' | 'completed' | 'degraded'; reason: string; active: boolean; read: boolean
+  alarm: Alarm | null; monitor: Record<string, unknown> | null; evidence: AgentEvidence[] | null
+  result: { status: string; conclusion: AgentClaim | null; suggestions: AgentClaim[]; limitations: string[]; model?: string } | null
+}
+export interface AgentModelStatus { available: boolean; reason: string; message: string }
+
+export interface ChatEvidence extends AgentEvidence {
+  kind: 'business' | 'document' | 'web'; document_version?: string; chapter?: string; url?: string
+}
+export interface AgentChatResponse {
+  request_id: string; session_id: string; status: 'answered' | 'unable_to_determine' | 'degraded'
+  conclusion: AgentClaim | null; suggestions: AgentClaim[]; evidence: ChatEvidence[]
+  limitations: string[]; notices: string[]; model: string; knowledge_status: string; web_status: string; miss_record_status: string
+}
+export interface KnowledgeSource { id: string; document: string; heading: string; content: string; version: string; authority: string; document_date?: string }

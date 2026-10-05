@@ -1,6 +1,53 @@
 name: powersystem-restore
 
 services:
+  emqx-restore:
+    profiles: [agent-restore]
+    image: emqx:5.8.8
+    hostname: emqx-restore
+    environment:
+      EMQX_NODE_NAME: emqx@emqx-restore
+    healthcheck:
+      test: ["CMD", "/bin/bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/1883"]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+  restore-api:
+    profiles: [agent-restore]
+    image: ${V2M2_RESTORE_API_IMAGE:-powersystem-stage4-api}
+    environment:
+      HTTP_ADDR: 0.0.0.0:8080
+      MQTT_BROKER: tcp://emqx-restore:1883
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: powersystem
+      POSTGRES_USER: powersystem
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      REDIS_ADDR: redis:6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?set REDIS_PASSWORD}
+      TDENGINE_URL: http://tdengine:6041
+      TDENGINE_DATABASE: powersystem_stage2
+      TDENGINE_ROOT_PASSWORD: ${TDENGINE_ROOT_PASSWORD:?set TDENGINE_ROOT_PASSWORD}
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET}
+      STAGE2_DATA_DIR: /data/restore
+      AI_ENABLED: "false"
+      FEISHU_BUSINESS_ENABLED: "false"
+      AGENT_ENABLED: "true"
+      AGENT_INTERPRET_ENABLED: "true"
+      AGENT_URL: http://127.0.0.1:1
+      AGENT_SERVICE_TOKEN_FILE: /run/secrets/restore_agent_token
+    secrets: [restore_agent_token]
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/api/v1/ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+  redis:
+    image: redis:7.4.5-alpine
+    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD:?set REDIS_PASSWORD}"]
+    environment:
+      REDISCLI_AUTH: ${REDIS_PASSWORD:?set REDIS_PASSWORD}
+    volumes: ["redis-restore-data:/data"]
   postgres:
     image: postgres:17.6
     environment:
@@ -29,5 +76,10 @@ services:
       retries: 18
 
 volumes:
+  redis-restore-data:
   postgres-restore-data:
   tdengine-restore-data:
+
+secrets:
+  restore_agent_token:
+    file: ${V2M2_RESTORE_SERVICE_TOKEN:-/dev/null}

@@ -1,0 +1,11 @@
+# Optional search overlay. The existing chat model endpoint is not a search API.
+services:
+  agent:
+    environment:
+      AGENT_SEARCH_PROVIDER: ${AGENT_SEARCH_PROVIDER:-generic}
+      AGENT_SEARCH_URL: ${AGENT_SEARCH_URL:?set verified search endpoint}
+      AGENT_SEARCH_KEY_FILE: /run/secrets/agent_search_key
+    secrets: [agent_search_key]
+secrets:
+  agent_search_key:
+    file: ${AGENT_SEARCH_KEY_FILE:?set private search key file}

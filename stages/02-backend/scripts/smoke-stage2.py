@@ -91,7 +91,15 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--base", default="http://127.0.0.1:8080")
+    parser.add_argument("--admin-token-file", type=Path, help="private admin token for CRUD checks; operator remains the query/ack identity")
     args = parser.parse_args()
+    admin_token = args.admin_token_file.read_text(encoding="utf-8-sig").strip() if args.admin_token_file else ""
+    api_request = globals()["request"]
+    def request(base, method, path, body=None, token=""):
+        # Stage4 tightened CRUD to admin; retain operator for read and ack tests.
+        if admin_token and method in ("POST", "PUT", "DELETE") and (path.startswith("/api/v1/devices") or path.startswith("/api/v1/alarm-rules")):
+            token = admin_token
+        return api_request(base, method, path, body, token)
     base = args.base.rstrip("/")
     unique = uuid.uuid4().hex[:8]
     username, password = f"smoke_{unique}", f"Smoke-{uuid.uuid4().hex}!a9"

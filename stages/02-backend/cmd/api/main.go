@@ -36,7 +36,7 @@ func main() {
 	if err != nil {
 		logger.Fatal("postgres", zap.Error(err))
 	}
-	for _, path := range []string{"deploy/postgres/001_init.sql", "deploy/postgres/002_predictions.sql", "deploy/postgres/003_energy.sql", "deploy/postgres/004_business_notifications.sql"} {
+	for _, path := range []string{"deploy/postgres/001_init.sql", "deploy/postgres/002_predictions.sql", "deploy/postgres/003_energy.sql", "deploy/postgres/004_business_notifications.sql", "deploy/postgres/005_agent_interpretations.sql"} {
 		if err = store.Migrate(pg, path); err != nil {
 			logger.Fatal("migration", zap.Error(err))
 		}

@@ -32,6 +32,10 @@ type Config struct {
 	BusinessNotifyEnabled bool
 	BusinessNotifyURL     string
 	BusinessNotifyToken   string
+	AgentEnabled          bool
+	AgentURL              string
+	AgentToken            string
+	AgentInterpretEnabled bool
 }
 
 var identifier = regexp.MustCompile(`^[a-z][a-z0-9_]{0,63}$`)
@@ -62,6 +66,20 @@ func Load(service string) (Config, error) {
 		TDPassword: v.GetString("TDENGINE_ROOT_PASSWORD"), TDDatabase: v.GetString("TDENGINE_DATABASE"),
 		JWTSecret: v.GetString("JWT_SECRET"), AIURL: v.GetString("AI_URL"), AIEnabled: v.GetBool("AI_ENABLED"), AIPollSeconds: v.GetInt("AI_POLL_SECONDS"),
 		BusinessNotifyEnabled: v.GetBool("FEISHU_BUSINESS_ENABLED"), BusinessNotifyURL: v.GetString("FEISHU_BUSINESS_URL"),
+		AgentEnabled: v.GetBool("AGENT_ENABLED"), AgentURL: v.GetString("AGENT_URL"),
+		AgentInterpretEnabled: v.GetBool("AGENT_INTERPRET_ENABLED"),
+	}
+	// Agent configuration must never prevent the business API from starting.
+	if cfg.AgentEnabled && service == "api" {
+		if cfg.AgentURL == "" {
+			cfg.AgentURL = "http://127.0.0.1:8092"
+		}
+		parsed, parseErr := url.Parse(cfg.AgentURL)
+		content, readErr := os.ReadFile(v.GetString("AGENT_SERVICE_TOKEN_FILE"))
+		if parseErr == nil && parsed.Scheme == "http" && parsed.Host != "" && parsed.User == nil && (parsed.Path == "" || parsed.Path == "/") && parsed.RawQuery == "" && parsed.Fragment == "" && readErr == nil && len(strings.TrimSpace(string(content))) >= 32 {
+			cfg.AgentToken = strings.TrimSpace(string(content))
+			cfg.AgentURL = strings.TrimRight(cfg.AgentURL, "/")
+		}
 	}
 	if cfg.BusinessNotifyEnabled && service == "api" {
 		parsed, err := url.Parse(cfg.BusinessNotifyURL)

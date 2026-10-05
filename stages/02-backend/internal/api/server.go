@@ -74,6 +74,13 @@ func New(cfg config.Config, db *gorm.DB, redis *redis.Client, td *tdengine.Clien
 	a.POST("/alarms/:id/ack", s.ackAlarm)
 	a.GET("/dashboard/summary", s.dashboard)
 	a.POST("/ws-ticket", s.ticket)
+	a.POST("/agent/chat", s.agentChat)
+	a.GET("/agent/knowledge/:id", s.agentKnowledge)
+	a.GET("/agent/interpretations", s.listInterpretations)
+	a.GET("/agent/interpretations/:id", s.getInterpretation)
+	a.POST("/agent/interpretations/:id/read", s.readInterpretation)
+	a.GET("/agent/model-status", requireAdmin, s.agentModelStatus)
+	a.POST("/agent/model-probe", requireAdmin, s.agentModelProbe)
 	r.GET("/ws/realtime", s.websocket)
 	r.GET("/test/ws", func(c *gin.Context) { c.File("test/ws.html") })
 	s.router = r
@@ -85,6 +92,13 @@ func (s *Server) Run(ctx context.Context) error {
 	s.restoreLatest(ctx)
 	go s.worker(ctx)
 	go s.energyWorker(ctx)
+	if s.cfg.AgentInterpretEnabled {
+		go s.interpretationScanner(ctx)
+		go s.monitorConsumer(ctx)
+		for i := 0; i < 2; i++ {
+			go s.interpretationWorker(ctx)
+		}
+	}
 	if s.cfg.BusinessNotifyEnabled {
 		go s.businessNotificationWorker(ctx)
 	}

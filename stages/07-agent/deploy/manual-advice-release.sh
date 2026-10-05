@@ -1,0 +1,93 @@
+#!/usr/bin/env bash
+# Reviewable incremental release; no private configuration or data-volume changes.
+set -euo pipefail
+root=${POWERSYSTEM_DIR:-/opt/powersystem}
+archive=${1:?reviewed archive required}
+expected=${2:?SHA256 required}
+test "$(sha256sum "$archive" | cut -d' ' -f1)" = "$expected"
+cd "$root"
+release="$root/runtime/manual-advice-$(date -u +%Y%m%dT%H%M%SZ)"
+release_id=${release##*/}
+mkdir -m 700 "$release"
+cp "$archive" "$release/approved.tar.gz"
+for service in api agent frontend; do
+  docker inspect --format '{{.Image}}' "powersystem-stage4-$service-1" > "$release/baseline-$service-image.txt"
+  if [ "$service" != api ]; then
+    docker tag "$(cat "$release/baseline-$service-image.txt")" "powersystem-manual-$service:baseline-$release_id"
+  fi
+done
+python3 - "$release" <<'PY'
+import pathlib,sys
+release=pathlib.Path(sys.argv[1])
+images={service:'powersystem-manual-'+service+':baseline-'+release.name for service in ('agent','frontend')}
+(release/'baseline.yaml').write_text('services:\n'+''.join('  '+key+':\n    image: '+value+'\n' for key,value in images.items()))
+PY
+rollback_release() {
+  local failed=$?
+  if [ -s "$release/manifest.json" ]; then
+    python3 - "$root" "$release" <<'PY'
+import pathlib,tarfile,json,hashlib,sys
+root,r=map(pathlib.Path,sys.argv[1:])
+with tarfile.open(r/'source-baseline.tar.gz') as archive:
+    for row in json.loads((r/'manifest.json').read_text()):
+        target=(root/row['path']).resolve()
+        assert target.is_relative_to(root.resolve())
+        if row['existed']:
+            raw=archive.extractfile(row['path']).read()
+            assert hashlib.sha256(raw).hexdigest()==row['baseline_sha256']
+            target.write_bytes(raw)
+        elif target.is_file() and not target.is_symlink(): target.unlink()
+PY
+    docker compose --env-file .env -f stages/04-frontend/deploy/compose.yaml -f stages/07-agent/deploy/agent.compose.yaml -f stages/07-agent/deploy/search.compose.yaml -f "$release/baseline.yaml" --profile agent up -d --no-deps --no-build --pull never --force-recreate --wait agent frontend
+  fi
+  printf 'release_failed_and_rollback_attempted=%s\n' "$failed" >&2
+  exit "$failed"
+}
+trap rollback_release ERR
+python3 - "$root" "$release" <<'PY'
+import pathlib,tarfile,json,hashlib,sys
+root,release=map(pathlib.Path,sys.argv[1:]); rows=[]
+with tarfile.open(release/'approved.tar.gz') as package:
+    members=package.getmembers()
+    for member in members:
+        path=pathlib.PurePosixPath(member.name); target=(root/member.name).resolve()
+        allowed=member.name.startswith(('stages/07-agent/','stages/04-frontend/src/','第二版-智能体升级/','第一版-平台主体/测试数据与测试资产/')) or (len(path.parts)==1 and path.suffix=='.md')
+        if not allowed or not member.isfile() or not target.is_relative_to(root.resolve()) or any(part in ('.env','.git','runtime','artifacts','node_modules','__pycache__') for part in path.parts):
+            raise ValueError('invalid release member')
+    with tarfile.open(release/'source-baseline.tar.gz','w:gz') as baseline:
+        for member in members:
+            target=root/member.name; existed=target.is_file()
+            row={'path':member.name,'existed':existed}
+            if existed:
+                row['baseline_sha256']=hashlib.sha256(target.read_bytes()).hexdigest()
+                baseline.add(target,arcname=member.name)
+            raw=package.extractfile(member).read(); row['sha256']=hashlib.sha256(raw).hexdigest(); rows.append(row)
+    (release/'manifest.json').write_text(json.dumps(rows,ensure_ascii=False,indent=2))
+    for member in members:
+        target=root/member.name; target.parent.mkdir(parents=True,exist_ok=True)
+        target.write_bytes(package.extractfile(member).read())
+        target.chmod(0o644)
+PY
+dc=(docker compose --env-file .env -f stages/04-frontend/deploy/compose.yaml -f stages/07-agent/deploy/agent.compose.yaml -f stages/07-agent/deploy/search.compose.yaml --profile agent)
+"${dc[@]}" config --quiet
+"${dc[@]}" build agent frontend > "$release/build.log" 2>&1
+"${dc[@]}" run --rm --no-deps --entrypoint python agent -c 'import agent.main; print("candidate_import_ok")' >> "$release/build.log" 2>&1
+for service in agent frontend; do
+  docker tag "powersystem-stage4-$service" "powersystem-manual-$service:current-$release_id"
+done
+python3 - "$release" <<'PY'
+import pathlib,sys
+r=pathlib.Path(sys.argv[1])
+(r/'current.yaml').write_text('services:\n'+''.join('  '+s+':\n    image: powersystem-manual-'+s+':current-'+r.name+'\n' for s in ('agent','frontend')))
+PY
+"${dc[@]}" -f "$release/current.yaml" up -d --no-deps --no-build --pull never --force-recreate --wait agent frontend
+python3 - "$release" <<'PY'
+import pathlib,subprocess,json,sys
+r=pathlib.Path(sys.argv[1]); images={}
+for service in ('api','agent','frontend'):
+    images[service]=subprocess.check_output(['docker','inspect','--format','{{.Image}}','powersystem-stage4-'+service+'-1'],text=True).strip()
+(r/'current-images.json').write_text(json.dumps(images,indent=2))
+assert images['api']==(r/'baseline-api-image.txt').read_text().strip()
+PY
+printf '%s\n' "$release"
+trap - ERR

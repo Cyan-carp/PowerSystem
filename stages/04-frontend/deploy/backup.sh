@@ -42,7 +42,37 @@ dc=(docker compose --env-file "$env_file" -f "$compose_file")
 cp "$project_dir/runtime/model/model.json" "$project_dir/runtime/model/metadata.json" "$staging/"
 cp "$env_file" "$staging/config/.env"
 cp /etc/powersystem/feishu-webhook-url /etc/powersystem/feishu-sign-secret /etc/powersystem/business-notify-token "$staging/config/"
-chmod 600 "$staging/config/.env" "$staging/config/"*
+if [ -s /etc/powersystem/agent-service-token ]; then
+  mkdir -m 700 "$staging/config/agent"
+  for agent_file in agent-service-token agent-monitor-token agent-model-key; do
+    test -f "/etc/powersystem/$agent_file"
+    cp "/etc/powersystem/$agent_file" "$staging/config/agent/"
+  done
+  "${dc[@]}" exec -T redis redis-cli --rdb /tmp/powersystem-agent-backup.rdb >/dev/null
+  redis_container=$("${dc[@]}" ps -q redis)
+  docker cp "$redis_container:/tmp/powersystem-agent-backup.rdb" "$staging/redis.rdb"
+  "${dc[@]}" exec -T redis rm -f /tmp/powersystem-agent-backup.rdb
+  if [ -d "$project_dir/runtime/agent-audit" ]; then
+    cp -a "$project_dir/runtime/agent-audit" "$staging/agent-audit"
+  fi
+  if [ -f /etc/powersystem/agent-search-key ]; then
+    cp /etc/powersystem/agent-search-key "$staging/config/agent/"
+  fi
+  # Use the actual bind source, including private AGENT_MISSES_HOST_DIR overrides.
+  agent_misses_dir="$project_dir/runtime/agent-knowledge-misses"
+  if docker inspect powersystem-stage4-agent-1 >/dev/null 2>&1; then
+    mounted_misses=$(docker inspect --format '{{range .Mounts}}{{if eq .Destination "/knowledge-misses"}}{{.Source}}{{end}}{{end}}' powersystem-stage4-agent-1)
+    if [ -n "$mounted_misses" ]; then agent_misses_dir="$mounted_misses"; fi
+  fi
+  if [ -d "$agent_misses_dir" ]; then
+    cp -a "$agent_misses_dir" "$staging/agent-knowledge-misses"
+  fi
+  if [ -f "$project_dir/stages/07-agent/knowledge/index.json" ]; then
+    cp "$project_dir/stages/07-agent/knowledge/index.json" "$staging/knowledge-index.json"
+  fi
+fi
+find "$staging/config" -type f -exec chmod 600 {} +
+find "$staging/config" -type d -exec chmod 700 {} +
 (cd "$staging" && find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS)
 
 tar -C "$backup_dir" -czf "$backup_dir/$run_id.tar.gz" "$run_id"

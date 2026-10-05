@@ -2,7 +2,7 @@
 
 本阶段用离线合成数据训练可解释的 XGBoost 模型，经 FastAPI 服务供阶段二 Go 后端调用。训练数据和模型来自合成逆变器；评估结果只说明该合成场景。阶段二的 M2 代码、验收库及记录保持独立。
 
-对应笔记：[00-索引·开发阶段3-AI预测模块](../../开发阶段3-AI预测模块/00-索引·开发阶段3-AI预测模块.md)。
+对应笔记：[00-索引·开发阶段3-AI预测模块](../../第一版-平台主体/开发阶段3-AI预测模块/00-索引·开发阶段3-AI预测模块.md)。
 
 ## 一、准备与快速训练
 
@@ -12,12 +12,12 @@
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\stages\03-ai-prediction\scripts\build-model.ps1 -Python python -Days 21
 ```
 
-脚本安装锁定版本的依赖到 `artifacts/stage3/pydeps/`，离线生成 21 天、3 台设备的分钟级遥测及故障起点，再按日期切分训练、验证、测试集。输出：
+脚本安装锁定版本的依赖到 `artifacts/stage3-AI预测/pydeps/`，离线生成 21 天、3 台设备的分钟级遥测及故障起点，再按日期切分训练、验证、测试集。输出：
 
 | 路径 | 内容 |
 | --- | --- |
-| `artifacts/stage3/synthetic/` | `telemetry.csv.gz`、`fault-events.jsonl`、生成参数 |
-| `artifacts/stage3/model/` | XGBoost 模型、阈值、特征契约及评估报告 |
+| `artifacts/stage3-AI预测/synthetic/` | `telemetry.csv.gz`、`fault-events.jsonl`、生成参数 |
+| `artifacts/stage3-AI预测/model/` | XGBoost 模型、阈值、特征契约及评估报告 |
 
 默认生成器固定种子 2026；改种子需直接调用 `python -m prediction.generate --seed ...`。所有运行产物都被 Git 忽略。模型由本项目合成数据训练，不是公开数据集上的预训练权重。
 
@@ -83,7 +83,7 @@ $run = Join-Path .\artifacts\stage3 ("integration-" + (Get-Date -Format 'yyyyMMd
 
 ## 三、评估与公开数据
 
-训练报告在 `artifacts/stage3/model/evaluation.md` 和 `evaluation.json`。模型输入只含窗口结束前的电压、电流、温度、功率；`status` 和 `fault_code` 不进入特征。正样本定义为窗口结束后 60 分钟内首次发生故障，故障中及恢复后的过渡窗口排除。训练、验证、测试按日期顺序切分。
+训练报告在 `artifacts/stage3-AI预测/model/evaluation.md` 和 `evaluation.json`。模型输入只含窗口结束前的电压、电流、温度、功率；`status` 和 `fault_code` 不进入特征。正样本定义为窗口结束后 60 分钟内首次发生故障，故障中及恢复后的过渡窗口排除。训练、验证、测试按日期顺序切分。
 
 从已保存模型和相同的测试日期生成全局特征贡献排序：
 
@@ -92,7 +92,7 @@ $env:PYTHONPATH = "$(Resolve-Path .\artifacts\stage3\pydeps);$(Resolve-Path .\st
 python -m prediction.report_model --data .\artifacts\stage3\synthetic --model .\artifacts\stage3\model --out .\artifacts\stage3\model\importance.json
 ```
 
-结果采用测试窗平均绝对 TreeSHAP 贡献，详细解释见 [阶段三总结](../../开发阶段3-AI预测模块/07-阶段三总结.md)。它是全局解释，不等于 `/predict` 响应中单个窗口的 `top_factors`。
+结果采用测试窗平均绝对 TreeSHAP 贡献，详细解释见 [阶段三总结](../../第一版-平台主体/开发阶段3-AI预测模块/07-阶段三总结.md)。它是全局解释，不等于 `/predict` 响应中单个窗口的 `top_factors`。
 
 下载公开光伏数据后先做字段盘点：
 
@@ -110,7 +110,7 @@ python -m prediction.inspect_external .\artifacts\stage3\external\pv_fault_datas
 python -m prediction.audit_pv_fault .\artifacts\stage3\external\pv_fault_dataset --out .\artifacts\stage3\external\pv_fault_dataset\audit.json
 ```
 
-数据来源、许可、字段映射和无法验证提前一小时预测的原因见 [公开数据审计](../../开发阶段3-AI预测模块/08-公开数据审计.md)。原始数据留在被忽略的 `artifacts/`，按原作者许可证和引用要求自行获取。
+数据来源、许可、字段映射和无法验证提前一小时预测的原因见 [公开数据审计](../../第一版-平台主体/开发阶段3-AI预测模块/08-公开数据审计.md)。原始数据留在被忽略的 `artifacts/`，按原作者许可证和引用要求自行获取。
 
 同一审计还取得 [OpenCEM](https://github.com/OpenCEM-platform/opencem-dataset) 的两个 CSV 分片。取得对应分片后可核对列数、时间间隔、部分关键字段缺失及故障标签列：
 
@@ -137,4 +137,4 @@ Pop-Location
 - AI 告警确认与恢复、WebSocket 推送
 - 服务重启去重
 
-当前合成测试成绩不应表述为真实场站准确率。智能体只规划只读诊断工具，见 [05-智能体接口设计](../../开发阶段3-AI预测模块/05-智能体接口设计.md)。
+当前合成测试成绩不应表述为真实场站准确率。智能体只规划只读诊断工具，见 [05-智能体接口设计](../../第一版-平台主体/开发阶段3-AI预测模块/05-智能体接口设计.md)。

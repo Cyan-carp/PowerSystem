@@ -4,6 +4,7 @@ import (
 	"errors"
 	"math"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -167,6 +168,36 @@ func (s *Server) listAlarms(c *gin.Context) {
 		return
 	}
 	query := s.db.Model(&model.AlarmRecord{})
+	if device := c.Query("device_id"); device != "" {
+		deviceID, err := strconv.ParseInt(device, 10, 64)
+		if err != nil || deviceID < 1 {
+			fail(c, 400, 40001, "invalid device_id")
+			return
+		}
+		query = query.Where("device_id=?", deviceID)
+	}
+	var start, end time.Time
+	for _, filter := range []struct {
+		name       string
+		target     *time.Time
+		expression string
+	}{
+		{"start", &start, "triggered_at >= ?"}, {"end", &end, "triggered_at <= ?"},
+	} {
+		if raw := c.Query(filter.name); raw != "" {
+			parsed, err := time.Parse(time.RFC3339, raw)
+			if err != nil {
+				fail(c, 400, 40001, "start/end require RFC3339 timestamps")
+				return
+			}
+			*filter.target = parsed
+			query = query.Where(filter.expression, parsed)
+		}
+	}
+	if !start.IsZero() && !end.IsZero() && !end.After(start) {
+		fail(c, 400, 40001, "end must be after start")
+		return
+	}
 	if status := c.Query("status"); status != "" {
 		if status != "unhandled" && status != "acked" && status != "recovered" {
 			fail(c, 400, 40001, "invalid status")

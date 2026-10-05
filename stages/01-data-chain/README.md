@@ -55,7 +55,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\stages\01-data-chain\s
 | --- | --- |
 | 运行编号 | 脚本输出唯一编号（如 `stage1_20260927_140000_abcd`） |
 | 审查包 | 输出绝对路径 |
-| 日志目录 | `artifacts/stage1/<运行编号>/`，含 `metrics.csv`、`events.jsonl`、模拟器/网关/容器日志 |
+| 日志目录 | `artifacts/stage1-数据链路/<运行编号>/`，含 `metrics.csv`、`events.jsonl`、模拟器/网关/容器日志 |
 | 自动产物 | 退出时生成 `reconciliation.json`、`telemetry.csv`、`summary.md`、`review-bundle.zip` |
 
 > 无需人工持续监视，但应保持终端、电脑和 Docker Desktop 运行。
@@ -68,9 +68,9 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\stages\01-data-chain\s
 | 脚本失败 / 主动中断 | 保留审查包、终端最后错误文字及中断原因 |
 | 重启 / 断电 / 强制结束 | 重新打开 Docker Desktop 后，在项目根目录运行 `powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\stages\01-data-chain\scripts\collect-stage1-test.ps1 -RunId <运行编号>`，记录重新生成的审查包路径及大约中断时间；Docker Desktop 窗口若显示未写日志的错误，再附截图 |
 
-审查者应核对每台 720 条、序号连续、无重复、待发/待写队列清零和恢复耗时。首次一小时 M1 已于 2026-09-27 审查通过，结果见 [04-阶段一测试与交付](../../开发阶段1-数据链路/04-阶段一测试与交付.md)。
+审查者应核对每台 720 条、序号连续、无重复、待发/待写队列清零和恢复耗时。首次一小时 M1 已于 2026-09-27 审查通过，结果见 [04-阶段一测试与交付](../../第一版-平台主体/开发阶段1-数据链路/04-阶段一测试与交付.md)。
 
-**运行编号找回**：从 `artifacts/stage1/` 下的文件夹名找回。
+**运行编号找回**：从 `artifacts/stage1-数据链路/` 下的文件夹名找回。
 
 > `collect-stage1-test.ps1` 可重复执行，会重做对账和压缩包；原始日志与 SQLite 数据保留。若 TDengine 当时不可用，对账 JSON 会记录查询错误，现有日志仍会打包。
 
@@ -93,7 +93,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\stages\01-data-chain\s
 | 网关待写队列 | TDengine 成功响应后清除 |
 | 去重 | 网关按 `(device_id, seq)`；TDengine 用设备子表和时间戳防重复 |
 
-阶段一目录整理与 M1 证据位置见[阶段一目录迁移记录](../../开发阶段1-数据链路/05-阶段一目录迁移记录.md)；当前生成物、Docker 卷和备份边界见[运行产物说明](../../运行产物说明.md)与[运维与二次开发手册](../../平台运维与二次开发手册.md)。
+阶段一目录整理与 M1 证据位置见[阶段一目录迁移记录](../../第一版-平台主体/开发阶段1-数据链路/05-阶段一目录迁移记录.md)；当前生成物、Docker 卷和备份边界见[运行产物说明](../../运行产物说明.md)与[运维与二次开发手册](../../平台运维与二次开发手册.md)。
 
 **停止容器**：
 

@@ -1,5 +1,5 @@
 import { clearSession, token } from './auth'
-import type { Alarm, ApiEnvelope, Device, History, LoginResult, Metric, Page, Prediction, PredictionListItem, Summary, Telemetry } from '../types'
+import type { Alarm, ApiEnvelope, Device, History, LoginResult, Metric, Page, Prediction, PredictionListItem, Summary, Telemetry, Interpretation, AgentModelStatus, AgentChatResponse, KnowledgeSource } from '../types'
 
 export class ApiError extends Error {
   constructor(public status: number, public code: number, message: string) { super(message) }
@@ -20,7 +20,10 @@ export async function request<T>(path: string, init: RequestInit = {}): Promise<
   if (token.value) headers.set('Authorization', `Bearer ${token.value}`)
   let response: Response
   try { response = await fetch(path, { ...init, headers }) }
-  catch { throw new ApiError(0, 0, '无法连接后端服务，请检查本机服务状态') }
+  catch (error) {
+    if (init.signal?.aborted) throw error
+    throw new ApiError(0, 0, '无法连接后端服务，请检查本机服务状态')
+  }
   let envelope: ApiEnvelope<T>
   try { envelope = await response.json() as ApiEnvelope<T> }
   catch { throw new ApiError(response.status, 0, response.ok ? '服务返回了无法解析的数据' : `后端服务暂不可用（HTTP ${response.status}）`) }
@@ -35,6 +38,15 @@ export async function request<T>(path: string, init: RequestInit = {}): Promise<
 }
 
 export const api = {
+  chat: (message: string, sessionID?: string, signal?: AbortSignal) => request<AgentChatResponse>('/api/v1/agent/chat', {
+    method: 'POST', body: JSON.stringify({ message, ...(sessionID ? { session_id: sessionID } : {}) }), signal,
+  }),
+  knowledge: (id: string, signal?: AbortSignal) => request<KnowledgeSource>(`/api/v1/agent/knowledge/${encodeURIComponent(id)}`, { signal }),
+  interpretations: (page = 1, attention = false) => request<Page<Interpretation>>(`/api/v1/agent/interpretations${query({ page, page_size: 100, attention: attention ? 'true' : undefined })}`),
+  interpretation: (id: number) => request<Interpretation>(`/api/v1/agent/interpretations/${id}`),
+  readInterpretation: (id: number) => request(`/api/v1/agent/interpretations/${id}/read`, { method: 'POST' }),
+  modelStatus: () => request<AgentModelStatus>('/api/v1/agent/model-status'),
+  modelProbe: () => request('/api/v1/agent/model-probe', { method: 'POST' }),
   login: (username: string, password: string) => request<LoginResult>('/api/v1/auth/login', { method: 'POST', body: JSON.stringify({ username, password }) }),
   devices: (page = 1, pageSize = 20, groupName = '') => request<Page<Device>>(`/api/v1/devices${query({ page, page_size: pageSize, group_name: groupName })}`),
   device: (id: number) => request<Device>(`/api/v1/devices/${id}`),
