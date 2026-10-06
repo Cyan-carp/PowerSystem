@@ -1,3 +1,14 @@
 {
-  "promptDelete": false
+  "promptDelete": false,
+  "userIgnoreFilters": [
+    "artifacts/",
+    "stages/",
+    "node_modules/",
+    ".venv/",
+    ".git/",
+    ".workbuddy/",
+    "dist/",
+    "runtime/",
+    "data/"
+  ]
 }
