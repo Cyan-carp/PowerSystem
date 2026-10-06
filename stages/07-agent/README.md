@@ -192,9 +192,13 @@ bash stages/07-agent/deploy/verify-bocha-release.sh /opt/powersystem/runtime/<�
 `verify-bocha-release.sh` 保留当前镜像，实际切回第三阶段无联网镜像及私有配置，再恢复博查镜像；失败时通过 trap 恢复，不清理知识缺口。它还使用明确无效的测试密钥调用搜索接口，确认认证失败未改变 Redis 模型暂停状态。恢复完成后再执行本页观察命令；加密备份和隔离恢复使用原统一部署脚本，不新增端口。注意 `.env` 回退基线属于私有材料，权限 600。
 
 
-服务器只在已取得接口文档与凭据后追加 `deploy/search.compose.yaml`。秘密文件放私有目录，不进入命令参数或浏览器。当前供应商聊天鉴权成功，原生联网能力尚未证明；不得据此签收真实搜索。
+新环境只在已取得接口文档与凭据后追加 `deploy/search.compose.yaml`。秘密文件放私有目录，不进入命令参数或浏览器。2026-10-03 早期批次曾仅证明供应商聊天鉴权，不能据此签收真实搜索；后续真实博查五题的最终技术结果见 V2-M3/V2-M4 正式交付页，专业来源审核仍待完成。
 
 #### 步骤 3 · 汇总与审核知识缺口
+
+**作者本机只读入口**：双击 Git 忽略目录 `artifacts/stage7-智能体/private/查看远程知识缺口.cmd`。它通过已有 SSH 私钥和严格主机密钥校验读取 R730xd 运行中 Agent 的 `/knowledge-misses` 挂载，自动打开 `artifacts/stage7-智能体/private/reports/knowledge-misses.html`。每次重新读取并覆盖报告；连接或解析失败时删除旧报告并显示错误。报告可搜索、筛选审核状态、按问题去重，展开查看逐条记录。入口、报告和原始问题都不得提交或分享；本地报告可能含脱敏规则未识别的自由文本信息。能够使用本机账号与已授权私钥的人也能使用该入口，脚本不提供额外身份验证。
+
+仓库通用脚本 `scripts/view_remote_knowledge_misses.py` 不含服务器地址或私钥，需显式提供 `--host`、`--port`、`--user` 和 `--identity`；`--no-open` 只生成报告，不打开浏览器。它仅读取当前 Agent 的宿主挂载与 JSONL，不修改服务器记录、审核状态或服务。新电脑需要在自己的 Git 忽略目录建立专用入口，不复制作者凭据。此入口用于查看，不代替下列离线审核命令。
 
 ```powershell
 .venv/Scripts/python.exe stages/07-agent/scripts/knowledge-misses.py artifacts/stage7-智能体/v2m3/knowledge-misses --output artifacts/stage7-智能体/v2m3/knowledge-summary.json
