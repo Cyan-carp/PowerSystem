@@ -148,17 +148,27 @@ tags:
 
 ## 九、阶段四第 13、14 周前端增量契约
 
-| 方法 | 路径 | 约定 |
-| --- | --- | --- |
-| GET | `/api/v1/predictions?page=&page_size=` | JWT；每台未删除设备一行，返回设备 ID、编号、名称、场站、分组及最新预测概要 |
+- `GET /api/v1/predictions?page=&page_size=`：JWT 鉴权；每台未删除设备一行，返回设备 ID、编号、名称、场站、分组及最新预测概要。
 
-列表延续 `code/message/data` 和 `{list,page,page_size,total}`。有结果行包含 `window_end_ms`、`probability`、`threshold`、`risk_level`、`model_version`、`source`、`stale`；无结果行的预测字段为 `null`，`stale=false`。有效结果按概率降序，过期结果和无结果设备随后。详情及 `top_factors` 仍由 `GET /api/v1/devices/{id}/prediction` 提供。过期界限是窗口结束时间距当前超过 15 分钟，前端须标示“合成数据训练模型”。
+列表延续 `code/message/data` 和 `{list,page,page_size,total}`。
+
+**结果行字段**
+
+- 有结果行：`window_end_ms`、`probability`、`threshold`、`risk_level`、`model_version`、`source`、`stale`。
+- 无结果行：预测字段为 `null`，`stale=false`。
+- 有效结果按概率降序，过期结果和无结果设备随后。
+- 详情及 `top_factors` 仍由 `GET /api/v1/devices/{id}/prediction` 提供。
+- 过期界限是窗口结束时间距当前超过 15 分钟，前端须标示“合成数据训练模型”。
 
 本地 Vite 跨端口开发时，Go 后端可通过 `WS_ALLOWED_ORIGINS` 配置精确 WebSocket Origin 白名单；不配置时维持同源校验。前端先用 JWT 调用 `POST /api/v1/ws-ticket`，再用单次 ticket 连接 `/ws/realtime`。详见 [[第一版-平台主体/开发阶段4-前端、上线与沉淀/02-第14周·实时告警与预测]]。
 
 ## 十、第一版阶段五内部通知接口
 
-`feishu-adapter` 仅在 Compose 内网监听 `POST /business`。Go API 使用私有文件中的独立令牌设置 `X-PowerSystem-Token`，发送告警事件 ID、类别（设备/AI）、状态（触发、确认、恢复、配置关闭）、设备与场站编号、级别、指标、触发记录值、阈值和事件时间。适配器校验令牌及字段后向飞书发送签名文本；只有飞书返回成功才向 Go API 返回 200。外部用户不经此接口，业务 REST 和 WebSocket 契约保持不变。失败任务留在 PostgreSQL 重试表；接口的 200 仍须配合群内可见性验证。
+- `feishu-adapter` 仅在 Compose 内网监听 `POST /business`。
+- Go API 使用私有文件中的独立令牌设置 `X-PowerSystem-Token`，发送告警事件 ID、类别（设备/AI）、状态（触发、确认、恢复、配置关闭）、设备与场站编号、级别、指标、触发记录值、阈值和事件时间。
+- 适配器校验令牌及字段后向飞书发送签名文本；只有飞书返回成功才向 Go API 返回 200。
+- 外部用户不经此接口，业务 REST 和 WebSocket 契约保持不变。
+- 失败任务留在 PostgreSQL 重试表；接口的 200 仍须配合群内可见性验证。
 
 ## 十一、第二版智能体接口（v2.0.0 生效）
 
