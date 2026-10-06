@@ -200,6 +200,8 @@ bash stages/07-agent/deploy/verify-bocha-release.sh /opt/powersystem/runtime/<�
 
 仓库通用脚本 `scripts/view_remote_knowledge_misses.py` 不含服务器地址或私钥，需显式提供 `--host`、`--port`、`--user` 和 `--identity`；`--no-open` 只生成报告，不打开浏览器。它仅读取当前 Agent 的宿主挂载与 JSONL，不修改服务器记录、审核状态或服务。新电脑需要在自己的 Git 忽略目录建立专用入口，不复制作者凭据。此入口用于查看，不代替下列离线审核命令。
 
+Windows 64 位收件人可使用忽略目录 `artifacts/stage7-智能体/distribution/PowerSystem-Knowledge-Misses-share.zip` 中的单文件程序。双击时按提示填入自己获授权的 SSH 地址、端口、用户名及本机私钥；打包版把报告写入当前用户的 `%LOCALAPPDATA%/PowerSystem/knowledge-misses/`。程序不含作者连接参数或私钥，仍需收件人具备服务器授权、已核验主机密钥、Windows OpenSSH、远端 Python3 和 Docker 读取权限。分发包仅含 `.exe` 与使用说明，构建缓存、私有入口和报告均不分享；产物位置见 [[运行产物说明]]。
+
 ```powershell
 .venv/Scripts/python.exe stages/07-agent/scripts/knowledge-misses.py artifacts/stage7-智能体/v2m3/knowledge-misses --output artifacts/stage7-智能体/v2m3/knowledge-summary.json
 ```

@@ -13,13 +13,15 @@ import subprocess
 import sys
 import tempfile
 import webbrowser
-from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
-REPORT = REPO_ROOT / "artifacts/stage7-智能体/private/reports/knowledge-misses.html"
+if getattr(sys, "frozen", False):
+    REPORT = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "PowerSystem/knowledge-misses/knowledge-misses.html"
+else:
+    REPO_ROOT = Path(__file__).resolve().parents[3]
+    REPORT = REPO_ROOT / "artifacts/stage7-智能体/private/reports/knowledge-misses.html"
 MAX_REPLY_BYTES = 16 * 1024 * 1024
 CONTAINER_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]*\Z")
 
@@ -183,13 +185,28 @@ def write_report(content: str) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="通过 SSH 只读查看运行中 Agent 的知识缺口")
-    parser.add_argument("--host", required=True)
-    parser.add_argument("--port", required=True, type=int)
-    parser.add_argument("--user", required=True)
-    parser.add_argument("--identity", required=True, type=Path)
+    parser.add_argument("--host")
+    parser.add_argument("--port", type=int)
+    parser.add_argument("--user")
+    parser.add_argument("--identity", type=Path)
     parser.add_argument("--container", default="powersystem-stage4-agent-1")
     parser.add_argument("--no-open", action="store_true", help="只生成报告，不启动浏览器")
     args = parser.parse_args(argv)
+    if not any((args.host, args.port, args.user, args.identity)) and not args.no_open:
+        try:
+            print("远程知识缺口查看器：请填写你获授权使用的 SSH 连接信息。")
+            args.host = input("服务器地址：").strip()
+            args.port = int(input("SSH 端口 [22]：").strip() or "22")
+            args.user = input("SSH 用户：").strip()
+            key_default = Path.home() / ".ssh/id_ed25519"
+            args.identity = Path(input(f"私钥路径 [{key_default}]：").strip() or str(key_default))
+        except (EOFError, ValueError) as exc:
+            parser.error(f"连接信息无效：{exc}")
+    if not args.host or not args.user or not args.identity or not args.port or not 1 <= args.port <= 65535:
+        parser.error("需要 --host、--port、--user 和 --identity（或直接双击并按提示填写）")
+    if not re.fullmatch(r"[A-Za-z0-9_.:-]+", args.host) or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_.-]*", args.user):
+        parser.error("服务器地址或 SSH 用户名含不支持的字符")
+    args.identity = args.identity.expanduser()
     try:
         REPORT.unlink(missing_ok=True)  # Never leave an old report looking like this run succeeded.
         payload = fetch(args.host, args.port, args.user, args.identity, args.container)
@@ -205,4 +222,13 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
+    if getattr(sys, "frozen", False) and len(sys.argv) == 1:
+        try:
+            code = main()
+        finally:
+            try:
+                input("按回车关闭窗口…")
+            except EOFError:
+                pass
+        raise SystemExit(code)
     raise SystemExit(main())
