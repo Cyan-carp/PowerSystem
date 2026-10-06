@@ -263,7 +263,7 @@ V2-M3 合成演示与公开资料辅助建议范围技术验收通过，可以�
 
 ## 12. V2-M4 整体测试与发布
 
-阶段索引见[测试、安全复核与交付](../../第二版-智能体升级/开发阶段4-测试、安全复核与交付/00-索引·测试、安全复核与交付.md)，正式结论见[测试与交付](../../第二版-智能体升级/开发阶段4-测试、安全复核与交付/05-V2-M4测试与交付.md)。目前实施中，不能将本机基础检查视为阶段签收。
+阶段索引见[测试、安全复核与交付](../../第二版-智能体升级/开发阶段4-测试、安全复核与交付/00-索引·测试、安全复核与交付.md)，正式结论见[测试与交付](../../第二版-智能体升级/开发阶段4-测试、安全复核与交付/05-V2-M4测试与交付.md)。调用保护、主要测试、安全复核、实际回退、最终加密备份恢复和1800.52秒/60次观察通过；本轮实际页面和展示耗时待验，尚未签收或发布。不能将本机基础检查视为阶段签收。
 
 ### 步骤1 · 本机基础套件
 
@@ -289,6 +289,8 @@ python -X utf8 stages/07-agent/scripts/smoke-v2m2.py --real --groups 10 --output
 
 ```powershell
 python -X utf8 stages/07-agent/scripts/main-chain-v2m4.py --config <本轮私有配置> --output artifacts/stage7-智能体/v2m4/<运行编号>/main-chain
+python -X utf8 stages/07-agent/scripts/performance-v2m4.py --interpretations <真实解读批次/interpretations.json> --audit <本轮审计目录> --replay --output artifacts/stage7-智能体/v2m4/<运行编号>/performance.json
+python -X utf8 stages/07-agent/scripts/source-access-v2m4.py --review <最终联网批次/source-review-template.json> --output artifacts/stage7-智能体/v2m4/<运行编号>/source-access.json
 python -X utf8 stages/07-agent/scripts/v2m4-audit.py --config .env <本轮私有配置> --output artifacts/stage7-智能体/v2m4/<运行编号>/credential-scan.json
 python -X utf8 stages/07-agent/scripts/v2m4-package.py --commit <候选提交> --base <前三阶段提交> --output artifacts/stage7-智能体/v2m4/<运行编号>/package
 ```
@@ -317,6 +319,8 @@ python3 stages/07-agent/deploy/security-v2m4.py --url "$POWERSYSTEM_PUBLIC_URL" 
 
 限额验收后等待滚动窗口恢复再跑真实问答，不能靠新会话绕过额度。TCP接连异常必须结合独立外部视角、协议与主机映射复核；共享端口不据端口号推断项目暴露。扫描仅输出位置和计数，不打印凭据原文。双链示例和代码中的`[[proxies]]`不作为缺失笔记。
 
+性能报告分开记录事件等待至快照采集、Agent审计处理时间与九例保存快照的独立真实模型重放；模型重放不替代原事件处理时间，也不证明浏览器渲染。来源可达性只检查HTTPS状态，每次重定向重新核对公共DNS；本机代理返回非公共DNS时记为未验证，转独立服务器视角，保留原批次。HTTP200只证明可达，专业审查仍为pending。
+
 ### 步骤4 · 完整观察与证据汇总
 
 在最终代码、配置、知识和镜像固定后执行。输出路径必须未存在，不复用中断批次。
@@ -326,3 +330,9 @@ python3 stages/07-agent/deploy/observe.py --url "$POWERSYSTEM_PUBLIC_URL" --seco
 ```
 
 `v2m4-evidence.py --run <本轮目录> --gate <门槛> --result passed|failed|interrupted|skipped --evidence <文件...>`登记本轮文件SHA256；不带`--gate`核对所有门槛，缺项或摘要变化退出非零。真实来源的专业审核仍为pending，不因技术签收自动补库。
+
+最后仅修改测试脚本和状态文档时，可把最终固定提交重新打包，使用下面入口同步公开源码。它先核对包与所有文件摘要，再对比本轮运行候选manifest；运行资产变更、服务器运行文件漂移或非批准路径均拒绝，不重启服务。旧受审包、基线和回退证据保留，最终文件摘要另存。
+
+```bash
+python3 stages/07-agent/deploy/sync-v2m4-source.py --root /opt/powersystem --archive <最终公开包> --manifest <candidate.json> --runtime-manifest runtime/v2m4-<本轮编号>/manifest.json --output runtime/v2m4-<本轮编号>/final-source-proof.json
+```

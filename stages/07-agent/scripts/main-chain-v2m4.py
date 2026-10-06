@@ -59,7 +59,7 @@ def main(args):
                     if result.status_code!=429 or not result.headers.get('Retry-After'):raise AssertionError('full pool did not reject chat')
                 target=output/f'{mode}-{i}.csv'
                 with (output/f'{mode}-{i}.log').open('w',encoding='utf-8') as log:
-                    result=subprocess.run([sys.executable,'-X','utf8',str(ROOT/'stages/02-backend/scripts/smoke-stage2.py'),'--admin-token-file',str(admin_file),'--output',str(target)],cwd=ROOT,stdout=log,stderr=subprocess.STDOUT)
+                    result=subprocess.run([sys.executable,'-X','utf8',str(ROOT/'stages/02-backend/scripts/smoke-stage2.py'),'--http-client','httpx','--admin-token-file',str(admin_file),'--output',str(target)],cwd=ROOT,stdout=log,stderr=subprocess.STDOUT)
                 cases=list(csv.DictReader(target.open(encoding='utf-8'))) if target.exists() else []
                 timings=[float(row['detail'].removesuffix('s')) for row in cases if row['case']=='18a alarm latency within 10s']
                 passed=result.returncode==0 and len(cases)>=38 and all(row['passed']=='True' for row in cases) and len(timings)==1 and timings[0]<=10

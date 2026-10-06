@@ -242,4 +242,47 @@ func TestRedisChatAdmissionIntegration(t *testing.T) {
 	for _, lease := range admitted {
 		g.release(ctx, lease)
 	}
+	clean()
+	for _, deadline := range []bool{false, true} {
+		entered := make(chan struct{})
+		upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			close(entered)
+			select {
+			case <-req.Context().Done():
+			case <-time.After(time.Second):
+			}
+		}))
+		s := &Server{cfg: config.Config{AgentEnabled: true, AgentToken: "private", AgentURL: upstream.URL}, chatGate: g}
+		requestCtx, cancel := context.WithCancel(ctx)
+		if deadline {
+			requestCtx, cancel = context.WithTimeout(ctx, 200*time.Millisecond)
+		}
+		w := httptest.NewRecorder()
+		req := httptest.NewRequest("POST", "/agent", strings.NewReader(`{"message":"query"}`)).WithContext(requestCtx)
+		done := make(chan struct{})
+		go func() { agentRouter(s).ServeHTTP(w, req); close(done) }()
+		select {
+		case <-entered:
+		case <-time.After(2 * time.Second):
+			cancel()
+			upstream.Close()
+			t.Fatal("upstream not entered")
+		}
+		if r.Exists(ctx, chatKeys("17")[1]).Val() != 1 {
+			t.Fatal("live request lease absent")
+		}
+		if !deadline {
+			cancel()
+		}
+		select {
+		case <-done:
+		case <-time.After(2 * time.Second):
+			t.Fatal("cancel/deadline lease not released")
+		}
+		cancel()
+		upstream.Close()
+		if r.Exists(ctx, chatKeys("17")[1]).Val() != 0 || r.ZCard(ctx, "stage7:chat:leases").Val() != 0 {
+			t.Fatal("cancel/deadline retained real Redis lease")
+		}
+	}
 }
