@@ -168,14 +168,19 @@ onUnmounted(() => { alive = false; unsubscribe?.(); if (timer) clearInterval(tim
 
 <style scoped>
 .interpretation-picker { width: 100%; margin: 12px 0; }
-.interpretation-content { color: var(--ink, #1d2b33); }
-.interpretation-facts { padding: 12px; border: 1px solid #d9e1e6; border-left: 3px solid #b56822; }
+.interpretation-content { color: var(--ink, #1a1a1a); }
+.interpretation-facts { padding: 12px 14px; border: 1px solid var(--line); border-left: 3px solid var(--warning-dot); background: #fff; }
 .interpretation-facts strong, .interpretation-facts span { display: block; margin-bottom: 8px; }
-.interpretation-warning { padding: 10px; border-left: 3px solid #b56822; background: #faf5ed; }
-.interpretation-model { display: grid; gap: 8px; padding-bottom: 12px; border-bottom: 1px solid #d9e1e6; }
-.interpretation-content h3 { font-size: 15px; margin-top: 20px; }
-.interpretation-content pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; max-height: 280px; overflow: auto; }
-.interpretation-content p { overflow-wrap: anywhere; }
-.interpretation-limit, small { color: #657480; font-size: 12px; }
-.interpretation-actions { display: flex; gap: 8px; margin-top: 20px; }
+.interpretation-facts strong { color: var(--ink); }
+.interpretation-facts span { font-size: 12px; color: var(--ink-2); }
+.interpretation-facts p { margin: 4px 0 0; font-size: 12px; color: var(--ink-2); }
+.interpretation-warning { padding: 10px 12px; border-left: 3px solid var(--warning-dot); background: var(--warning-soft); color: var(--warning); font-size: 12px; }
+.interpretation-model { display: grid; gap: 8px; padding-bottom: 12px; border-bottom: 1px solid var(--line-soft); font-size: 12px; color: var(--ink-2); }
+.interpretation-content h3 { display: flex; align-items: center; gap: 8px; font-size: 13px; margin: 20px 0 10px; color: var(--ink); }
+.interpretation-content h3::before { content: ""; width: 6px; height: 6px; background: var(--brand); }
+.interpretation-content pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; max-height: 280px; overflow: auto; background: var(--hover); border: 1px solid var(--line-soft); padding: 12px; }
+.interpretation-content p { overflow-wrap: anywhere; font-size: 13px; line-height: 1.7; }
+.interpretation-limit, small { color: var(--ink-3); font-size: 12px; }
+.interpretation-actions { display: flex; gap: 8px; margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--line-soft); }
+.interpretation-content a { color: var(--brand); font-size: 13px; }
 </style>

@@ -22,7 +22,7 @@ function draw(): void {
     tooltip: { trigger: 'axis', axisPointer: { type: 'cross' }, valueFormatter: (value: unknown) => `${Number(value).toFixed(2)} ${metricUnits[props.metric]}` },
     xAxis: { type: 'time', axisLine: { lineStyle: { color: '#9db2bd' } }, axisLabel: { color: '#66808e' }, splitLine: { show: false } },
     yAxis: { type: 'value', name: metricUnits[props.metric], nameTextStyle: { color: '#66808e' }, axisLabel: { color: '#66808e' }, splitLine: { lineStyle: { color: '#e8eef0' } } },
-    series: [{ name: metricLabels[props.metric], type: 'line', smooth: false, showSymbol: false, data: props.points, lineStyle: { color: '#087f78', width: 2.5 }, itemStyle: { color: '#087f78' }, areaStyle: { color: 'rgba(8,127,120,0.08)' } }],
+    series: [{ name: metricLabels[props.metric], type: 'line', smooth: false, showSymbol: false, data: props.points, lineStyle: { color: '#ff6a00', width: 2.5 }, itemStyle: { color: '#ff6a00' }, areaStyle: { color: 'rgba(255,106,0,0.06)' } }],
   }, true)
 }
 

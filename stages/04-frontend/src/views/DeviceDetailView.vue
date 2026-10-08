@@ -18,6 +18,7 @@ const points = ref<[number, number][]>([])
 const loading = ref(false)
 const error = ref('')
 const chartError = ref('')
+const presetActive = ref(1)
 let unsubscribe: (() => void) | null = null
 let requestId = 0
 
@@ -49,9 +50,12 @@ async function loadChart(): Promise<void> {
 
 function preset(hours: number): void {
   const now = Date.now()
+  presetActive.value = hours
   dateRange.value = [new Date(now - hours * 60 * 60 * 1000), new Date(now)]
   void loadChart()
 }
+
+function customRange(): void { presetActive.value = 0; void loadChart() }
 
 watch(() => route.params.id, () => { device.value = null; latest.value = null; void loadDevice() })
 onMounted(() => {
@@ -77,7 +81,7 @@ onUnmounted(() => unsubscribe?.())
       <section class="surface latest-info"><div class="surface-head"><h2>最新遥测</h2><span>{{ latest ? dateTime(latest.received_at) : '暂无数据' }}</span></div><div v-if="latest" class="latest-grid"><div><span>温度</span><strong>{{ latest.temperature.toFixed(1) }}<small>°C</small></strong></div><div><span>功率</span><strong>{{ latest.power.toFixed(1) }}<small>kW</small></strong></div><div><span>电压</span><strong>{{ latest.voltage.toFixed(1) }}<small>V</small></strong></div><div><span>电流</span><strong>{{ latest.current.toFixed(1) }}<small>A</small></strong></div></div><div v-else class="empty-box">设备尚无最新遥测；检查模拟器与数据链路。</div></section>
     </div>
     <section class="surface chart-surface"><div class="surface-head"><div><h2>历史遥测曲线</h2><p>选择指标和时间范围，查询 TDengine 中的真实数据。</p></div><span class="chart-count">{{ points.length }} 个绘图点</span></div>
-      <div class="chart-controls"><el-select v-model="metric" style="width: 140px" aria-label="选择指标" @change="loadChart"><el-option v-for="(label, key) in metricLabels" :key="key" :label="`${label} (${metricUnits[key]})`" :value="key" /></el-select><el-button-group><el-button @click="preset(0.25)">15 分钟</el-button><el-button @click="preset(1)">1 小时</el-button><el-button @click="preset(4)">4 小时</el-button><el-button @click="preset(24)">24 小时</el-button></el-button-group><el-date-picker v-model="dateRange" type="datetimerange" start-placeholder="开始时间" end-placeholder="结束时间" format="YYYY-MM-DD HH:mm" @change="loadChart" /><el-button type="primary" :loading="loading" @click="loadChart">查询</el-button></div>
+      <div class="chart-controls"><el-select v-model="metric" style="width: 140px" aria-label="选择指标" @change="loadChart"><el-option v-for="(label, key) in metricLabels" :key="key" :label="`${label} (${metricUnits[key]})`" :value="key" /></el-select><div class="seg-group"><el-button :class="{ 'is-active': presetActive === 0.25 }" @click="preset(0.25)">15 分钟</el-button><el-button :class="{ 'is-active': presetActive === 1 }" @click="preset(1)">1 小时</el-button><el-button :class="{ 'is-active': presetActive === 4 }" @click="preset(4)">4 小时</el-button><el-button :class="{ 'is-active': presetActive === 24 }" @click="preset(24)">24 小时</el-button></div><el-date-picker v-model="dateRange" type="datetimerange" start-placeholder="开始时间" end-placeholder="结束时间" format="YYYY-MM-DD HH:mm" @change="customRange" /><el-button type="primary" :loading="loading" @click="loadChart">查询</el-button></div>
       <el-alert v-if="chartError" :title="chartError" type="error" show-icon :closable="false" class="content-alert" />
       <div v-loading="loading"><TelemetryChart v-if="points.length" :points="points" :metric="metric" /><div v-else class="empty-box tall">当前时间范围暂无遥测点</div></div>
     </section>

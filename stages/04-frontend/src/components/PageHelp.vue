@@ -27,10 +27,11 @@ function ask(): void {
 </template>
 <style scoped>
 .page-help { position: relative; }
-.help-box { position: absolute; top: 42px; right: 0; width: min(440px, calc(100vw - 32px)); z-index: 2100; padding: 18px; background: white; color: #243746; border: 1px solid #ccd6dc; border-top: 3px solid #087f78; }
+.help-box { position: absolute; top: 42px; right: 0; width: min(440px, calc(100vw - 32px)); z-index: 2100; padding: 18px; background: white; color: var(--ink); border: 1px solid var(--line); border-top: 3px solid var(--brand); box-shadow: 0 6px 24px rgba(0, 0, 0, 0.12); }
 header, footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-header { border-bottom: 1px solid #dce2e6; padding-bottom: 8px; }
-p, li { line-height: 1.65; font-size: 13px; }
-.help-note { border-left: 3px solid #b8872a; padding-left: 10px; }
-small { color: #627581; }
+header { border-bottom: 1px solid var(--line-soft); padding-bottom: 10px; }
+header strong { font-size: 14px; }
+p, li { line-height: 1.65; font-size: 13px; color: var(--ink-2); }
+.help-note { border-left: 3px solid var(--warning-dot); background: var(--warning-soft); color: var(--warning); padding: 8px 10px; }
+small { color: var(--ink-3); }
 </style>

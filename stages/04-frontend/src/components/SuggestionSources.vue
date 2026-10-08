@@ -45,12 +45,22 @@ const sources = computed(() => claimEvidence(props.claim, props.evidence))
 </template>
 
 <style scoped>
-.suggestion { border-top: 1px solid #dce2e6; padding: 12px 0; }
-.operation-warning { border: 1px solid #b56822; border-left: 4px solid #b56822; background: #faf5ed; color: #703a10; padding: 12px; font-size: 14px; line-height: 1.7; margin: 0 0 10px; }
-.suggestion-text { white-space: pre-wrap; line-height: 1.8; overflow-wrap: anywhere; }
-summary { cursor: pointer; color: #087f78; font-size: 13px; }
-.suggestion-source { margin-top: 12px; padding: 12px; border: 1px solid #dce2e6; font-size: 13px; overflow-wrap: anywhere; }
-.source-warning { color: #805221; font-size: 12px; }
-a { color: #087f78; }
-pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 280px; overflow: auto; background: #f7f9fa; padding: 12px; font-size: 12px; }
+.suggestion { border-top: 1px solid var(--line-soft); padding: 14px 0; }
+.operation-warning {
+  border: 1px solid var(--warning-line); border-left: 3px solid var(--warning-dot);
+  background: var(--warning-soft); color: var(--warning);
+  padding: 10px 12px; font-size: 13px; line-height: 1.7; margin: 0 0 10px;
+}
+.suggestion-text { white-space: pre-wrap; line-height: 1.8; overflow-wrap: anywhere; margin: 0 0 6px; color: var(--ink); font-size: 14px; }
+summary { cursor: pointer; color: var(--brand); font-size: 12px; padding: 4px 0; list-style: none; display: flex; align-items: center; gap: 8px; }
+summary::before { content: ""; width: 6px; height: 6px; border-right: 1.5px solid var(--brand); border-bottom: 1.5px solid var(--brand); transform: rotate(-45deg); }
+details[open] summary::before { transform: rotate(45deg); }
+summary:hover { color: var(--brand-deep); }
+.suggestion-source { margin-top: 12px; padding: 14px; border: 1px solid var(--line); background: #fff; font-size: 13px; overflow-wrap: anywhere; }
+.suggestion-source strong { color: var(--ink); font-size: 12px; }
+.suggestion-source p { margin: 8px 0 0; color: var(--ink-2); }
+.source-warning { color: var(--warning); font-size: 12px; }
+a { color: var(--brand); }
+a:hover { color: var(--brand-deep); }
+pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 280px; overflow: auto; background: var(--hover); border: 1px solid var(--line-soft); padding: 12px; font-size: 12px; margin: 10px 0 0; }
 </style>
