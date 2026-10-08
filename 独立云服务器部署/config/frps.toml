@@ -1,0 +1,11 @@
+# New cloud only. Install as /etc/powersystem-edge/frps.toml.
+bindAddr = "0.0.0.0"
+bindPort = 7000
+proxyBindAddr = "0.0.0.0"
+allowPorts = [{ start = 3667, end = 3667 }, { start = 7070, end = 7070 }]
+auth.method = "token"
+auth.tokenSource.type = "file"
+auth.tokenSource.file.path = "/etc/powersystem-edge/frp-token"
+transport.tls.force = true
+transport.tls.certFile = "/etc/powersystem-edge/frp-server.crt"
+transport.tls.keyFile = "/etc/powersystem-edge/frp-server.key"

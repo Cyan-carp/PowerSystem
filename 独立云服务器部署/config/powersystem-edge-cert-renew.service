@@ -1,0 +1,8 @@
+[Unit]
+Description=Renew PowerSystem new cloud IP and domain certificates
+Wants=network-online.target
+After=network-online.target nginx.service
+
+[Service]
+Type=oneshot
+ExecStart=/opt/powersystem-edge/certbot-venv/bin/certbot renew --quiet --deploy-hook "nginx -t && systemctl reload nginx"

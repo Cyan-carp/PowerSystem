@@ -1,0 +1,12 @@
+[Unit]
+Description=Keep PowerSystem FRP web port private
+After=network-pre.target
+Before=network.target powersystem-edge-frps.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/powersystem-edge-firewall
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

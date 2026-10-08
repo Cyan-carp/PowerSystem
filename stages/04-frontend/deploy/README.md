@@ -50,6 +50,8 @@ Prometheus 每 15 秒采集 API 和主机指标，规则包含 API 不可用及�
 
 云服务器使用 SFTP 专用账号 `powersystem-backup` 保存密文，R730xd 的私钥路径为 `/etc/powersystem/backup-ed25519`。执行 `backup.sh` 前须显式设置 `POWERSYSTEM_BACKUP_TARGET` 或私有 `/etc/powersystem/backup-target`；脚本不含公开默认目标。备份包括 PostgreSQL、TDengine、网关与模拟器 SQLite 队列、模型、`.env` 与三个通知私有文件，整体以 GPG AES256 加密后传至接收端。备份口令须在 R730xd 之外另行保管，不包含在密文包内。现场已核对专用 SFTP 目录、更新前后两份密文的异地 SHA256、独立恢复数据与私有文件；`powersystem-backup.timer` 已启用。2026-09-29 项目所有者已反馈完成服务器外独立离线口令副本及 `MATCH` 核对，见 [阶段六测试与交付](../../../第一版-平台主体/开发阶段6-公网安全与恢复能力/03-阶段六测试与交付.md)。
 
+第二云接入时可另设 `/etc/powersystem/backup-secondary-target` 或 `POWERSYSTEM_BACKUP_SECONDARY_TARGET`，脚本将同一密文上传两处；任一上传失败均保留本地密文并返回失败。第二云专用 FRP 客户端、备份接收端和域名待备案配置见[独立云服务器部署](../../../独立云服务器部署/README.md)，旧共享 FRP 不在此次变更范围。
+
 恢复验证只启动带独立卷的 `powersystem-restore-*` Compose 项目，不覆盖生产数据库：
 
 ```bash

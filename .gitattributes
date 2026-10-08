@@ -2,3 +2,5 @@
 *.sql text eol=lf
 *.yaml text eol=lf
 *.yml text eol=lf
+独立云服务器部署/config/* text eol=lf
+独立云服务器部署/scripts/*.py text eol=lf

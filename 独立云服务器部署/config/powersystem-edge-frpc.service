@@ -1,0 +1,20 @@
+[Unit]
+Description=PowerSystem dedicated FRP client to new cloud
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=powersystem-edge
+Group=powersystem-edge
+ExecStart=/opt/powersystem-edge/frpc -c /etc/powersystem-edge/frpc.toml
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadOnlyPaths=/etc/powersystem-edge
+
+[Install]
+WantedBy=multi-user.target

@@ -8,11 +8,19 @@ backup_dir=${POWERSYSTEM_BACKUP_DIR:-/var/backups/powersystem}
 passphrase_file=${POWERSYSTEM_BACKUP_PASSPHRASE_FILE:-/etc/powersystem/backup-passphrase}
 backup_key=${POWERSYSTEM_BACKUP_SSH_KEY:-/etc/powersystem/backup-ed25519}
 backup_target=${POWERSYSTEM_BACKUP_TARGET:-}
+secondary_target=${POWERSYSTEM_BACKUP_SECONDARY_TARGET:-}
 if [ -z "$backup_target" ] && [ -f /etc/powersystem/backup-target ]; then
   backup_target=$(cat /etc/powersystem/backup-target)
 fi
 if [ -z "$backup_target" ]; then
   echo 'Set POWERSYSTEM_BACKUP_TARGET or /etc/powersystem/backup-target before backup' >&2
+  exit 2
+fi
+if [ -z "$secondary_target" ] && [ -f /etc/powersystem/backup-secondary-target ]; then
+  secondary_target=$(cat /etc/powersystem/backup-secondary-target)
+fi
+if [ -n "$secondary_target" ] && [ "$secondary_target" = "$backup_target" ]; then
+  echo 'Primary and secondary backup targets must differ' >&2
   exit 2
 fi
 run_id="powersystem-$(date -u +%Y%m%dT%H%M%SZ)"
@@ -78,7 +86,24 @@ find "$staging/config" -type d -exec chmod 700 {} +
 tar -C "$backup_dir" -czf "$backup_dir/$run_id.tar.gz" "$run_id"
 gpg --batch --yes --pinentry-mode loopback --passphrase-file "$passphrase_file" --symmetric --cipher-algo AES256 --output "$backup_dir/$run_id.tar.gz.gpg" "$backup_dir/$run_id.tar.gz"
 (cd "$backup_dir" && sha256sum "$run_id.tar.gz.gpg" > "$run_id.tar.gz.gpg.sha256")
-scp -o BatchMode=yes -o StrictHostKeyChecking=yes -i "$backup_key" "$backup_dir/$run_id.tar.gz.gpg" "$backup_dir/$run_id.tar.gz.gpg.sha256" "$backup_target"
+upload_failed=0
+if scp -o BatchMode=yes -o StrictHostKeyChecking=yes -i "$backup_key" "$backup_dir/$run_id.tar.gz.gpg" "$backup_dir/$run_id.tar.gz.gpg.sha256" "$backup_target"; then
+  echo 'Primary backup upload succeeded'
+else
+  echo 'Primary backup upload failed; local encrypted archive retained' >&2
+  upload_failed=1
+fi
+if [ -n "$secondary_target" ]; then
+  if scp -o BatchMode=yes -o StrictHostKeyChecking=yes -i "$backup_key" "$backup_dir/$run_id.tar.gz.gpg" "$backup_dir/$run_id.tar.gz.gpg.sha256" "$secondary_target"; then
+    echo 'Secondary backup upload succeeded'
+  else
+    echo 'Secondary backup upload failed; local encrypted archive retained' >&2
+    upload_failed=1
+  fi
+fi
+if [ "$upload_failed" -ne 0 ]; then
+  exit 1
+fi
 
 find "$backup_dir" -maxdepth 1 -type f -name 'powersystem-*.tar.gz.gpg*' -mmin +10080 -delete
 printf '%s\n' "$run_id"

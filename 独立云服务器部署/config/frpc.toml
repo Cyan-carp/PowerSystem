@@ -1,0 +1,22 @@
+# R730xd only. Install alongside, never over, /opt/frp/frpc.toml.
+serverAddr = "8.138.42.212"
+serverPort = 7000
+auth.method = "token"
+auth.tokenSource.type = "file"
+auth.tokenSource.file.path = "/etc/powersystem-edge/frp-token"
+transport.tls.enable = true
+transport.tls.trustedCaFile = "/etc/powersystem-edge/frp-server.crt"
+
+[[proxies]]
+name = "powersystem-new-cloud-web"
+type = "tcp"
+localIP = "127.0.0.1"
+localPort = 18080
+remotePort = 3667
+
+[[proxies]]
+name = "powersystem-new-cloud-r730-ssh"
+type = "tcp"
+localIP = "127.0.0.1"
+localPort = 22
+remotePort = 7070

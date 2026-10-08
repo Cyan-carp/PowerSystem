@@ -1,0 +1,11 @@
+# Enable only after ICP filing approval, solely to obtain the domain certificate.
+server {
+    listen 80;
+    listen [::]:80;
+    server_name www.cyancarp.cn;
+    location ^~ /.well-known/acme-challenge/ {
+        root /var/www/powersystem-acme;
+        try_files $uri =404;
+    }
+    location / { return 421; }
+}
