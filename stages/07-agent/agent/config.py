@@ -36,9 +36,9 @@ class Config:
     audit_dir: Path
     max_rounds: int = 5
     max_calls: int = 10
-    total_timeout: float = 40
+    total_timeout: float = 43
     tool_timeout: float = 5
-    model_timeout: float = 20
+    model_timeout: float = 25
     session_ttl: int = 86400
     monitor_token: str = ""
     model_configured: bool = True
