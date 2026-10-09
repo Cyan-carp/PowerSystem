@@ -216,6 +216,40 @@ class AsyncAgentTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.source_coverage_percent,100)
         provider.complete.assert_not_awaited()
 
+    async def test_device_status_question_queries_live_dashboard_without_model(self):
+        summary=Evidence(id="E1",tool="get_dashboard_summary",status="ok",source="/api/v1/dashboard/summary",
+                         collected_at="2026-10-09T06:48:27Z",data={"device_total":3,"online":2,
+                         "offline":1,"fault":0,"active_alarms":1})
+        provider=AsyncMock();tools=AsyncMock();tools.execute.return_value=summary
+        response=ChatResponse(request_id="r",session_id="s",status="degraded",model="test")
+        result=await Orchestrator(CFG,provider,tools).run("设备状态如何？",[],"jwt",response,[])
+        self.assertEqual(result.status,"answered")
+        self.assertIn("在线 2 台、离线 1 台",result.conclusion.text)
+        self.assertEqual(result.conclusion.evidence_ids,["E1"])
+        self.assertEqual(result.source_coverage_percent,100)
+        tools.execute.assert_awaited_once_with("get_dashboard_summary",{},"jwt","E1")
+        provider.complete.assert_not_awaited()
+
+        tools.execute.return_value=summary.model_copy(update={"status":"backend_unavailable"})
+        response=ChatResponse(request_id="r",session_id="s",status="degraded",model="test")
+        result=await Orchestrator(CFG,provider,tools).run("设备状态如何？",[],"jwt",response,[])
+        self.assertEqual(result.status,"unable_to_determine")
+        self.assertIsNone(result.conclusion)
+
+    async def test_named_device_status_queries_fresh_telemetry(self):
+        device=Evidence(id="E1",tool="list_devices",status="ok",source="/api/v1/devices?keyword=INV-1001",
+                        collected_at="2026-10-09T06:48:27Z",data={"list":[{"id":1,"device_code":"INV-1001"}]})
+        sample=Evidence(id="E2",tool="get_telemetry",status="ok",source="/api/v1/devices/1/telemetry/latest",
+                        collected_at="2026-10-09T06:48:27Z",data_time="2026-10-09T06:48:26Z",
+                        data={"device_code":"INV-1001","status":1})
+        provider=AsyncMock();tools=AsyncMock();tools.execute.side_effect=[device,sample]
+        response=ChatResponse(request_id="r",session_id="s",status="degraded",model="test")
+        result=await Orchestrator(CFG,provider,tools).run("INV-1001 状态怎么样？",[],"jwt",response,[])
+        self.assertEqual(result.status,"answered")
+        self.assertIn("发电中",result.conclusion.text)
+        self.assertEqual(result.conclusion.evidence_ids,["E1","E2"])
+        provider.complete.assert_not_awaited()
+
     async def test_no_data_no_tools_and_stale(self):
         for status in ("stale","no_data","invalid_arguments"):
             provider=AsyncMock();provider.complete.side_effect=[call(),{"content":json.dumps(answer())},

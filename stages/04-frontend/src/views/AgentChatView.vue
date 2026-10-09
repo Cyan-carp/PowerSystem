@@ -15,7 +15,7 @@ const pending = ref(false)
 const source = ref<KnowledgeSource | null>(null)
 const sourceError = ref('')
 const sourceVersion = ref('')
-const examples = ['确认告警和已恢复有什么区别？', '设备 1 的预测是否新鲜？']
+const examples = ['设备状态如何？', '确认告警和已恢复有什么区别？', '设备 1 的预测是否新鲜？']
 let controller: AbortController | null = null
 let sourceController: AbortController | null = null
 let generation = 0
@@ -66,7 +66,7 @@ onUnmounted(() => { cancel(); sourceController?.abort() })
     <section v-if="!turns.length" class="chat-empty surface">
       <div class="empty-box tall">
         <h2>描述你要核查的问题</h2>
-        <p>例如：确认告警和已恢复有什么区别？设备 1 的预测是否新鲜？</p>
+        <p>例如：设备状态如何？确认告警和已恢复有什么区别？</p>
         <p>优先查本地资料和业务数据；适合的通用问题可联网补充。没有可核验来源时仅显示明确标注的假设。</p>
         <div class="chat-examples"><button v-for="item in examples" :key="item" type="button" class="chat-example" @click="useExample(item)">{{ item }}</button></div>
       </div>

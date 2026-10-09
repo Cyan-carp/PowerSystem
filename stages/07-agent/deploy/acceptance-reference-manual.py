@@ -82,6 +82,13 @@ def main():
         check(label + ' HTTP', status == 200)
         return response
 
+    overview = ask('device-status', '设备状态如何？')
+    overview_ids = {e['id'] for e in overview.get('evidence', []) if e.get('kind') == 'business' and
+                    e.get('tool') == 'get_dashboard_summary' and e.get('status') == 'ok'}
+    check('device status uses current business summary', overview.get('status') == 'answered' and
+          bool(overview_ids.intersection((overview.get('conclusion') or {}).get('evidence_ids', []))) and
+          overview.get('source_coverage_percent') == 100)
+
     manual = ask('manual', '华为 SUN2000-100KTL-M2 的额定有功功率是多少？')
     manual_ids = {e['id'] for e in manual.get('evidence', []) if e.get('status') == 'ok' and
                   isinstance(e.get('data'), dict) and e['data'].get('source_kind') == 'manual_summary'}

@@ -34,6 +34,13 @@ SIMPLE_LIVE_METRIC = re.compile(
     r"(?:现在|当前|目前|此刻|最新|实时)\s*(功率|电压|电流|温度)\s*(?:是|为|有)?\s*(?:多少|什么|几)?\s*[？?。.!！\s]*",
     re.IGNORECASE)
 SIMPLE_DEVICE_LIST = re.compile(r"\s*(?:请)?查询(?:所有|全部)设备列表(?:，?附(?:上)?证据)?[。.!！\s]*")
+SIMPLE_DEVICE_STATUS = re.compile(
+    r"\s*(?:(?:请|帮我)?(?:查|查询|看|查看)(?:一下)?\s*)?"
+    r"(?:(?:现在|当前|目前|实时|所有|全部)\s*)?"
+    r"(?:(INV-100[123])\s*(?:的)?\s*)?"
+    r"(?:设备|逆变器)?\s*(?:运行|在线)?(?:状态|情况)"
+    r"\s*(?:如何|怎么样|怎样|是什么|呢)?[？?。.!！\s]*",
+    re.IGNORECASE)
 LIVE_ASSERTION = re.compile(
     r"(?:当前|现在|目前|此刻|今天)(?:没有|暂无|无|有|存在|共有|出现|发生|正在)[^，。；]{0,12}(?:告警|设备|预测|遥测|功率|电压|电流|温度|状态)"
     r"|(?:当前|现在|目前|此刻|今天)(?:告警|设备|预测|遥测|功率|电压|电流|温度|状态)[^，。；]{0,12}(?:为|是|显示|处于|存在|有|无|没有|异常|正常)"
@@ -152,6 +159,59 @@ class Orchestrator:
     def __init__(self, config, provider, tools):
         self.config, self.provider, self.tools = config, provider, tools
 
+    async def simple_device_status(self, message, jwt, response, trace):
+        match = SIMPLE_DEVICE_STATUS.fullmatch(message)
+        if not match:
+            return None
+        code = match[1].upper() if match[1] else None
+        if code:
+            device = await self.tools.execute("list_devices", {"keyword": code}, jwt,
+                                              f"E{len(response.evidence)+1}")
+            response.evidence.append(device)
+            trace.append({"tool": "list_devices", "arguments": {"keyword": code}, "status": device.status})
+            rows = device.data.get("list") if isinstance(device.data, dict) else None
+            matches = ([row for row in rows if isinstance(row, dict) and row.get("device_code") == code]
+                       if isinstance(rows, list) else [])
+            if device.status != "ok" or len(matches) != 1 or type(matches[0].get("id")) is not int:
+                response.status = "unable_to_determine"
+                response.limitations = ["本轮未能核对该设备档案，无法判断其状态。"]
+                return response
+            sample = await self.tools.execute("get_telemetry", {"device_id": matches[0]["id"], "mode": "latest"},
+                                              jwt, f"E{len(response.evidence)+1}")
+            response.evidence.append(sample)
+            trace.append({"tool": "get_telemetry", "arguments": {"device_id": matches[0]["id"], "mode": "latest"},
+                          "status": sample.status})
+            state = sample.data.get("status") if isinstance(sample.data, dict) else None
+            if sample.status != "ok" or sample.data.get("device_code") != code or type(state) is not int or state not in (0, 1, 2):
+                response.status = "unable_to_determine"
+                response.limitations = ["本轮未取得该设备的新鲜遥测，不能判断其当前状态。"]
+                return response
+            label = {0: "停止发电", 1: "发电中", 2: "故障状态"}[state]
+            response.conclusion = ResponseClaim(text=f"本轮最新遥测显示，{code} 的仿真状态为{label}。",
+                                                evidence_ids=[device.id, sample.id])
+            response.limitations = ["状态来自仿真遥测，不代表真实逆变器；请结合采样时间核查。"]
+        else:
+            summary = await self.tools.execute("get_dashboard_summary", {}, jwt, f"E{len(response.evidence)+1}")
+            response.evidence.append(summary)
+            trace.append({"tool": "get_dashboard_summary", "arguments": {}, "status": summary.status})
+            data = summary.data if isinstance(summary.data, dict) else {}
+            keys = ("device_total", "online", "offline", "fault", "active_alarms")
+            if (summary.status != "ok" or any(type(data.get(key)) is not int or data[key] < 0 for key in keys)
+                    or data["online"] + data["offline"] != data["device_total"]
+                    or data["fault"] > data["online"]):
+                response.status = "unable_to_determine"
+                response.limitations = ["本轮总览数据不可用或不一致，无法判断设备整体状态。"]
+                return response
+            response.conclusion = ResponseClaim(
+                text=(f"本轮总览查询：共 {data['device_total']} 台设备，在线 {data['online']} 台、"
+                      f"离线 {data['offline']} 台；在线设备中仿真故障状态 {data['fault']} 台，"
+                      f"活动告警 {data['active_alarms']} 条。"), evidence_ids=[summary.id])
+            response.limitations = ["这是演示设备的本次汇总，不能替代逐台遥测核查或真实设备诊断。"]
+        response.status = "answered"
+        response.total_claims = response.sourced_claims = statement_count(response.conclusion.text)
+        response.source_coverage_percent = 100
+        return response
+
     async def simple_device_list(self, message, jwt, response, trace):
         if not SIMPLE_DEVICE_LIST.fullmatch(message):
             return None
@@ -247,6 +307,9 @@ class Orchestrator:
         return response
 
     async def run(self, message, history, jwt, response, trace, context=None):
+        status = await self.simple_device_status(message, jwt, response, trace)
+        if status is not None:
+            return status
         listing = await self.simple_device_list(message, jwt, response, trace)
         if listing is not None:
             return listing
