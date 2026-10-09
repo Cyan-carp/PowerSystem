@@ -37,6 +37,7 @@ with tarfile.open(r/'source-baseline.tar.gz') as archive:
         elif target.is_file() and not target.is_symlink(): target.unlink()
 PY
     docker compose --env-file .env -f stages/04-frontend/deploy/compose.yaml -f stages/07-agent/deploy/agent.compose.yaml -f stages/07-agent/deploy/search.compose.yaml -f "$release/baseline.yaml" --profile agent up -d --no-deps --no-build --pull never --force-recreate --wait api agent frontend
+    docker compose --env-file .env -f stages/04-frontend/deploy/compose.yaml -f stages/07-agent/deploy/agent.compose.yaml -f stages/07-agent/deploy/search.compose.yaml --profile agent restart gateway
   fi
   printf 'release_failed_and_rollback_attempted=%s\n' "$failed" >&2
   exit "$failed"
@@ -87,6 +88,9 @@ r=pathlib.Path(sys.argv[1])
 (r/'current.yaml').write_text('services:\n'+''.join('  '+s+':\n    image: powersystem-reference-manual-'+s+':current-'+r.name+'\n' for s in ('api','agent','frontend')))
 PY
 "${dc[@]}" -f "$release/current.yaml" up -d --no-deps --no-build --pull never --force-recreate --wait api agent frontend
+# ALTER TABLE devices invalidates prepared SELECT plans in the long-running gateway.
+# Reopen its PostgreSQL connection after the API has applied the schema migration.
+"${dc[@]}" restart gateway
 python3 - "$release" <<'PY'
 import pathlib,subprocess,json,sys
 r=pathlib.Path(sys.argv[1]); images={}

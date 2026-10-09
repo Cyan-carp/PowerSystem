@@ -59,7 +59,7 @@ MODELS = {"list_devices": Devices, "get_telemetry": Telemetry, "get_prediction":
           "list_alarms": Alarms, "get_alarm_detail": Alarm, "get_dashboard_summary": Empty}
 DESCRIPTIONS = {
     "list_devices": "分页查询设备；group_name 精确分组，keyword 匹配设备名称或编码。",
-    "get_telemetry": "查询设备最新值或指定指标历史；history 必须提供带时区 start/end，最长24小时。",
+    "get_telemetry": "查询设备最新值或指定指标历史；latest 返回全部指标，可附 metric 指明关注项；history 必须提供带时区 start/end，最长24小时。",
     "get_prediction": "查询设备模型概率、阈值、模型来源及过期状态。",
     "list_alarms": "分页查询告警；device_id、status、level、start/end 可选，时间依据 triggered_at。",
     "get_alarm_detail": "查询单条告警详情，不确认或改变告警。",
@@ -93,6 +93,9 @@ def route(name, arguments):
         return f"/api/v1/devices/{device}/prediction", {}
     mode = args.pop("mode")
     if mode == "latest":
+        # The latest endpoint returns every metric. A requested metric is a
+        # harmless display hint and must not turn a live query into an error.
+        args.pop("metric", None)
         if args:
             raise ValueError("latest_has_history_arguments")
         return f"/api/v1/devices/{device}/telemetry/latest", {}

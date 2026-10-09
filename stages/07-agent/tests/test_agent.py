@@ -54,13 +54,15 @@ class RoutesTest(unittest.TestCase):
                            ("get_prediction", {"device_id": 1, "url": "http://evil"}),
                            ("list_devices", {"page_size": 101}),
                            ("get_telemetry", {"device_id": 1, "mode": "history"}),
-                           ("get_telemetry", {"device_id": 1, "metric": "power"}),
+                           ("get_telemetry", {"device_id": 1, "mode": "latest", "start": "2026-09-29T00:00:00Z"}),
                            ("list_alarms", {"start": "2026-01-01"}),
                            ("list_alarms", {"status": "anything"})]:
             with self.subTest(name=name, args=args), self.assertRaises(ValueError):
                 route(name, args)
 
     def test_history_boundaries(self):
+        self.assertEqual(route("get_telemetry", {"device_id": 1, "metric": "power", "mode": "latest"}),
+                         ("/api/v1/devices/1/telemetry/latest", {}))
         args={"device_id": 1, "mode": "history", "metric": "temperature", "start": "2026-09-29T00:00:00Z", "end": "2026-09-30T00:00:00Z"}
         self.assertEqual(route("get_telemetry", args)[0], "/api/v1/devices/1/telemetry")
         for change in ({"end":"2026-09-30T00:00:01Z"}, {"end":args["start"]}, {"metric":"status"}):
