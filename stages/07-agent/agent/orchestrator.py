@@ -33,6 +33,7 @@ SIMPLE_LIVE_METRIC = re.compile(
     r"\s*(?:请问|查询|查看|告诉我|帮我查(?:一下)?)?\s*(INV-100[123])\s*(?:的)?\s*"
     r"(?:现在|当前|目前|此刻|最新|实时)\s*(功率|电压|电流|温度)\s*(?:是|为|有)?\s*(?:多少|什么|几)?\s*[？?。.!！\s]*",
     re.IGNORECASE)
+SIMPLE_DEVICE_LIST = re.compile(r"\s*(?:请)?查询(?:所有|全部)设备列表(?:，?附(?:上)?证据)?[。.!！\s]*")
 LIVE_ASSERTION = re.compile(
     r"(?:当前|现在|目前|此刻|今天)(?:没有|暂无|无|有|存在|共有|出现|发生|正在)[^，。；]{0,12}(?:告警|设备|预测|遥测|功率|电压|电流|温度|状态)"
     r"|(?:当前|现在|目前|此刻|今天)(?:告警|设备|预测|遥测|功率|电压|电流|温度|状态)[^，。；]{0,12}(?:为|是|显示|处于|存在|有|无|没有|异常|正常)"
@@ -151,6 +152,31 @@ class Orchestrator:
     def __init__(self, config, provider, tools):
         self.config, self.provider, self.tools = config, provider, tools
 
+    async def simple_device_list(self, message, jwt, response, trace):
+        if not SIMPLE_DEVICE_LIST.fullmatch(message):
+            return None
+        item = await self.tools.execute("list_devices", {"page": 1, "page_size": 100}, jwt,
+                                        f"E{len(response.evidence)+1}")
+        response.evidence.append(item)
+        trace.append({"tool": "list_devices", "arguments": {"page": 1, "page_size": 100},
+                      "status": item.status})
+        rows = item.data.get("list") if isinstance(item.data, dict) else None
+        if (item.status != "ok" or not isinstance(rows, list) or not rows or len(rows) > 20 or
+                any(not isinstance(row, dict) or not isinstance(row.get("device_code"), str)
+                    or len(row["device_code"]) > 64 for row in rows)):
+            response.status = "unable_to_determine"
+            response.limitations = ["本轮设备列表未能完整核对，无法列出全部设备。"]
+            return response
+        codes = "、".join(row["device_code"] for row in rows)
+        prefix = "本轮查询的全部设备" if item.data.get("complete") is True else "本轮查询的当前页设备"
+        response.status = "answered"
+        response.conclusion = ResponseClaim(text=f"{prefix}：{codes}。", evidence_ids=[item.id])
+        response.total_claims = response.sourced_claims = 1
+        response.source_coverage_percent = 100
+        if item.data.get("complete") is not True:
+            response.limitations = ["列表分页未完成，不能据此判断全部设备。"]
+        return response
+
     async def simple_live_metric(self, message, jwt, response, trace):
         match = SIMPLE_LIVE_METRIC.fullmatch(message)
         if not match:
@@ -221,6 +247,9 @@ class Orchestrator:
         return response
 
     async def run(self, message, history, jwt, response, trace, context=None):
+        listing = await self.simple_device_list(message, jwt, response, trace)
+        if listing is not None:
+            return listing
         immediate = await self.simple_live_metric(message, jwt, response, trace)
         if immediate is not None:
             return immediate

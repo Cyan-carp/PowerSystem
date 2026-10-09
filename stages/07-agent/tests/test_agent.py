@@ -203,6 +203,19 @@ class AsyncAgentTest(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(result.conclusion)
         self.assertEqual(result.source_coverage_percent,0)
 
+    async def test_simple_device_list_uses_business_data(self):
+        listing=Evidence(id="E1",tool="list_devices",status="ok",source="/api/v1/devices",
+                         collected_at="2026-10-09T06:48:27Z",data={"list":[
+                             {"device_code":"INV-1001"},{"device_code":"INV-1002"}],"complete":True})
+        provider=AsyncMock();tools=AsyncMock();tools.execute.return_value=listing
+        response=ChatResponse(request_id="r",session_id="s",status="degraded",model="test")
+        result=await Orchestrator(CFG,provider,tools).run("查询所有设备列表，附证据。",[],"jwt",response,[])
+        self.assertEqual(result.status,"answered")
+        self.assertEqual(result.conclusion.evidence_ids,["E1"])
+        self.assertIn("INV-1001、INV-1002",result.conclusion.text)
+        self.assertEqual(result.source_coverage_percent,100)
+        provider.complete.assert_not_awaited()
+
     async def test_no_data_no_tools_and_stale(self):
         for status in ("stale","no_data","invalid_arguments"):
             provider=AsyncMock();provider.complete.side_effect=[call(),{"content":json.dumps(answer())},
