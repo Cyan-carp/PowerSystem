@@ -95,6 +95,11 @@ def main():
     check('manual chapter cited', manual.get('status') == 'answered' and manual.get('answer_mode') == 'grounded' and
           bool(manual_ids.intersection((manual.get('conclusion') or {}).get('evidence_ids', []))))
 
+    outside = ask('outside-knowledge', '海洋潮汐涡轮叶片生物附着的成因？')
+    check('knowledge miss explicitly labeled', outside.get('status') == 'answered' and
+          outside.get('knowledge_status') == 'miss' and outside.get('answer_mode') == 'hypothesis' and
+          outside.get('source_coverage_percent') == 0)
+
     boundary = ask('simulation-boundary', '华为手册描述的 AFCI 在模拟器里实现了吗？')
     boundary_ids = {e['id'] for e in boundary.get('evidence', []) if e.get('status') == 'ok' and
                     isinstance(e.get('data'), dict) and e['data'].get('source_kind') == 'manual_summary'}
