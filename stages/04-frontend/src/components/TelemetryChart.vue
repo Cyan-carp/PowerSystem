@@ -20,9 +20,9 @@ function draw(): void {
     animationDurationUpdate: 250,
     grid: { left: 58, right: 28, top: 24, bottom: 42 },
     tooltip: { trigger: 'axis', axisPointer: { type: 'cross' }, valueFormatter: (value: unknown) => `${Number(value).toFixed(2)} ${metricUnits[props.metric]}` },
-    xAxis: { type: 'time', axisLine: { lineStyle: { color: '#9db2bd' } }, axisLabel: { color: '#66808e' }, splitLine: { show: false } },
-    yAxis: { type: 'value', name: metricUnits[props.metric], nameTextStyle: { color: '#66808e' }, axisLabel: { color: '#66808e' }, splitLine: { lineStyle: { color: '#e8eef0' } } },
-    series: [{ name: metricLabels[props.metric], type: 'line', smooth: false, showSymbol: false, data: props.points, lineStyle: { color: '#ff6a00', width: 2.5 }, itemStyle: { color: '#ff6a00' }, areaStyle: { color: 'rgba(255,106,0,0.06)' } }],
+    xAxis: { type: 'time', axisLine: { lineStyle: { color: '#d9e0ea' } }, axisLabel: { color: '#98a2b3' }, splitLine: { show: false } },
+    yAxis: { type: 'value', name: metricUnits[props.metric], nameTextStyle: { color: '#98a2b3' }, axisLabel: { color: '#98a2b3' }, splitLine: { lineStyle: { color: '#edf0f6' } } },
+    series: [{ name: metricLabels[props.metric], type: 'line', smooth: false, showSymbol: false, data: props.points, lineStyle: { color: '#2e6bff', width: 2.5 }, itemStyle: { color: '#2e6bff' }, areaStyle: { color: 'rgba(46,107,255,0.10)' } }],
   }, true)
 }
 

@@ -30,15 +30,19 @@ async function submit(): Promise<void> {
 <template>
   <div class="login-screen">
     <div class="login-identity">
-      <div class="login-logo"><el-icon><Lightning /></el-icon></div>
-      <span class="eyebrow">POWER SYSTEM OPERATIONS</span>
-      <h1>每一台设备的状态，<br />都值得被及时看见。</h1>
-      <p>源网智联新能源设备智能运维平台</p>
-      <div class="login-line"><span />遥测接入<span />实时告警<span />故障预测</div>
+      <div class="mesh" aria-hidden="true" />
+      <div class="grid-dots" aria-hidden="true" />
+      <div class="inner">
+        <div class="login-logo"><el-icon><Lightning /></el-icon></div>
+        <span class="eyebrow">POWER SYSTEM OPERATIONS</span>
+        <h1>每一台设备的状态，<br />都值得被<b>及时看见</b>。</h1>
+        <p>源网智联新能源设备智能运维平台</p>
+        <div class="login-line"><span />遥测接入 · 实时告警 · 故障预测 · 值班问答</div>
+      </div>
     </div>
     <div class="login-panel">
       <div class="login-form-wrap">
-        <span class="section-kicker">值班工作台</span>
+        <span class="section-kicker">DUTY CONSOLE</span>
         <h2>登录平台</h2>
         <p>使用已注册的运维账号进入系统。</p>
         <form @submit.prevent="submit">

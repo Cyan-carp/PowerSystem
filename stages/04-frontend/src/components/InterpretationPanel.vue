@@ -168,7 +168,7 @@ onUnmounted(() => { alive = false; unsubscribe?.(); if (timer) clearInterval(tim
 
 <style scoped>
 .interpretation-picker { width: 100%; margin: 12px 0; }
-.interpretation-content { color: var(--ink, #1a1a1a); }
+.interpretation-content { color: var(--ink, #101828); }
 .interpretation-facts { padding: 12px 14px; border: 1px solid var(--line); border-left: 3px solid var(--warning-dot); background: #fff; }
 .interpretation-facts strong, .interpretation-facts span { display: block; margin-bottom: 8px; }
 .interpretation-facts strong { color: var(--ink); }

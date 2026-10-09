@@ -147,7 +147,7 @@ onUnmounted(() => { cancel(); sourceController?.abort() })
 .chat-examples { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 18px; }
 .chat-example {
   border: 1px solid var(--line-strong); background: #fff; color: var(--ink-2);
-  padding: 7px 14px; font-size: 13px;
+  padding: 8px 16px; font-size: 13px; border-radius: 999px;
 }
 .chat-example:hover { border-color: var(--brand); color: var(--brand); background: var(--brand-soft); }
 
@@ -160,7 +160,8 @@ onUnmounted(() => { cancel(); sourceController?.abort() })
 .chat-q-label { font-size: 12px; font-weight: 700; letter-spacing: 1px; color: var(--ink-2); }
 .chat-status { font-size: 12px; color: var(--brand); font-weight: 600; }
 .chat-question {
-  background: var(--ink); color: #fff;
+  background: var(--brand-soft); color: var(--ink); border: 1px solid var(--brand-line);
+  border-radius: 12px;
   padding: 12px 16px; margin: 14px 0 0;
   font-size: 14px; line-height: 1.7; white-space: pre-wrap; overflow-wrap: anywhere;
 }
@@ -214,8 +215,8 @@ onUnmounted(() => { cancel(); sourceController?.abort() })
 .chat-source-meta { display: block; color: var(--ink-3); font-size: 12px; margin: 10px 0; }
 
 /* 输入区 */
-.chat-compose { margin-top: 16px; padding: 16px 20px; }
-.chat-compose :deep(.el-textarea__inner) { border-radius: 0; }
+.chat-compose { margin-top: 16px; padding: 16px 20px; border-radius: 16px; }
+.chat-compose :deep(.el-textarea__inner) { border-radius: 10px; }
 .chat-compose-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 12px; }
 
 pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 350px; overflow: auto; font-size: 12px; background: var(--hover); border: 1px solid var(--line-soft); padding: 12px; margin: 0 0 10px; }

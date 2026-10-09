@@ -5,6 +5,7 @@ import { api } from '../lib/api'
 import { loadHistory } from '../lib/history'
 import { realtime } from '../lib/realtime'
 import { dateTime, errorMessage, levelLabels } from '../lib/format'
+import { Odometer, Connection, TrendCharts, Sunny, WarningFilled, CircleCheckFilled, FirstAidKit } from '@element-plus/icons-vue'
 import TelemetryChart from '../components/TelemetryChart.vue'
 import type { Alarm, Device, Summary } from '../types'
 
@@ -102,16 +103,16 @@ onUnmounted(() => { unsubscribe?.(); if (periodic) clearInterval(periodic); if (
     <section class="kpi-section">
       <div class="kpi-caption">运行状态</div>
       <div class="kpi-grid">
-        <div class="kpi-card primary"><span>登记设备</span><strong>{{ summary?.device_total ?? '—' }}</strong><small>台设备</small></div>
-        <div class="kpi-card"><span>在线设备</span><strong>{{ summary?.online ?? '—' }}</strong><small>{{ summary?.offline ?? '—' }} 台离线</small></div>
-        <div class="kpi-card"><span>当前功率</span><strong>{{ summary?.current_power_kw?.toFixed(1) ?? '—' }}</strong><small>kW · 非累计发电量</small></div>
-        <div class="kpi-card"><span>当日发电量</span><strong>{{ summary?.today_energy_kwh?.toFixed(1) ?? '—' }}</strong><small>kWh · 留存累计 {{ summary?.retained_energy_kwh?.toFixed(1) ?? '—' }} kWh</small></div>
+        <div class="kpi-card primary"><span class="kpi-ico"><el-icon><Odometer /></el-icon></span><span class="kpi-body"><span class="kpi-label">登记设备</span><strong>{{ summary?.device_total ?? '—' }}</strong><small>台设备</small></span></div>
+        <div class="kpi-card"><span class="kpi-ico"><el-icon><Connection /></el-icon></span><span class="kpi-body"><span class="kpi-label">在线设备</span><strong>{{ summary?.online ?? '—' }}</strong><small>{{ summary?.offline ?? '—' }} 台离线</small></span></div>
+        <div class="kpi-card"><span class="kpi-ico"><el-icon><TrendCharts /></el-icon></span><span class="kpi-body"><span class="kpi-label">当前功率</span><strong>{{ summary?.current_power_kw?.toFixed(1) ?? '—' }}</strong><small>kW · 非累计发电量</small></span></div>
+        <div class="kpi-card"><span class="kpi-ico"><el-icon><Sunny /></el-icon></span><span class="kpi-body"><span class="kpi-label">当日发电量</span><strong>{{ summary?.today_energy_kwh?.toFixed(1) ?? '—' }}</strong><small>kWh · 留存累计 {{ summary?.retained_energy_kwh?.toFixed(1) ?? '—' }} kWh</small></span></div>
       </div>
       <div class="kpi-caption">告警与风险</div>
       <div class="kpi-grid triple">
-        <div class="kpi-card warning"><span>活动告警</span><strong>{{ summary?.active_alarms ?? '—' }}</strong><small>{{ summary?.fault ?? '—' }} 台故障设备</small></div>
-        <div class="kpi-card"><span>运行正常占比</span><strong>{{ summary?.operational_health_percent?.toFixed(0) ?? '—' }}<em>%</em></strong><small>依据当前在线状态</small></div>
-        <div class="kpi-card"><span>设备健康度</span><strong>{{ summary?.health_score_percent?.toFixed(0) ?? '—' }}<em v-if="summary?.health_score_percent != null">分</em></strong><small>依据在线、故障与活动告警</small></div>
+        <div class="kpi-card warning"><span class="kpi-ico"><el-icon><WarningFilled /></el-icon></span><span class="kpi-body"><span class="kpi-label">活动告警</span><strong>{{ summary?.active_alarms ?? '—' }}</strong><small>{{ summary?.fault ?? '—' }} 台故障设备</small></span></div>
+        <div class="kpi-card"><span class="kpi-ico"><el-icon><CircleCheckFilled /></el-icon></span><span class="kpi-body"><span class="kpi-label">运行正常占比</span><strong>{{ summary?.operational_health_percent?.toFixed(0) ?? '—' }}<em>%</em></strong><small>依据当前在线状态</small></span></div>
+        <div class="kpi-card"><span class="kpi-ico"><el-icon><FirstAidKit /></el-icon></span><span class="kpi-body"><span class="kpi-label">设备健康度</span><strong>{{ summary?.health_score_percent?.toFixed(0) ?? '—' }}<em v-if="summary?.health_score_percent != null">分</em></strong><small>依据在线、故障与活动告警</small></span></div>
       </div>
     </section>
     <div class="dashboard-grid">
