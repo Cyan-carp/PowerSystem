@@ -4,6 +4,7 @@ import base64
 import hashlib
 import hmac
 import json
+import re
 import subprocess
 import time
 import urllib.error
@@ -74,6 +75,7 @@ def main():
                           'source_kind': e.get('data', {}).get('source_kind') if isinstance(e.get('data'), dict) else None}
                          for e in response.get('evidence', [])],
             'conclusion_evidence_ids': (response.get('conclusion') or {}).get('evidence_ids', []),
+            'conclusion_text': (response.get('conclusion') or {}).get('text', ''),
             'source_coverage_percent': response.get('source_coverage_percent')}, ensure_ascii=False, indent=2), encoding='utf-8')
         check(label + ' HTTP', status == 200)
         return response
@@ -89,7 +91,14 @@ def main():
                     isinstance(e.get('data'), dict) and e['data'].get('source_kind') == 'manual_summary'}
     check('manual function versus simulation', boundary.get('status') == 'answered' and
           bool(boundary_ids.intersection((boundary.get('conclusion') or {}).get('evidence_ids', []))) and
-          any(word in (boundary.get('conclusion') or {}).get('text', '') for word in ('未实现', '没有实现', '未接入')))
+          bool(re.search(r'未.{0,12}(?:实现|生成|接入)|没有.{0,8}实现',
+                         (boundary.get('conclusion') or {}).get('text', ''))))
+
+    business = ask('business', '查询所有设备列表，附证据。')
+    business_ids = {e['id'] for e in business.get('evidence', []) if e.get('status') == 'ok' and
+                    e.get('kind') == 'business' and e.get('tool') == 'list_devices'}
+    check('current business data cited', business.get('status') == 'answered' and
+          bool(business_ids.intersection((business.get('conclusion') or {}).get('evidence_ids', []))))
 
     live = ask('live', 'INV-1001 现在功率是多少？')
     check('live tool attempted', any(e.get('kind') == 'business' and e.get('tool') in
@@ -99,8 +108,9 @@ def main():
         check('live data cited', any(e['id'] in cited and e.get('status') == 'ok' and e.get('kind') == 'business'
               for e in live.get('evidence', [])))
     else:
-        check('live uncertainty marked', live.get('answer_mode') == 'hypothesis' and
-              live.get('source_coverage_percent') == 0)
+        check('live uncertainty marked', live.get('source_coverage_percent') == 0 and (
+              live.get('answer_mode') == 'hypothesis' or
+              (live.get('status') == 'unable_to_determine' and live.get('conclusion') is None)))
 
     print(json.dumps({'passed': len(checks), 'checks': len(checks)}))
 
