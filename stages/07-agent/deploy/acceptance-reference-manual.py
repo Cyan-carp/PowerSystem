@@ -38,7 +38,7 @@ def main():
     devices = [row.split('|') for row in rows]
     check('three simulated identities', len(devices) == 3 and
           [row[1] for row in devices] == ['INV-1001', 'INV-1002', 'INV-1003'] and
-          all(row[2:] == ['synthetic', 't', 'Huawei', 'SUN2000-100KTL-M2'] for row in devices))
+          all(row[2:] == ['synthetic', 'true', 'Huawei', 'SUN2000-100KTL-M2'] for row in devices))
     check('other devices not relabeled', sql("SELECT count(*) FROM devices WHERE is_simulated "
           "AND device_code NOT IN ('INV-1001','INV-1002','INV-1003')") == '0')
 
