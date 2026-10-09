@@ -10,7 +10,7 @@ from .search import public_query, STATUS_LABELS
 def needs_knowledge(message):
     # A question without an explicit request for live data is a knowledge
     # question too ("告警级别有哪些", "历史曲线最长能看多久", etc.).
-    if re.search(r"如何|怎么|为什么|什么意思|什么是|说明|操作|步骤|排查|帮助|引导|知识库|文档|单位|区别|确认|过期|没消息|掉线|查看|支持", message):
+    if re.search(r"如何|怎么|为什么|什么意思|什么是|说明|操作|步骤|排查|帮助|引导|知识库|文档|手册|型号|规格|指示灯|故障码|华为|单位|区别|确认|过期|没消息|掉线|查看|支持", message):
         return True
     return not needs_business(message) and bool(re.search(r"哪些|多久|是否|吗|？|\?", message))
 

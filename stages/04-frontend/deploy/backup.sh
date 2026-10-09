@@ -78,6 +78,13 @@ if [ -s /etc/powersystem/agent-service-token ]; then
   if [ -f "$project_dir/stages/07-agent/knowledge/index.json" ]; then
     cp "$project_dir/stages/07-agent/knowledge/index.json" "$staging/knowledge-index.json"
   fi
+  # Manufacturer originals are private runtime assets, never release files.
+  manuals_dir=${POWERSYSTEM_MANUALS_DIR:-$project_dir/runtime/manuals}
+  if [ -d "$manuals_dir" ]; then
+    test -s "$project_dir/设备知识/手册来源清单.json"
+    cp -a "$manuals_dir" "$staging/manuals"
+    cp "$project_dir/设备知识/手册来源清单.json" "$staging/manuals-manifest.json"
+  fi
 fi
 find "$staging/config" -type f -exec chmod 600 {} +
 find "$staging/config" -type d -exec chmod 700 {} +

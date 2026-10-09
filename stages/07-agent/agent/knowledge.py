@@ -18,6 +18,7 @@ ALIASES = {
     "飞书": ["群消息", "机器人通知", "值班群"],
     "值班问答": ["问答", "智能助手", "聊天"],
     "知识库": ["文档检索", "联网搜索", "联网", "未命中"],
+    "sun2000-100ktl-m2": ["inv-1001", "inv-1002", "inv-1003", "仿真参考型号"],
 }
 STOP = {"如何", "怎么", "什么", "为什么", "是否", "可以", "应该", "这个", "一下", "设备", "平台", "问题", "查询", "现在", "当前", "请问", "查看", "功能", "使用", "说明", "帮助", "检查"}
 
@@ -74,6 +75,8 @@ class Knowledge:
             score = coverage + 2 * len(wanted & title) / max(1, len(wanted))
             score += .15 if chunk["authority"] == "current" else 0
             score += .4 if concept_match else 0
+            if chunk.get("source_kind") == "manual_summary" and re.search(r"sun2000|100ktl|华为|手册|型号|afci|指示灯|故障码", query, re.I):
+                score += .6
             ranked.append((score, chunk))
         ranked.sort(key=lambda row: (-row[0], row[1]["id"]))
         return ("hit" if ranked else "miss"), [row[1] for row in ranked[:limit]]

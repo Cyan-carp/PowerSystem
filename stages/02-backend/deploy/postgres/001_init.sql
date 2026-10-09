@@ -13,12 +13,18 @@ CREATE TABLE IF NOT EXISTS devices (
  name VARCHAR(128) NOT NULL,
  dev_type VARCHAR(32) NOT NULL,
  vendor VARCHAR(64),
+ is_simulated BOOLEAN NOT NULL DEFAULT FALSE,
+ reference_vendor VARCHAR(64),
+ reference_model VARCHAR(64),
  station_code VARCHAR(64) NOT NULL,
  group_name VARCHAR(64),
  deleted_at TIMESTAMPTZ,
  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+ALTER TABLE devices ADD COLUMN IF NOT EXISTS is_simulated BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE devices ADD COLUMN IF NOT EXISTS reference_vendor VARCHAR(64);
+ALTER TABLE devices ADD COLUMN IF NOT EXISTS reference_model VARCHAR(64);
 CREATE INDEX IF NOT EXISTS idx_devices_group ON devices(group_name) WHERE deleted_at IS NULL;
 CREATE TABLE IF NOT EXISTS alarm_rules (
  id BIGSERIAL PRIMARY KEY,

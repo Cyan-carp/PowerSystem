@@ -30,5 +30,8 @@
  {"question":"查询设备1的预测，并说明预测结果过期应该怎么处理。","heading":"故障预测"},
  {"question":"风机覆冰应该怎么排查？","status":"miss"},
  {"question":"量子纠缠的原理怎么解释？","status":"miss"},
- {"question":"逆变器电弧故障如何排查？","status":"miss"}
+ {"question":"逆变器电弧故障如何排查？","heading":"指示灯、通信、保护与告警"},
+ {"question":"SUN2000-100KTL-M2 的额定有功功率是多少？","heading":"SUN2000-100KTL-M2 技术规格"},
+ {"question":"INV-1001 是华为真机吗？","heading":"参考型号与设备身份"},
+ {"question":"华为手册有 AFCI，但模拟器也实现了吗？","heading":"指示灯、通信、保护与告警"}
 ]

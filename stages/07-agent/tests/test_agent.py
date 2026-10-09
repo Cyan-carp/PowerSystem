@@ -163,10 +163,14 @@ class AsyncAgentTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_no_data_no_tools_and_stale(self):
         for status in ("stale","no_data","invalid_arguments"):
-            provider=AsyncMock();provider.complete.side_effect=[call(),{"content":json.dumps(answer())}]
+            provider=AsyncMock();provider.complete.side_effect=[call(),{"content":json.dumps(answer())},
+                {"content":json.dumps({"possibilities":["检查数据采集链路是否暂时不可用"]})}]
             tools=AsyncMock();tools.execute.return_value=evidence(status)
             response=ChatResponse(request_id="r",session_id="s",status="degraded",model="test")
-            self.assertEqual((await Orchestrator(CFG,provider,tools).run("查询",[],"jwt",response,[])).status,"unable_to_determine")
+            result=await Orchestrator(CFG,provider,tools).run("查询",[],"jwt",response,[])
+            self.assertEqual(result.status,"answered")
+            self.assertEqual(result.answer_mode,"hypothesis")
+            self.assertEqual(result.source_coverage_percent,0)
         provider=AsyncMock();provider.complete.return_value={"content":json.dumps(answer())}
         response=ChatResponse(request_id="r",session_id="s",status="degraded",model="test")
         self.assertEqual((await Orchestrator(CFG,provider,AsyncMock()).run("查询",[],"jwt",response,[])).status,"unable_to_determine")

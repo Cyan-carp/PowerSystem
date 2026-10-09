@@ -39,6 +39,7 @@ onMounted(() => { void load() })
       <el-table-column label="设备编号" prop="device_code" min-width="150"><template #default="{ row }"><strong class="code-cell">{{ row.device_code }}</strong></template></el-table-column>
       <el-table-column label="设备名称" prop="name" min-width="180" />
       <el-table-column label="类型" prop="dev_type" min-width="120" />
+      <el-table-column label="仿真参考型号" min-width="215"><template #default="{ row }">{{ row.is_simulated ? `${row.reference_vendor} ${row.reference_model}` : '—' }}</template></el-table-column>
       <el-table-column label="场站" prop="station_code" min-width="130" />
       <el-table-column label="分组" prop="group_name" min-width="130"><template #default="{ row }">{{ row.group_name || '未分组' }}</template></el-table-column>
       <el-table-column label="操作" width="115"><template #default="{ row }"><el-button link type="primary" @click.stop="router.push(`/devices/${row.id}`)">查看详情 →</el-button></template></el-table-column>

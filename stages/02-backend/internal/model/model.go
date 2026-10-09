@@ -15,16 +15,19 @@ type User struct {
 	UpdatedAt    time.Time `json:"updated_at"`
 }
 type Device struct {
-	ID          int64      `json:"id"`
-	DeviceCode  string     `json:"device_code"`
-	Name        string     `json:"name"`
-	DevType     string     `json:"dev_type"`
-	Vendor      string     `json:"vendor"`
-	StationCode string     `json:"station_code"`
-	GroupName   string     `json:"group_name"`
-	DeletedAt   *time.Time `json:"-"`
-	CreatedAt   time.Time  `json:"created_at"`
-	UpdatedAt   time.Time  `json:"updated_at"`
+	ID              int64      `json:"id"`
+	DeviceCode      string     `json:"device_code"`
+	Name            string     `json:"name"`
+	DevType         string     `json:"dev_type"`
+	Vendor          string     `json:"vendor"`
+	IsSimulated     bool       `json:"is_simulated"`
+	ReferenceVendor string     `json:"reference_vendor"`
+	ReferenceModel  string     `json:"reference_model"`
+	StationCode     string     `json:"station_code"`
+	GroupName       string     `json:"group_name"`
+	DeletedAt       *time.Time `json:"-"`
+	CreatedAt       time.Time  `json:"created_at"`
+	UpdatedAt       time.Time  `json:"updated_at"`
 }
 type AlarmRule struct {
 	ID        int64     `json:"id"`

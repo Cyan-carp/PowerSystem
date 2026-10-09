@@ -67,7 +67,10 @@ func Migrate(db *gorm.DB, path string) error {
 
 func SeedDemoDevices(db *gorm.DB) error {
 	for _, code := range []string{"INV-1001", "INV-1002", "INV-1003"} {
-		if err := db.Exec("INSERT INTO devices(device_code,name,dev_type,vendor,station_code,group_name) VALUES(?,?,'inverter','synthetic','ST-01','demo') ON CONFLICT(device_code) DO NOTHING", code, code).Error; err != nil {
+		if err := db.Exec(`INSERT INTO devices(device_code,name,dev_type,vendor,is_simulated,reference_vendor,reference_model,station_code,group_name)
+VALUES(?,?,'inverter','synthetic',TRUE,'Huawei','SUN2000-100KTL-M2','ST-01','demo')
+ON CONFLICT(device_code) DO UPDATE SET is_simulated=TRUE,reference_vendor='Huawei',reference_model='SUN2000-100KTL-M2'
+WHERE devices.vendor='synthetic' AND devices.deleted_at IS NULL`, code, code).Error; err != nil {
 			return err
 		}
 	}

@@ -88,6 +88,23 @@ class RetrievalTest(unittest.TestCase):
 
 
 class KnowledgeAsyncTest(unittest.IsolatedAsyncioTestCase):
+    async def test_manual_answer_keeps_simulation_boundary_and_source(self):
+        question = "华为手册有 AFCI，但模拟器实现了吗？"
+        provider, tools, search, misses = AsyncMock(), AsyncMock(), AsyncMock(), AsyncMock()
+        response = ChatResponse(request_id="r", session_id="s", status="degraded", model="test")
+        await Context(Knowledge(ROOT / "knowledge/index.json"), search, misses).prepare(question, response, "jwt")
+        manual = next(item for item in response.evidence if item.data.get("source_kind") == "manual_summary")
+        self.assertIn("当前仿真没有实现", manual.data["content"])
+        provider.complete.return_value = {"content": json.dumps({
+            "conclusion": {"text": "手册描述 AFCI，当前仿真没有实现。", "evidence_ids": [manual.id]},
+            "suggestions": [], "limitations": []})}
+        result = await Orchestrator(CFG, provider, tools).run(question, [], "jwt", response, [])
+        self.assertEqual(result.status, "answered")
+        self.assertEqual(result.answer_mode, "grounded")
+        self.assertEqual(result.source_coverage_percent, 100)
+        self.assertEqual(result.conclusion.evidence_ids, [manual.id])
+        tools.execute.assert_not_awaited()
+
     async def test_knowledge_help_is_not_live_state_assertion(self):
         self.assertIsNone(LIVE_ASSERTION.search("当前知识库未命中时，查看告警中心的使用说明。"))
         self.assertIsNotNone(LIVE_ASSERTION.search("当前没有活动告警"))
@@ -178,27 +195,29 @@ class KnowledgeAsyncTest(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(result.conclusion)
         self.assertEqual(result.suggestions, [])
         self.assertEqual(result.knowledge_status, "hit")
-        self.assertTrue(provider.complete.await_args.args[1])  # business tools offered
+        self.assertTrue(provider.complete.await_args_list[0].args[1])  # business tools offered
 
         provider.reset_mock()
         provider.complete.side_effect = [call("list_devices", {}, "c1"),
-                                         {"content": json.dumps(answer("当前没有活动告警"))}]
+                                         {"content": json.dumps(answer("当前没有活动告警"))},
+                                         {"content": json.dumps({"possibilities": ["告警列表可能暂时不可用，需重新查询"]})}]
         tools.execute.return_value = evidence().model_copy(update={"id":"E2", "tool":"list_devices"})
         response = ChatResponse(request_id="r", session_id="s", status="degraded", model="test")
         result = await Orchestrator(CFG, provider, tools).run(question, [], "jwt", response, [],
             context=Context(knowledge, search, misses))
-        self.assertEqual(result.status, "unable_to_determine")
-        self.assertIsNone(result.conclusion)
+        self.assertEqual(result.answer_mode, "hypothesis")
+        self.assertEqual(result.source_coverage_percent, 0)
 
         provider.reset_mock()
         provider.complete.side_effect = [call("list_alarms", {}, "c1"),
-                                         {"content": json.dumps(answer("当前告警需在告警中心人工核对", "E1"))}]
+                                         {"content": json.dumps(answer("当前告警需在告警中心人工核对", "E1"))},
+                                         {"content": json.dumps({"possibilities": ["告警列表需由人员再次核验"]})}]
         tools.execute.return_value = evidence().model_copy(update={"id":"E2", "tool":"list_alarms"})
         response = ChatResponse(request_id="r", session_id="s", status="degraded", model="test")
         result = await Orchestrator(CFG, provider, tools).run(question, [], "jwt", response, [],
             context=Context(knowledge, search, misses))
-        self.assertEqual(result.status, "unable_to_determine")  # document-only conclusion
-        self.assertIsNone(result.conclusion)
+        self.assertEqual(result.answer_mode, "hypothesis")  # document-only conclusion is rejected
+        self.assertEqual(result.source_coverage_percent, 0)
 
         provider.reset_mock()
         provider.complete.side_effect = [call("list_alarms", {}, "c1"),
@@ -209,15 +228,18 @@ class KnowledgeAsyncTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.status, "answered")
         self.assertEqual(result.conclusion.evidence_ids, ["E2"])
 
-    async def test_missing_general_knowledge_never_queries_business_or_model(self):
+    async def test_missing_general_knowledge_offers_unverified_answer_without_business(self):
         provider, tools, search, misses = AsyncMock(), AsyncMock(), AsyncMock(), AsyncMock()
+        provider.complete.return_value = {"content": json.dumps({"possibilities": ["检查公开气象与设备资料后再决定排查步骤"]})}
         search.run.return_value = ("not_configured", [])
         response = ChatResponse(request_id="r",session_id="s",status="degraded",model="test")
         result = await Orchestrator(CFG,provider,tools).run("风机覆冰应该怎么排查？",[],"jwt",response,[],
             context=Context(Knowledge(ROOT / "knowledge/index.json"),search,misses))
-        self.assertEqual(result.status,"unable_to_determine")
+        self.assertEqual(result.status,"answered")
+        self.assertEqual(result.answer_mode,"hypothesis")
+        self.assertEqual(result.source_coverage_percent,0)
         self.assertEqual(result.web_status,"not_configured")
-        provider.complete.assert_not_awaited()
+        provider.complete.assert_awaited_once()
         tools.execute.assert_not_awaited()
     async def test_search_contract_limits_and_failures(self):
         config = replace(CFG, search_url="https://search.example.org/search", search_key="search-private")

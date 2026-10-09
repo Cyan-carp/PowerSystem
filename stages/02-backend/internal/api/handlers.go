@@ -160,6 +160,10 @@ func (s *Server) updateDevice(c *gin.Context) {
 		fail(c, 400, 40001, "invalid device update")
 		return
 	}
+	if device.IsSimulated && in.Vendor != "synthetic" {
+		fail(c, 409, 40001, "simulated device requires separate real-device onboarding")
+		return
+	}
 	device.Name = in.Name
 	device.DevType = in.DevType
 	device.Vendor = in.Vendor

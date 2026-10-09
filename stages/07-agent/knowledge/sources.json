@@ -1,5 +1,6 @@
 [
-  {"path":"平台使用手册.md","authority":"current"},
-  {"path":"平台运维与二次开发手册.md","authority":"current","sections":["页面功能对应","预测链路","第二版告警解读","第三阶段"]},
-  {"path":"第二版-智能体升级/开发阶段2-告警智能解读与大屏联动/01-阶段二方案设计.md","authority":"historical","date":"2026-10-01","sections":["关键设计决策"]}
+  {"path":"平台使用手册.md","authority":"current","kind":"project_guide"},
+  {"path":"设备知识/SUN2000-100KTL-M2-仿真参考.md","authority":"current","kind":"manual_summary","source_version":"EDOC1100248747 v30"},
+  {"path":"平台运维与二次开发手册.md","authority":"current","kind":"project_guide","sections":["页面功能对应","预测链路","第二版告警解读","第三阶段"]},
+  {"path":"第二版-智能体升级/开发阶段2-告警智能解读与大屏联动/01-阶段二方案设计.md","authority":"historical","kind":"historical_design","date":"2026-10-01","sections":["关键设计决策"]}
 ]

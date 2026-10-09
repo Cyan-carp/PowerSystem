@@ -1,0 +1,19 @@
+{
+  "manuals": [
+    {
+      "document_id": "EDOC1100248747",
+      "title": "SUN2000-(75KTL-M1, 100KTL-M2, 110KTL-M2, 115KTL-M2) 用户手册",
+      "publisher": "华为技术有限公司",
+      "document_version": "30",
+      "document_date": "2026-09-28",
+      "checked_at": "2026-10-09",
+      "applicable_reference_model": "SUN2000-100KTL-M2",
+      "official_page": "https://info.support.huawei.com/Energy/info/zh_CN/solar/docView/EDOC1100248747",
+      "official_download": "https://download.huawei.com/edownload/e/download.do?actionFlag=download&mid=SUPE_DOC&nid=EDOC1100248747&partNo=6001",
+      "file_size_bytes": 8776362,
+      "sha256": "e6cfba204fc27579ebbec874915e859b9a55d2346a8d4f0f6d25d370570bd97e",
+      "private_storage": "artifacts/stage7-智能体/private/manuals/SUN2000-75KTL-M1_100KTL-M2_110KTL-M2_115KTL-M2-zh-v30.pdf",
+      "note": "仅关联三台仿真设备的参考型号；原件不进入公开仓库。"
+    }
+  ]
+}

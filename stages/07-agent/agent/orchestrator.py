@@ -2,7 +2,7 @@ import json
 import re
 from datetime import datetime, timezone
 from pydantic import ValidationError
-from .schemas import ModelAnswer, ChatResponse
+from .schemas import ModelAnswer, ChatResponse, ResponseClaim
 from .tools import TOOL_SCHEMAS
 from .llm import ProviderError
 from .context import needs_knowledge, needs_business, required_business_tools
@@ -23,13 +23,19 @@ suggestions 最多五条，limitations 最多八条；每条结论或建议 text
 只能引用本轮 status=ok 的证据编号。分页不完整时不得宣称所有设备或全部告警；压缩曲线不得冒充原始全量。
 建议一律需人工确认执行。不允许给出无证据的故障确定诊断。
 可以提出本轮资料支持的设备操作建议，但必须表述为供专业人员复核、决定和实施的建议，不能代替人员执行或断言已执行。
-当前尚未接入真实设备及实际机型手册。公开资料不是本项目设备操作规程，不推断机型适用性，不补写证据没有的技术参数。"""
+当前三台合成逆变器仅以 Huawei SUN2000-100KTL-M2 为仿真参考型号，并非华为真机。手册的指示灯、通信、保护及原生故障码没有接入模拟器；不能把手册故障解释成仿真设备的实际故障。
+尚未接入真实设备及其实际机型手册。公开资料不是本项目设备操作规程，不推断真实设备适用性，不补写证据没有的技术参数。"""
 SYSTEM += "\n解释概念、页面操作或通用排查时，使用‘规则规定’、‘页面支持’、‘如出现该情况可由人员核查’等条件表述；没有本轮业务工具证据时，不写‘当前状态为’或‘无活动告警’等现场状态断言。"
 NUMBERS = re.compile(r"(?<![A-Za-z])[-+]?\d+(?:\.\d+)?")
 LIVE_ASSERTION = re.compile(
     r"(?:当前|现在|目前|此刻|今天)(?:没有|暂无|无|有|存在|共有|出现|发生|正在)[^，。；]{0,12}(?:告警|设备|预测|遥测|功率|电压|电流|温度|状态)"
     r"|(?:当前|现在|目前|此刻|今天)(?:告警|设备|预测|遥测|功率|电压|电流|温度|状态)[^，。；]{0,12}(?:为|是|显示|处于|存在|有|无|没有|异常|正常)"
     r"|(?:没有|暂无|无)(?:活动|未处理|待处理)?告警")
+
+
+def statement_count(text):
+    """Count answer statements for the displayed citation coverage ratio."""
+    return max(1, sum(bool(part.strip()) for part in re.split(r"[。；;！？!?]+", text)))
 
 
 def validate_answer(answer, evidence):
@@ -129,15 +135,46 @@ class Orchestrator:
     def __init__(self, config, provider, tools):
         self.config, self.provider, self.tools = config, provider, tools
 
+    async def hypothesize(self, message, response, trace, live=False):
+        """Offer conditional, uncited ideas without inventing observations."""
+        prompt = ("只给未核验的可能性或一般解释。不得声称看到了当前设备状态、实际故障或项目配置；"
+                  "不得给具体操作命令、参数或数字。每项以条件语气表述。"
+                  "只输出 JSON：{\"possibilities\":[\"可能的解释\"]}，一到三项，每项不超过三百字。")
+        result = await self.provider.complete([{"role": "system", "content": prompt},
+                                               {"role": "user", "content": message}], [])
+        try:
+            payload = json.loads(result["content"])
+            items = payload["possibilities"]
+            if (set(payload) != {"possibilities"} or not isinstance(items, list) or not 1 <= len(items) <= 3
+                    or any(not isinstance(item, str) or not item.strip() or len(item) > 300
+                           or NUMBERS.search(item) or LIVE_ASSERTION.search(item) for item in items)):
+                raise ValueError()
+        except (KeyError, TypeError, ValueError):
+            trace.append({"validation": "rejected", "reason": "hypothesis_structure"})
+            response.status = "unable_to_determine"
+            response.limitations = ["未取得可核验来源，且未能生成符合约束的未核验解释。"]
+            return response
+        prefix = ("本轮未取得可核验的设备状态，实际状态未知。以下仅为未核验的可能性："
+                  if live else "未取得可核验来源。以下仅为模型未核验的解释：")
+        text = prefix + "；".join("可能" + item.strip().removeprefix("可能") for item in items)
+        response.status = "answered"
+        response.answer_mode = "hypothesis"
+        response.conclusion = ResponseClaim(text=text, evidence_ids=[])
+        response.suggestions = []
+        response.limitations = ["无来源支持；这些是假设，不是现场事实或已核验操作规程。"]
+        response.total_claims = sum(statement_count(item) for item in items)
+        response.sourced_claims = 0
+        response.source_coverage_percent = 0
+        trace.append({"answer_mode": "hypothesis", "claims": response.total_claims})
+        return response
+
     async def run(self, message, history, jwt, response, trace, context=None):
         if context is not None:
             await context.prepare(message, response, jwt)
         document_only = context is not None and needs_knowledge(message) and not needs_business(message)
         live_tools = required_business_tools(message)
         if document_only and not any(e.status == "ok" for e in response.evidence):
-            response.status = "unable_to_determine"
-            response.limitations.append("无法判断：本地知识与联网检索均未取得有效依据，不调用不相关业务工具补充答案。")
-            return response
+            return await self.hypothesize(message, response, trace)
         if len(json.dumps([e.model_dump() for e in response.evidence], ensure_ascii=False).encode()) > 65536:
             raise ProviderError("evidence_budget_exceeded")
         messages = [{"role": "system", "content": SYSTEM}, *history,
@@ -177,14 +214,10 @@ class Orchestrator:
                 raise ProviderError("unexpected_business_tool_call")
             if not calls:
                 if not any(e.status == "ok" for e in response.evidence):
-                    response.status = "unable_to_determine"
-                    response.limitations.append("无法判断：数据不足、过期或工具调用未成功。")
-                    return response
+                    return await self.hypothesize(message, response, trace, bool(live_tools))
                 if any(not any(e.kind == "business" and e.status == "ok" and e.tool in group
                                for e in response.evidence) for group in live_tools):
-                    response.status = "unable_to_determine"
-                    response.limitations.append("无法判断当前业务状态：尚未取得对应业务工具的有效证据。")
-                    return response
+                    return await self.hypothesize(message, response, trace, True)
                 try:
                     answer = validate_answer(ModelAnswer.model_validate_json(result["content"]), response.evidence)
                 except (ValueError, TypeError) as exc:
@@ -199,21 +232,23 @@ class Orchestrator:
                 if any(not any(e.id in answer.conclusion.evidence_ids and e.kind == "business"
                                and e.status == "ok" and e.tool in group for e in response.evidence)
                        for group in live_tools):
-                    response.status = "unable_to_determine"
-                    response.limitations.append("无法判断当前业务状态：结论未引用对应的本轮业务证据。")
-                    return response
+                    return await self.hypothesize(message, response, trace, True)
                 if any(LIVE_ASSERTION.search(claim.text) and any(not any(
                        e.id in claim.evidence_ids and e.kind == "business" and e.status == "ok"
                        and e.tool in group for e in response.evidence)
                        for group in required_business_tools(claim.text, force=True))
                        for claim in (answer.conclusion, *answer.suggestions)):
                     response.status = "unable_to_determine"
-                    response.limitations.append("无法判断当前业务状态：实时断言未引用对应的本轮业务证据。")
+                    response.limitations = ["模型把资料解释成未经业务取证的现场状态，已拒绝该断言。"]
+                    trace.append({"validation": "rejected", "reason": "unsupported_live_assertion"})
                     return response
                 response.status, response.conclusion = "answered", answer.conclusion
                 if any(len(claim.text + "（需人工确认执行）") > 1500 for claim in answer.suggestions):
                     raise ProviderError("answer_validation_failed")
                 response.suggestions = [suggestion(claim) for claim in answer.suggestions]
+                response.total_claims = sum(statement_count(claim.text) for claim in (response.conclusion, *response.suggestions))
+                response.sourced_claims = response.total_claims
+                response.source_coverage_percent = 100
                 # Use a fixed caveat; model-supplied limitations are not an unvalidated facts channel.
                 response.limitations = ["合成演示数据；引用与数字校验不等于根因验证，建议须人工核查。"]
                 if any(e.kind == "web" for e in response.evidence):

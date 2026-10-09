@@ -155,6 +155,12 @@ stages/07-agent/scripts/test-offline.ps1
 
 索引入 Git，服务启动时验证集合哈希。六个业务页面的帮助位于前端 `lib/page-help.ts`，与使用手册同步；模型不可用时帮助仍可阅读。
 
+#### SUN2000-100KTL-M2 仿真参考手册
+
+`INV-1001`、`INV-1002`、`INV-1003` 的仿真参考型号为 `Huawei SUN2000-100KTL-M2`，厂商身份仍是 `synthetic`。原创适用性与章节摘要在 `设备知识/SUN2000-100KTL-M2-仿真参考.md`，公开版本与 SHA-256 记录在 `设备知识/手册来源清单.json`。华为原始 PDF 仅保存在本机 Git 忽略目录 `artifacts/stage7-智能体/private/manuals/`；服务器先上传到私有临时位置，再以 `stages/07-agent/deploy/install-reference-manual.sh <上传后的 PDF>` 验证并安装到 `/opt/powersystem/runtime/manuals/`，目录权限 700，原件权限 600。现有加密备份会将该服务器私有目录和来源清单一并纳入，隔离恢复时重新核对哈希。部署新知识索引前保留上一版索引与来源清单以便回退；不把 PDF 加入发布包或 Git。
+
+手册的指示灯、通信、保护、原生故障码均未由模拟器生成。第 7.4 节指向单独的《逆变器 告警参考》，本批未收录该文档。智能体可解释本批已核对章节；问三台设备当前状态必须查询业务工具。无可核验来源时只给明确标注的假设，页面显示按句统计的陈述中带来源的比例，该比例不是正确率，也不表示来源必然支持模型的每个措辞。真实设备接入时按实际完整型号、硬件和软件版本重新建立文档关联。
+
 #### 步骤 2 · 可选搜索配置
 
 `AGENT_SEARCH_PROVIDER=generic` 保持原 POST `{query,max_results:5}` 与 `{results:[{title,url,summary,published_at?}]}` 协议。选择 `bocha` 时固定调用 `https://api.bocha.cn/v1/web-search`，使用 Bearer 私有密钥及 `{query,count:5,summary:true,freshness:"noLimit"}`。`AGENT_SEARCH_URL` 留空或填该官方地址，其他地址拒绝启动；`AGENT_SEARCH_KEY_FILE` 指向忽略目录中的密钥文件。服务器使用 `/etc/powersystem/agent-search-key`，确保 Agent 用户可通过 secret 读取，文件不对其他普通用户开放。

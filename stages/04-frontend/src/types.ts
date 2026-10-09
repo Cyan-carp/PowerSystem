@@ -4,6 +4,7 @@ export interface User { id: number; username: string; real_name: string; role: s
 export interface LoginResult { token: string; token_type: string; expires_in: number; user: User }
 export interface Device {
   id: number; device_code: string; name: string; dev_type: string; vendor: string
+  is_simulated: boolean; reference_vendor: string; reference_model: string
   station_code: string; group_name: string; created_at: string; updated_at: string
 }
 export interface Telemetry {
@@ -68,5 +69,6 @@ export interface AgentChatResponse {
   request_id: string; session_id: string; status: 'answered' | 'unable_to_determine' | 'degraded'
   conclusion: AgentClaim | null; suggestions: AgentClaim[]; evidence: ChatEvidence[]
   limitations: string[]; notices: string[]; model: string; knowledge_status: string; web_status: string; miss_record_status: string
+  answer_mode: 'grounded' | 'hypothesis'; source_coverage_percent: number; sourced_claims: number; total_claims: number
 }
-export interface KnowledgeSource { id: string; document: string; heading: string; content: string; version: string; authority: string; document_date?: string }
+export interface KnowledgeSource { id: string; document: string; heading: string; content: string; version: string; authority: string; document_date?: string; source_kind?: string; source_revision?: string }

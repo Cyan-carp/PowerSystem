@@ -28,6 +28,11 @@ class Claim(StrictModel):
     evidence_ids: list[str] = Field(min_length=1, max_length=10)
 
 
+class ResponseClaim(StrictModel):
+    text: str = Field(min_length=1, max_length=1500)
+    evidence_ids: list[str] = Field(default_factory=list, max_length=10)
+
+
 class ModelAnswer(StrictModel):
     conclusion: Claim
     suggestions: list[Claim] = Field(max_length=5)
@@ -56,7 +61,7 @@ class ChatResponse(StrictModel):
     request_id: str
     session_id: str
     status: Literal["answered", "unable_to_determine", "degraded"]
-    conclusion: Claim | None = None
+    conclusion: ResponseClaim | None = None
     evidence: list[Evidence] = Field(default_factory=list)
     suggestions: list[Suggestion] = Field(default_factory=list)
     limitations: list[str] = Field(default_factory=list)
@@ -65,3 +70,7 @@ class ChatResponse(StrictModel):
     web_status: str = "not_requested"
     notices: list[str] = Field(default_factory=list)
     miss_record_status: str = "not_requested"
+    answer_mode: Literal["grounded", "hypothesis"] = "grounded"
+    source_coverage_percent: int = Field(default=0, ge=0, le=100)
+    sourced_claims: int = 0
+    total_claims: int = 0

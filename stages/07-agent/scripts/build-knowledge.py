@@ -39,6 +39,8 @@ def build(root=ROOT):
                 chunks.append({"id": "K" + hashlib.sha256(key.encode()).hexdigest()[:20],
                     "document": source["path"], "heading": heading, "content": body,
                     "authority": source["authority"], "document_date": source.get("date"),
+                    "source_kind": source.get("kind", "project_guide"),
+                    "source_revision": source.get("source_version"),
                     "content_hash": hashlib.sha256(body.encode()).hexdigest()})
     version = hashlib.sha256(json.dumps(chunks, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
     return {"version": version, "chunks": chunks}

@@ -35,6 +35,19 @@ if [ -f "$restore_root/$run_id/knowledge-index.json" ]; then
     python3 -c 'import json,pathlib,sys; n=0; root=pathlib.Path(sys.argv[1]); files=list(root.glob("misses-*.jsonl")); [(json.loads(line)) for p in files for line in p.read_text().splitlines()]; print("knowledge_miss_files="+str(len(files)))' "$restore_root/$run_id/agent-knowledge-misses"
   fi
 fi
+if [ -d "$restore_root/$run_id/manuals" ]; then
+  test -s "$restore_root/$run_id/manuals-manifest.json"
+  python3 - "$restore_root/$run_id" <<'PY'
+import hashlib, json, pathlib, sys
+root = pathlib.Path(sys.argv[1])
+for item in json.loads((root / 'manuals-manifest.json').read_text(encoding='utf-8'))['manuals']:
+    original = root / 'manuals' / pathlib.Path(item['private_storage']).name
+    assert original.is_file(), f"missing manual: {original.name}"
+    assert original.stat().st_size == item['file_size_bytes'], f"manual size mismatch: {original.name}"
+    assert hashlib.sha256(original.read_bytes()).hexdigest() == item['sha256'], f"manual hash mismatch: {original.name}"
+print('manual_originals=verified')
+PY
+fi
 project_name="powersystem-restore-$(date -u +%s)"
 export POWERSYSTEM_BACKUP_DIR="$backup_dir"
 dc=(docker compose --project-name "$project_name" --env-file "$env_file" -f "$compose_file")

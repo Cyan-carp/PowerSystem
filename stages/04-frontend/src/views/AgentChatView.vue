@@ -67,7 +67,7 @@ onUnmounted(() => { cancel(); sourceController?.abort() })
       <div class="empty-box tall">
         <h2>描述你要核查的问题</h2>
         <p>例如：确认告警和已恢复有什么区别？设备 1 的预测是否新鲜？</p>
-        <p>本地知识库不足时会显示提示，适合的通用问题再联网补充。</p>
+        <p>优先查本地资料和业务数据；适合的通用问题可联网补充。没有可核验来源时仅显示明确标注的假设。</p>
         <div class="chat-examples"><button v-for="item in examples" :key="item" type="button" class="chat-example" @click="useExample(item)">{{ item }}</button></div>
       </div>
     </section>
@@ -76,6 +76,7 @@ onUnmounted(() => { cancel(); sourceController?.abort() })
       <header class="chat-turn-head">
         <span class="chat-q-label">问题 {{ index + 1 }}</span>
         <span v-if="turn.response" class="chat-status">{{ chatStatusLabels[turn.response.status] }}</span>
+        <span v-if="turn.response?.conclusion" class="chat-status">可核验来源覆盖率 {{ turn.response.source_coverage_percent }}%（{{ turn.response.sourced_claims }}/{{ turn.response.total_claims }} 句陈述附来源；不代表正确率）</span>
       </header>
       <p class="chat-question">{{ turn.question }}</p>
       <p v-if="turn.error" class="chat-error" role="alert">{{ turn.error }}</p>
@@ -83,7 +84,7 @@ onUnmounted(() => { cancel(); sourceController?.abort() })
         <p v-for="notice in turn.response.notices" :key="notice" class="chat-notice">{{ notice }}</p>
         <section class="chat-answer">
           <h3 class="chat-block-title">结论</h3>
-          <p class="chat-text chat-conclusion">{{ turn.response.conclusion?.text || '无法判断：未取得足够有效依据。' }} <small v-if="turn.response.conclusion?.evidence_ids.length" class="chat-evidence-ids">{{ turn.response.conclusion?.evidence_ids.join('、') }}</small></p>
+          <p class="chat-text chat-conclusion">{{ turn.response.conclusion?.text || '无法判断：未取得足够有效依据。' }} <small v-if="turn.response?.answer_mode === 'hypothesis'" class="chat-evidence-ids">未核验假设</small><small v-if="turn.response.conclusion?.evidence_ids.length" class="chat-evidence-ids">{{ turn.response.conclusion?.evidence_ids.join('、') }}</small></p>
         </section>
         <template v-if="turn.response.suggestions.length">
           <h3 class="chat-block-title">人工核查建议</h3>
@@ -91,12 +92,13 @@ onUnmounted(() => { cancel(); sourceController?.abort() })
         </template>
         <h3 v-if="turn.response.evidence.length" class="chat-block-title">取证与来源</h3>
         <details v-for="item in turn.response.evidence" :key="item.id" class="chat-evidence">
-          <summary>{{ item.id }} · {{ item.kind === 'document' ? '项目文档' : item.kind === 'web' ? '联网来源' : '业务数据' }} · {{ item.chapter || item.tool }} · {{ item.status }}</summary>
+          <summary>{{ item.id }} · {{ item.kind === 'document' ? (item.data.source_kind === 'manual_summary' ? '型号手册整理' : '项目文档') : item.kind === 'web' ? '联网来源' : '业务数据' }} · {{ item.chapter || item.tool }} · {{ item.status }}</summary>
           <div class="chat-evidence-body">
             <p>查询时间：{{ dateTime(item.collected_at) }}<template v-if="item.data_time"> · 数据时间：{{ dateTime(item.data_time) }}</template></p>
             <p>来源：{{ item.source }}</p>
             <p v-if="item.kind === 'web' && typeof item.data.published_at === 'string' && item.data.published_at">发布时间：{{ dateTime(item.data.published_at) }}</p>
-            <p v-if="item.document_version">文档版本：{{ item.document_version }}</p>
+            <p v-if="item.document_version">知识索引版本：{{ item.document_version }}</p>
+            <p v-if="item.kind === 'document' && item.data.source_revision">原始来源版本：{{ item.data.source_revision }}</p>
             <div class="chat-evidence-actions">
               <el-button v-if="item.kind === 'document'" size="small" @click="showSource(item)">阅读引用章节</el-button>
               <a v-if="item.kind === 'web' && publicLink(item.url)" :href="publicLink(item.url)!" target="_blank" rel="noopener noreferrer">打开外部来源</a>
@@ -116,7 +118,7 @@ onUnmounted(() => { cancel(); sourceController?.abort() })
     <p v-if="sourceError" class="chat-error" role="alert">{{ sourceError }}</p>
     <section v-if="source" class="chat-source surface">
       <header class="chat-source-head"><strong>{{ source.heading }}</strong><el-button size="small" @click="source = null">关闭章节</el-button></header>
-      <small class="chat-source-meta">{{ source.document }} · {{ source.authority === 'historical' ? '历史记录' : '当前文档' }} {{ source.document_date }}</small>
+      <small class="chat-source-meta">{{ source.document }} · {{ source.source_kind === 'manual_summary' ? '型号手册整理' : source.authority === 'historical' ? '历史记录' : '项目文档' }} {{ source.source_revision || source.document_date }}</small>
       <p v-if="sourceVersion && source.version !== sourceVersion" class="chat-notice">知识版本已变化，以下为当前章节。请重新提问取得当前版本的回答与证据。</p>
       <pre>{{ source.content }}</pre>
     </section>
