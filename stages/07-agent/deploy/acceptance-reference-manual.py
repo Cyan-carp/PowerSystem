@@ -5,6 +5,7 @@ import hashlib
 import hmac
 import json
 import re
+from datetime import datetime
 import subprocess
 import time
 import urllib.error
@@ -72,6 +73,7 @@ def main():
             'http_status': status, 'status': response.get('status'), 'answer_mode': response.get('answer_mode'),
             'knowledge_status': response.get('knowledge_status'),
             'evidence': [{'id': e['id'], 'kind': e['kind'], 'tool': e['tool'], 'status': e['status'],
+                          'data_time': e.get('data_time'),
                           'source_kind': e.get('data', {}).get('source_kind') if isinstance(e.get('data'), dict) else None}
                          for e in response.get('evidence', [])],
             'conclusion_evidence_ids': (response.get('conclusion') or {}).get('evidence_ids', []),
@@ -103,14 +105,19 @@ def main():
     live = ask('live', 'INV-1001 现在功率是多少？')
     check('live tool attempted', any(e.get('kind') == 'business' and e.get('tool') in
           ('get_telemetry', 'get_dashboard_summary') for e in live.get('evidence', [])))
-    if live.get('status') == 'answered' and live.get('answer_mode') == 'grounded':
-        cited = set((live.get('conclusion') or {}).get('evidence_ids', []))
-        check('live data cited', any(e['id'] in cited and e.get('status') == 'ok' and e.get('kind') == 'business'
-              for e in live.get('evidence', [])))
-    else:
-        check('live uncertainty marked', live.get('source_coverage_percent') == 0 and (
-              live.get('answer_mode') == 'hypothesis' or
-              (live.get('status') == 'unable_to_determine' and live.get('conclusion') is None)))
+    check('live answer grounded', live.get('status') == 'answered' and live.get('answer_mode') == 'grounded')
+    cited = set((live.get('conclusion') or {}).get('evidence_ids', []))
+    check('live data cited', any(e['id'] in cited and e.get('status') == 'ok' and e.get('kind') == 'business'
+          and e.get('tool') == 'get_telemetry' for e in live.get('evidence', [])))
+    stamp_pattern = r'\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})'
+    claimed_stamps = re.findall(stamp_pattern, (live.get('conclusion') or {}).get('text', ''))
+    source_stamps = [value for e in live.get('evidence', []) if e['id'] in cited
+                     for value in (e.get('data_time'), e.get('collected_at'),
+                                   e.get('data', {}).get('received_at') if isinstance(e.get('data'), dict) else None)
+                     if value]
+    parse = lambda value: datetime.fromisoformat(value.replace('Z', '+00:00'))
+    check('live timestamp matches cited evidence', all(any(abs((parse(claim) - parse(source)).total_seconds()) < 1
+          for source in source_stamps) for claim in claimed_stamps))
 
     print(json.dumps({'passed': len(checks), 'checks': len(checks)}))
 

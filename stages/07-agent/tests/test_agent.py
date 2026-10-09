@@ -159,9 +159,25 @@ class AsyncAgentTest(unittest.IsolatedAsyncioTestCase):
         item.collected_at="2026-09-30T19:33:27.857359+08:00"
         valid=ModelAnswer.model_validate(answer("风险概率为72%，查询时间2026-09-30T11:33:26Z"))
         validate_answer(valid,[item])
-        for text in ("风险概率为65%，查询时间2026-09-30T11:33:26Z", "查询时间2099-09-30T11:33:26Z"):
+        for text in ("风险概率为65%，查询时间2026-09-30T11:33:26Z",
+                     "查询时间2099-09-30T11:33:26Z",
+                     "风险概率为72%，查询时间2026-09-30T00:00:00Z"):
             with self.assertRaises(ValueError):
                 validate_answer(ModelAnswer.model_validate(answer(text)),[item])
+
+    async def test_retries_unsupported_time_without_new_tools(self):
+        provider=AsyncMock()
+        provider.complete.side_effect=[call(),
+            {"content":json.dumps(answer("风险概率为72%，查询时间2026-09-30T11:33:26Z"))},
+            {"content":json.dumps(answer())}]
+        tools=AsyncMock();tools.execute.return_value=evidence()
+        response=ChatResponse(request_id="r",session_id="s",status="degraded",model="test")
+        trace=[]
+        result=await Orchestrator(CFG,provider,tools).run("查询",[],"jwt",response,trace)
+        self.assertEqual(result.status,"answered")
+        self.assertEqual(result.conclusion.text,"风险概率为72%")
+        self.assertEqual(provider.complete.call_args.args[1],[])
+        self.assertIn({"validation":"rejected","reason":"unsupported_temporal_claim"},trace)
 
     async def test_no_data_no_tools_and_stale(self):
         for status in ("stale","no_data","invalid_arguments"):

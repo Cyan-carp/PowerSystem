@@ -27,6 +27,7 @@ suggestions 最多五条，limitations 最多八条；每条结论或建议 text
 尚未接入真实设备及其实际机型手册。公开资料不是本项目设备操作规程，不推断真实设备适用性，不补写证据没有的技术参数。"""
 SYSTEM += "\n解释概念、页面操作或通用排查时，使用‘规则规定’、‘页面支持’、‘如出现该情况可由人员核查’等条件表述；没有本轮业务工具证据时，不写‘当前状态为’或‘无活动告警’等现场状态断言。"
 NUMBERS = re.compile(r"(?<![A-Za-z])[-+]?\d+(?:\.\d+)?")
+ISO_TIMESTAMP = re.compile(r"(?<!\d)\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})?(?!\d)")
 LIVE_ASSERTION = re.compile(
     r"(?:当前|现在|目前|此刻|今天)(?:没有|暂无|无|有|存在|共有|出现|发生|正在)[^，。；]{0,12}(?:告警|设备|预测|遥测|功率|电压|电流|温度|状态)"
     r"|(?:当前|现在|目前|此刻|今天)(?:告警|设备|预测|遥测|功率|电压|电流|温度|状态)[^，。；]{0,12}(?:为|是|显示|处于|存在|有|无|没有|异常|正常)"
@@ -45,6 +46,7 @@ def validate_answer(answer, evidence):
         if not all(ref in available for ref in claim.evidence_ids):
             raise ValueError("invalid_evidence_reference")
         values = set()
+        timestamps = []
         def collect(data):
             if isinstance(data, dict):
                 for v in data.values():
@@ -74,6 +76,7 @@ def validate_answer(answer, evidence):
                 try:
                     parsed = datetime.fromisoformat(data.replace("Z", "+00:00"))
                     if parsed.tzinfo is not None:
+                        timestamps.append(parsed)
                         for normalized in (parsed.isoformat(timespec="seconds"), parsed.astimezone(timezone.utc).isoformat(timespec="seconds")):
                             values.update(float(n) for n in NUMBERS.findall(normalized))
                         # A T-prefixed hour is missed by the identifier filter;
@@ -102,6 +105,14 @@ def validate_answer(answer, evidence):
                     if key in item.data:
                         v = item.data[key] * 100
                         values.update((v, round(v, 1), round(v, 2)))
+        for match in ISO_TIMESTAMP.finditer(claim.text):
+            try:
+                claimed = datetime.fromisoformat(match[0].replace("Z", "+00:00"))
+            except ValueError:
+                raise ValueError("unsupported_temporal_claim") from None
+            if claimed.tzinfo is None or not any(abs((claimed - source).total_seconds()) < 1
+                                                for source in timestamps):
+                raise ValueError("unsupported_temporal_claim")
         if any(float(n) not in values for n in NUMBERS.findall(claim.text)):
             raise ValueError("unsupported_numeric_claim")
         predictions = [available[ref].data for ref in claim.evidence_ids if available[ref].tool == "get_prediction"]
@@ -193,12 +204,12 @@ class Orchestrator:
                 "输出预算有限，本题必须简短回答：结论不超过180个中文字符，建议最多三条，每条不超过80个中文字符，limitations最多两条。"
                 "不要复述全部网页背景、专利信息或重复建议；只保留资料支持的核心核查方向。"
                 "只输出完整闭合的原格式 JSON，不使用 Markdown 代码块、前后说明或额外字段。"})
-        if live_tools and response.evidence:
+        if live_tools:
             messages.append({"role": "system", "content":
-                "本题同时涉及平台数据与说明。结论中的当前状态须引用本轮对应业务工具证据；操作说明须引用项目文档。"
+                "结论中的当前状态须引用本轮对应业务工具证据；操作说明须引用项目文档。"
                 "每一条结论或建议里的数字只能来自该条所引用的有效证据，用户问题、历史对话和未引用的其他证据中的数字都不能复述为事实。"
                 "结论仅复述业务工具返回的概率与阈值原值及已有状态，不计算百分比、时间差或其他派生数值；"
-                "不复述设备编号、日期时间、模型版本或测试批次。操作建议用定性文字，不加数字序号。"
+                "不复述设备编号、日期时间、模型版本或测试批次；尤其不要自行填写采样时间。操作建议用定性文字，不加数字序号。"
                 "无法确定数字时省略该数字并说明限制；建议最多五条，不能补写推测值。"})
         serialized = json.dumps(messages, ensure_ascii=False)
         for secret in (jwt, self.config.api_key, self.config.service_token, self.config.monitor_token, self.config.search_key):
@@ -222,13 +233,27 @@ class Orchestrator:
                     answer = validate_answer(ModelAnswer.model_validate_json(result["content"]), response.evidence)
                 except (ValueError, TypeError) as exc:
                     reason = str(exc)
-                    if isinstance(exc, ValidationError):
-                        codes = sorted({str(item.get("type", "invalid")) for item in exc.errors()})
-                        reason = "schema_" + "+".join(codes[:3])
-                    trace.append({"validation": "rejected", "reason": reason if reason in (
-                        "invalid_evidence_reference", "unsupported_numeric_claim", "prediction_value_changed")
-                        or reason.startswith("schema_") else "model_structure"})
-                    raise ProviderError("answer_validation_failed") from None
+                    if reason == "unsupported_temporal_claim":
+                        trace.append({"validation": "rejected", "reason": reason})
+                        messages.append({"role": "assistant", "content": result["content"]})
+                        messages.append({"role": "system", "content":
+                            "上条答案写了无法从所引用证据核对的时间。请删除日期和时间表述，只保留工具返回的数值及其证据编号。"
+                            "仍按原 JSON 格式回答，不调用工具。"})
+                        repaired = await self.provider.complete(messages, [])
+                        try:
+                            if repaired.get("tool_calls"):
+                                raise ValueError("unexpected_tool_call")
+                            answer = validate_answer(ModelAnswer.model_validate_json(repaired["content"]), response.evidence)
+                        except (ValueError, TypeError, KeyError):
+                            raise ProviderError("answer_validation_failed") from None
+                    else:
+                        if isinstance(exc, ValidationError):
+                            codes = sorted({str(item.get("type", "invalid")) for item in exc.errors()})
+                            reason = "schema_" + "+".join(codes[:3])
+                        trace.append({"validation": "rejected", "reason": reason if reason in (
+                            "invalid_evidence_reference", "unsupported_numeric_claim", "prediction_value_changed")
+                            or reason.startswith("schema_") else "model_structure"})
+                        raise ProviderError("answer_validation_failed") from None
                 if any(not any(e.id in answer.conclusion.evidence_ids and e.kind == "business"
                                and e.status == "ok" and e.tool in group for e in response.evidence)
                        for group in live_tools):
