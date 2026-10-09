@@ -1,4 +1,5 @@
 import json
+import math
 import re
 from datetime import datetime, timezone
 from pydantic import ValidationError
@@ -28,6 +29,10 @@ suggestions 最多五条，limitations 最多八条；每条结论或建议 text
 SYSTEM += "\n解释概念、页面操作或通用排查时，使用‘规则规定’、‘页面支持’、‘如出现该情况可由人员核查’等条件表述；没有本轮业务工具证据时，不写‘当前状态为’或‘无活动告警’等现场状态断言。"
 NUMBERS = re.compile(r"(?<![A-Za-z])[-+]?\d+(?:\.\d+)?")
 ISO_TIMESTAMP = re.compile(r"(?<!\d)\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})?(?!\d)")
+SIMPLE_LIVE_METRIC = re.compile(
+    r"\s*(?:请问|查询|查看|告诉我|帮我查(?:一下)?)?\s*(INV-100[123])\s*(?:的)?\s*"
+    r"(?:现在|当前|目前|此刻|最新|实时)\s*(功率|电压|电流|温度)\s*(?:是|为|有)?\s*(?:多少|什么|几)?\s*[？?。.!！\s]*",
+    re.IGNORECASE)
 LIVE_ASSERTION = re.compile(
     r"(?:当前|现在|目前|此刻|今天)(?:没有|暂无|无|有|存在|共有|出现|发生|正在)[^，。；]{0,12}(?:告警|设备|预测|遥测|功率|电压|电流|温度|状态)"
     r"|(?:当前|现在|目前|此刻|今天)(?:告警|设备|预测|遥测|功率|电压|电流|温度|状态)[^，。；]{0,12}(?:为|是|显示|处于|存在|有|无|没有|异常|正常)"
@@ -146,6 +151,42 @@ class Orchestrator:
     def __init__(self, config, provider, tools):
         self.config, self.provider, self.tools = config, provider, tools
 
+    async def simple_live_metric(self, message, jwt, response, trace):
+        match = SIMPLE_LIVE_METRIC.fullmatch(message)
+        if not match:
+            return None
+        code, label = match[1].upper(), match[2]
+        metric, unit = {"功率": ("power", "kW"), "电压": ("voltage", "V"),
+                        "电流": ("current", "A"), "温度": ("temperature", "°C")}[label]
+        device = await self.tools.execute("list_devices", {"keyword": code}, jwt, f"E{len(response.evidence)+1}")
+        response.evidence.append(device)
+        trace.append({"tool": "list_devices", "arguments": {"keyword": code}, "status": device.status})
+        matches = [row for row in device.data.get("list", []) if isinstance(row, dict)
+                   and row.get("device_code") == code and row.get("is_simulated") is True] if isinstance(device.data, dict) else []
+        if device.status != "ok" or len(matches) != 1 or type(matches[0].get("id")) is not int:
+            response.status = "unable_to_determine"
+            response.limitations = ["本轮未能核对该仿真设备的档案，无法给出当前数值。"]
+            return response
+        device_id = matches[0]["id"]
+        sample = await self.tools.execute("get_telemetry", {"device_id": device_id, "mode": "latest"},
+                                          jwt, f"E{len(response.evidence)+1}")
+        response.evidence.append(sample)
+        trace.append({"tool": "get_telemetry", "arguments": {"device_id": device_id, "mode": "latest"},
+                      "status": sample.status})
+        value = sample.data.get(metric) if isinstance(sample.data, dict) else None
+        if (sample.status != "ok" or type(value) not in (int, float) or not math.isfinite(value) or
+                sample.data.get("device_code") != code):
+            response.status = "unable_to_determine"
+            response.limitations = ["本轮没有取得该设备的新鲜遥测，无法给出当前数值。"]
+            return response
+        response.status = "answered"
+        response.conclusion = ResponseClaim(text=f"本轮查询，{code} 的仿真{label}为 {value} {unit}。",
+                                            evidence_ids=[device.id, sample.id])
+        response.total_claims = response.sourced_claims = 1
+        response.source_coverage_percent = 100
+        response.limitations = ["合成演示数据，不代表真实逆变器；数值以本轮采样为准。"]
+        return response
+
     async def hypothesize(self, message, response, trace, live=False):
         """Offer conditional, uncited ideas without inventing observations."""
         prompt = ("只给未核验的可能性或一般解释。不得声称看到了当前设备状态、实际故障或项目配置；"
@@ -180,6 +221,9 @@ class Orchestrator:
         return response
 
     async def run(self, message, history, jwt, response, trace, context=None):
+        immediate = await self.simple_live_metric(message, jwt, response, trace)
+        if immediate is not None:
+            return immediate
         if context is not None:
             await context.prepare(message, response, jwt)
         document_only = context is not None and needs_knowledge(message) and not needs_business(message)

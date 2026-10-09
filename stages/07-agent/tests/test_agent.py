@@ -179,6 +179,30 @@ class AsyncAgentTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(provider.complete.call_args.args[1],[])
         self.assertIn({"validation":"rejected","reason":"unsupported_temporal_claim"},trace)
 
+    async def test_simple_simulated_live_metric_uses_business_data(self):
+        device=Evidence(id="E1",tool="list_devices",status="ok",source="/api/v1/devices?keyword=INV-1001",
+                        collected_at="2026-10-09T06:48:27Z",data={"list":[{"id":1,"device_code":"INV-1001",
+                        "is_simulated":True}]})
+        sample=Evidence(id="E2",tool="get_telemetry",status="ok",source="/api/v1/devices/1/telemetry/latest",
+                        collected_at="2026-10-09T06:48:27Z",data_time="2026-10-09T06:48:26Z",
+                        data={"device_code":"INV-1001","power":57.588})
+        provider=AsyncMock();tools=AsyncMock();tools.execute.side_effect=[device,sample]
+        response=ChatResponse(request_id="r",session_id="s",status="degraded",model="test")
+        result=await Orchestrator(CFG,provider,tools).run("INV-1001 现在功率是多少？",[],"jwt",response,[])
+        self.assertEqual(result.status,"answered")
+        self.assertIn("57.588 kW",result.conclusion.text)
+        self.assertEqual(result.conclusion.evidence_ids,["E1","E2"])
+        self.assertEqual(result.source_coverage_percent,100)
+        provider.complete.assert_not_awaited()
+
+        stale=sample.model_copy(update={"status":"stale"})
+        tools.execute.side_effect=[device,stale]
+        response=ChatResponse(request_id="r",session_id="s",status="degraded",model="test")
+        result=await Orchestrator(CFG,provider,tools).run("INV-1001 现在功率是多少？",[],"jwt",response,[])
+        self.assertEqual(result.status,"unable_to_determine")
+        self.assertIsNone(result.conclusion)
+        self.assertEqual(result.source_coverage_percent,0)
+
     async def test_no_data_no_tools_and_stale(self):
         for status in ("stale","no_data","invalid_arguments"):
             provider=AsyncMock();provider.complete.side_effect=[call(),{"content":json.dumps(answer())},
