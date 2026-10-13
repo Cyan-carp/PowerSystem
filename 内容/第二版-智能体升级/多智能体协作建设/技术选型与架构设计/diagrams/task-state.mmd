@@ -1,0 +1,17 @@
+flowchart TB
+  subgraph Main["正常迁移：现有任务状态"]
+    direction LR
+    queued -->|"新任务"| planning
+    planning -->|"校验通过"| executing
+    executing -->|"write_plan allow且程序校验"| awaiting_approval
+    awaiting_approval -->|"admin批准"| queued
+    queued -->|"保存计划 / 新代次重核"| executing
+    executing -->|"完成与存证"| succeeded
+  end
+  subgraph Exceptions["异常迁移：具体前态以正文条件为准"]
+    direction LR
+    Active["允许的活动前态<br/>分组示意，非新增状态"]
+    Active -->|"拒绝 / 故障 / 不确定"| failed
+    Active -->|"取消 / 人工拒绝 / 过期"| cancelled
+    Active -->|"阶段截止"| timeout
+  end

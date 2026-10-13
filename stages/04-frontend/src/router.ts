@@ -7,7 +7,7 @@ export const router = createRouter({
     { path: '/login', component: () => import('./views/LoginView.vue'), name: 'login' },
     {
       path: '/', component: () => import('./layouts/ConsoleLayout.vue'), meta: { requiresAuth: true }, children: [
-        { path: 'agent', component: () => import('./views/AgentChatView.vue'), name: 'agent-chat', meta: { title: '值班问答' } },
+        { path: 'agent', component: () => import('./views/AgentChatView.vue'), name: 'agent-chat', meta: { title: '智能助手' } },
         { path: '', redirect: '/dashboard' },
         { path: 'dashboard', component: () => import('./views/DashboardView.vue'), name: 'dashboard', meta: { title: '运行总览' } },
         { path: 'devices', component: () => import('./views/DevicesView.vue'), name: 'devices', meta: { title: '设备管理' } },

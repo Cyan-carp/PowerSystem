@@ -71,11 +71,22 @@ func New(cfg config.Config, db *gorm.DB, redis *redis.Client, td *tdengine.Clien
 	a.PUT("/alarm-rules/:id", requireAdmin, s.updateRule)
 	a.DELETE("/alarm-rules/:id", requireAdmin, s.deleteRule)
 	a.GET("/alarms", s.listAlarms)
+	a.GET("/alarms/statistics", s.alarmStatistics)
 	a.GET("/alarms/:id", s.getAlarm)
 	a.POST("/alarms/:id/ack", s.ackAlarm)
 	a.GET("/dashboard/summary", s.dashboard)
 	a.POST("/ws-ticket", s.ticket)
 	a.POST("/agent/chat", s.agentChat)
+	a.GET("/agent/tasks", s.opsProxy)
+	a.GET("/agent/tasks/:id", s.opsProxy)
+	a.POST("/agent/tasks/:id/cancel", s.opsProxy)
+	a.POST("/agent/tasks/:id/approvals/:approval_id/decision", s.opsProxy)
+	r.GET("/internal/ma/v1/actor", s.maActor)
+	a.GET("/agent/sessions", s.agentRAGProxy)
+	a.GET("/agent/sessions/:id", s.agentRAGProxy)
+	a.POST("/agent/sessions/:id/verify", s.agentRAGVerify)
+	a.DELETE("/agent/sessions/:id", s.agentRAGProxy)
+	a.GET("/agent/rag/sources/:id", s.agentRAGProxy)
 	a.GET("/agent/knowledge/:id", s.agentKnowledge)
 	a.GET("/agent/interpretations", s.listInterpretations)
 	a.GET("/agent/interpretations/:id", s.getInterpretation)
@@ -125,6 +136,9 @@ func (s *Server) Run(ctx context.Context) error {
 		return err
 	}
 }
+
+// Handler is used by the isolated local MA acceptance proxy without starting business workers.
+func (s *Server) Handler() http.Handler { return s.router }
 func (s *Server) subscribe(ctx context.Context) error {
 	storePath := s.cfg.QueuePath + ".mqtt-store"
 	if err := os.MkdirAll(filepath.Dir(storePath), 0755); err != nil {

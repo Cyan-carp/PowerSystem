@@ -1,0 +1,9 @@
+name: powersystem-agent-rag
+services:
+  qdrant:
+    image: qdrant/qdrant:v1.17.1
+    ports: ["127.0.0.1:16333:6333"]
+    volumes: ["qdrant-data:/qdrant/storage"]
+    restart: unless-stopped
+volumes:
+  qdrant-data:

@@ -47,10 +47,10 @@ class Context:
     def __init__(self, knowledge, search, misses):
         self.knowledge, self.search, self.misses = knowledge, search, misses
 
-    async def prepare(self, message, response, jwt):
-        if not needs_knowledge(message):
+    async def prepare(self, message, response, jwt, force=False, selection=None):
+        if not force and not needs_knowledge(message):
             return
-        status, chunks = self.knowledge.search(message)
+        status, chunks = selection if selection is not None else self.knowledge.search(message)
         response.knowledge_status = status
         for chunk in chunks:
             item = Evidence(id=f"E{len(response.evidence)+1}", tool="search_knowledge", status="ok",

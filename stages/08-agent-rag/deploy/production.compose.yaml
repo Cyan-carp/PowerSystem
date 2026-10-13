@@ -1,0 +1,59 @@
+# Overlay on the stage4 and stage7 stacks; old event interpretation stays on agent.
+services:
+  agent-rag:
+    image: ${RAG_IMAGE:-powersystem-agent-rag:local}
+    build:
+      context: ../../08-agent-rag
+    env_file:
+      - ${RAG_ENV_FILE:?set private Agent environment file}
+    environment:
+      AGENT_BACKEND_URL: http://api:8080
+      AGENT_LLM_API_KEY_FILE: /run/secrets/rag_llm_key
+      AGENT_SERVICE_TOKEN_FILE: /run/secrets/rag_service_token
+      AGENT_SEARCH_KEY_FILE: /run/secrets/rag_search_key
+      RAG_QDRANT_URL: http://qdrant:6333
+      RAG_EMBEDDING_PATH: /models/multilingual-e5-small
+      RAG_AUDIT_DIR: /audit
+      RAG_DOCUMENT_ROOT: /documents
+    secrets: [rag_llm_key, rag_service_token, rag_search_key]
+    volumes:
+      - ${RAG_MODEL_DIR:?set local E5 model directory}:/models/multilingual-e5-small:ro
+      - ${RAG_AUDIT_HOST_DIR:?set writable audit directory}:/audit
+      - ../../../手册/平台使用手册.md:/documents/手册/平台使用手册.md:ro
+      - ../../../手册/平台运维与二次开发手册.md:/documents/手册/平台运维与二次开发手册.md:ro
+      - ../../../资产/设备知识/SUN2000-100KTL-M2-仿真参考.md:/documents/资产/设备知识/SUN2000-100KTL-M2-仿真参考.md:ro
+      - ../../02-backend/README.md:/documents/stages/02-backend/README.md:ro
+      - ../../03-ai-prediction/README.md:/documents/stages/03-ai-prediction/README.md:ro
+      - ../../08-agent-rag/README.md:/documents/stages/08-agent-rag/README.md:ro
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+      qdrant: {condition: service_started}
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8093/health',timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 12
+      start_period: 120s
+    restart: unless-stopped
+  qdrant:
+    image: qdrant/qdrant:v1.17.1
+    volumes:
+      - rag-qdrant:/qdrant/storage
+    restart: unless-stopped
+  api:
+    environment:
+      AGENT_CHAT_URL: http://agent-rag:8093
+      AGENT_CHAT_TIMEOUT_SECONDS: ${AGENT_CHAT_TIMEOUT_SECONDS:-125}
+      AGENT_CHAT_INPUT_CHARS: ${AGENT_CHAT_INPUT_CHARS:-32000}
+      AGENT_CHAT_RATE: ${AGENT_CHAT_RATE:-10}
+      AGENT_CHAT_CONCURRENCY: ${AGENT_CHAT_CONCURRENCY:-4}
+volumes:
+  rag-qdrant:
+secrets:
+  rag_llm_key:
+    file: ${RAG_LLM_KEY_FILE:?set private RAG model key copy}
+  rag_service_token:
+    file: ${RAG_SERVICE_TOKEN_FILE:?set private RAG service token copy}
+  rag_search_key:
+    file: ${RAG_SEARCH_KEY_FILE:?set private RAG search key copy}

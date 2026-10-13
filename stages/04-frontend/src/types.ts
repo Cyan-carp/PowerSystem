@@ -66,9 +66,30 @@ export interface ChatEvidence extends AgentEvidence {
   kind: 'business' | 'document' | 'web'; document_version?: string; chapter?: string; url?: string
 }
 export interface AgentChatResponse {
-  request_id: string; session_id: string; status: 'answered' | 'unable_to_determine' | 'degraded'
+  request_id: string; session_id: string; status: 'answered' | 'unable_to_determine' | 'degraded' | 'out_of_scope'
   conclusion: AgentClaim | null; suggestions: AgentClaim[]; evidence: ChatEvidence[]
   limitations: string[]; notices: string[]; model: string; knowledge_status: string; web_status: string; miss_record_status: string
   answer_mode: 'grounded' | 'hypothesis'; source_coverage_percent: number; sourced_claims: number; total_claims: number
+  verified_facts?: AgentClaim[]; unverified_explanations?: AgentClaim[]
+  resolved_devices?: { id: number; device_code: string }[]
 }
 export interface KnowledgeSource { id: string; document: string; heading: string; content: string; version: string; authority: string; document_date?: string; source_kind?: string; source_revision?: string }
+
+export interface RAGSource { id: string; kind: 'business' | 'document' | 'web' | 'infrastructure'; title: string; url: string; chapter?: string; version?: string; page?: number | null; published_at?: string | null; collected_at: string; summary?: string }
+export interface RAGToolCall { name: string; arguments: Record<string, unknown>; status: string; collected_at: string; result?: unknown; error?: string }
+export interface RAGEvidenceCard { tool: string; status: string; device_id?: number | null; device_code?: string | null; queried_at?: string | null; sampled_at?: string | null; received_at?: string | null; ts_ms?: number | null; freshness: 'fresh' | 'stale' | 'future' | 'unknown'; stale?: boolean | null; error?: string }
+export interface RAGEvidence { state: 'not_queried' | 'queried' | 'partial_failed' | 'failed'; success_count: number; failed_count: number; cards: RAGEvidenceCard[] }
+export type VerificationCheck = 'latest_telemetry' | 'current_alarms' | 'prediction'
+export interface VerificationInput { parent_turn_id: number; device_id: number; checks: VerificationCheck[]; verification_id: string }
+export type OpsStatus = 'queued' | 'planning' | 'executing' | 'awaiting_approval' | 'succeeded' | 'failed' | 'cancelled' | 'timeout'
+export interface SecurityReview { review_id: string; step_no: number; kind: string; state: string; decision?: string | null; reason?: string | null; rule_hits: string[]; evidence_refs: string[]; execution_epoch: number; created_at: string; finished_at?: string | null; expires_at?: string | null; error_code?: string | null; policy_version: string; duration_ms?: number | null }
+export interface OpsApproval {
+  approval_id: string; task_id: string; step_no: number; status: 'pending' | 'approved' | 'rejected' | 'expired' | 'invalidated' | 'cancelled'; expires_at: string; consumed_at?: string | null; can_decide?: boolean
+  plan: { tool: string; tool_version: string; risk_class: 'R2'; target: string; args_hash: string; impact: string; rollback_limit: string; snapshot: { container_id: string; image_digest: string; config_hash: string; asset_version: number; policy_version: string; started_at: string; health: string } }
+}
+export interface OpsAttempt { attempt_id: string; approval_id: string; call_id: string; status: 'started' | 'succeeded' | 'failed' | 'execution_uncertain'; started_at: string; finished_at?: string | null; evidence?: unknown }
+export interface InfrastructureEvidence { call_id: string; evidence_ref: string; tool: string; tool_version: string; asset_id?: string | null; asset_version?: number | null; asset_name?: string | null; status: 'ok' | 'error'; vantage?: 'host' | 'container' | 'database' | 'registry' | null; collected_at: string; sampled_at?: string | null; truncated: boolean; complete: boolean; filtered_lines?: number; filter_policy?: string; error?: { code: string; message: string; retryable: boolean } | null }
+export interface OpsTask { security_reviews?: SecurityReview[]; security_events?: { event_seq: number; review_id: string; state: string; reason: string; created_at: string }[]; approvals?: OpsApproval[]; execution_attempts?: OpsAttempt[]; operation_evidence?: Record<string, unknown>[]; evidence?: RAGEvidence; infrastructure_evidence?: InfrastructureEvidence[]; task_id: string; session_id: string; status: OpsStatus; intent: string; historical?: boolean; parent_turn_id?: number | null; steps?: { step_no: number; tool: string; status: string; result?: unknown; asset_id?: string | null; asset_version?: number | null }[]; tool_calls?: RAGToolCall[]; sources?: RAGSource[]; diagnosis?: { summary?: string; hypotheses?: unknown[]; recommendations?: unknown[]; clarification?: string }; warnings?: string[]; error?: { code: string; message: string; retryable: boolean } | null; created_at?: string; finished_at?: string | null; model_calls?: number; link_pending?: boolean }
+export interface RAGChatResponse { request_id: string; session_id: string; status: 'answered' | 'degraded' | 'out_of_scope'; answer_markdown: string; sources: RAGSource[]; tool_calls: RAGToolCall[]; warnings: string[]; model: string; response_mode?: 'model' | 'preset' | 'boundary' | 'task_dispatched'; task_cards?: OpsTask[]; model_called?: boolean; boundary?: { action: 'allow' | 'preset' | 'block'; reason: string; rule_id: string; rule_version: string }; turn_id?: number; evidence?: RAGEvidence; verification_available?: boolean; kind?: 'chat' | 'verification'; parent_turn_id?: number; device?: { id: number; device_code: string; name: string }; verification_results?: Record<string, unknown> }
+export interface RAGSession { id: string; title: string; created_at: string; updated_at: string }
+export interface RAGTurn { id?: number; kind?: 'chat' | 'verification'; parent_turn_id?: number; question: string; response: RAGChatResponse; created_at?: string }

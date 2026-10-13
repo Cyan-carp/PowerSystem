@@ -1,5 +1,6 @@
 import asyncio
 import hmac
+import json
 import time
 from contextlib import asynccontextmanager, suppress
 from uuid import uuid4
@@ -142,22 +143,35 @@ def create_app(config=None, sessions=None, provider=None, tools=None, audit=None
                         task.cancel()
                         with suppress(asyncio.CancelledError):
                             await task
-                await app.state.sessions.save(sid, [*history, {"role": "user", "content": message},
-                    {"role": "assistant", "content": response.conclusion.text if response.conclusion else "无法判断"}])
         except SessionError as exc:
             error = (exc.status, exc.reason)
         except ToolDenied as exc:
             error = (exc.status, "backend_authorization_denied")
         except (TimeoutError, ProviderError) as exc:
-            response.status = "degraded"
-            response.conclusion = None
-            response.suggestions = []
-            response.limitations = ["无法判断：" + (str(exc) if isinstance(exc, ProviderError) else "agent_timeout")]
+            reason = str(exc) if isinstance(exc, ProviderError) else "agent_timeout"
+            if response.verified_facts:
+                from .natural import finish
+                response.limitations.append("模型或总处理时间故障，保留本轮已核验的业务事实："+reason)
+                response = finish(response)
+            else:
+                response.status = "degraded"
+                response.conclusion = None
+                response.suggestions = []
+                response.unverified_explanations = []
+                response.source_coverage_percent = response.sourced_claims = response.total_claims = 0
+                response.limitations = ["无法判断：" + reason]
         except asyncio.CancelledError:
             error = (499, "request_cancelled")
             raise
         finally:
             if sid:
+                if error is None:
+                    try:
+                        await app.state.sessions.save(sid, [*history, {"role":"user","content":message},
+                            {"role":"assistant","content":json.dumps({"answer":response.conclusion.text if response.conclusion else "无法判断",
+                                "device_context":response.resolved_devices},ensure_ascii=False)}])
+                    except SessionError as exc:
+                        error = (exc.status,exc.reason)
                 try:
                     await app.state.sessions.release(sid, rid)
                 except SessionError as exc:

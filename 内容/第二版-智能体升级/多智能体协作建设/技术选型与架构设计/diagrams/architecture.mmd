@@ -1,0 +1,24 @@
+flowchart TB
+  U["用户 operator / admin"] --> G["Go：当前身份 / 角色 / 接纳"]
+  G --> S["Supervisor：聊天 / 澄清 / 委派 / 汇总"]
+  S --> K["既有 RAG / 联网"]
+  S -->|"ma/v1"| O["Operation API：所有权 / 幂等"]
+  O --> DB[("ma_ops：程序唯一状态真相")]
+  DB --> Q["Outbox / Redis：仅任务标识"]
+  Q --> W["Operation Worker：规划 / 分析"]
+  W --> C["程序控制：工具 / 资产 / 风险 / 审批"]
+  C --> T["受限 Executor / collector / broker"]
+  T --> A["在册平台 GET / 项目 R0 / 隔离 R2"]
+  T --> DB
+  C -->|"许可内程序审查包"| R["Security：独立模型意见<br/>无库 / 无工具 / 无执行凭据"]
+  R -->|"allow / deny / clarification"| C
+  C -->|"敏感R0 / R2领取与一次消费门禁"| T
+  S -->|"敏感结果解释：最小摘要 / 许可核对"| C
+  C --> E["外发：白名单 / 摘要绑定 / 最后核对"]
+  E --> L["现有网关：指定Operation / Supervisor模型"]
+  G -->|"本人任务详情轮询"| O
+  O -->|"本人事实 / 诊断 / 审查 / 人工审批分区"| G
+  S --> G
+  G --> U
+  U -->|"既有业务入口，独立运行"| B["遥测 / 告警 / 预测 / 通知 / 阶段7"]
+  N["SEC-M2仅本机隔离演练<br/>SEC-M3巡检及服务器发布待后续"]

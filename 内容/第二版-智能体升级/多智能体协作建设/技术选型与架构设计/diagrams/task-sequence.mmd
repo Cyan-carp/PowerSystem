@@ -1,0 +1,49 @@
+sequenceDiagram
+  actor U as 用户
+  participant S as Supervisor
+  participant O as Operation
+  participant C as 程序控制
+  participant R as 独立Security
+  participant T as 受限工具
+  Note over U,T: SEC-M2本机演练；当前身份经Go校验；模型意见不授权
+  U->>S: 需求与可信上下文
+  S->>C: ma/v1任务委派
+  C->>C: 所有权 / 领取 / 预算
+  alt 用户确认的主动核验
+    C->>C: 程序固定核验工作流
+    C->>T: 固定R0读取
+    T-->>C: 核验事实与实际时间
+    Note over C,R: 主动核验所有模型零调用
+  else 模型运维任务
+    C->>O: 预算内规划
+    O->>C: 注册工具计划
+    C->>C: 身份 / 参数 / 资产 / 风险校验
+    alt 普通平台GET
+      C->>T: 固定R0读取
+      T-->>C: 实际结果与引用
+    else 敏感读取 / 外发 / R2
+      C->>R: 最小投影审查包
+      R-->>C: 严格三类结论
+      alt 拒绝 / 澄清 / 不可用
+        C->>C: 阻断动作，保留事实和原因
+      else 有效allow且程序条件满足
+        opt R2计划
+          C-->>U: 程序审批卡
+          U->>C: admin所有者明确决定
+          C->>C: 当前角色 / 计划 / 目标 / 期限重核
+          C->>R: 新代次 / 过期：同保存计划重新审查
+          R-->>C: 当前上下文合法结论
+          C->>C: 最后allow绑定 / 写窗口 / 有效审批 / 一次消费
+        end
+        C->>T: 受限动作或许可内发送
+        T-->>C: 实际结果 / 错误 / 引用
+        C->>R: 动作证据提交后独立后审
+        R-->>C: 独立结论，不改动作事实
+      end
+    end
+  end
+  C->>C: ma_ops保存步骤 / 调用 / 审查 / 终态
+  C-->>S: 解释只取受审摘要；发送前重新核对
+  Note over S,C: 完整敏感报告仅本人页面，不进可重放模型历史
+  S-->>U: 原回答与独立证据展示
+  Note over U,C: 经Go本人轮询；隐藏暂停、终态停止

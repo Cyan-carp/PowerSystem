@@ -10,6 +10,20 @@ from pathlib import Path
 ROOT=Path(__file__).resolve().parents[3]
 
 
+def allowed_source(path):
+    if path.is_absolute() or any(part in ('..', '.env', '.git', '.venv', 'private', 'runtime', 'artifacts', 'node_modules', '__pycache__') for part in path.parts):
+        return False
+    name=path.as_posix()
+    return (name.startswith(('stages/07-agent/', 'stages/04-frontend/src/'))
+            or name in ('stages/02-backend/deploy/postgres/001_init.sql',
+                        'stages/02-backend/internal/api/handlers.go',
+                        'stages/02-backend/internal/model/model.go',
+                        'stages/02-backend/internal/store/store.go',
+                        'stages/04-frontend/deploy/backup.sh',
+                        'stages/04-frontend/deploy/restore-verify.sh')
+            or name.startswith(('设备知识/', '资产/设备知识/')) and path.suffix in ('.md', '.json'))
+
+
 def main(args):
     def git(*values):return subprocess.check_output(['git',*values],cwd=ROOT)
     commit=git('rev-parse',args.commit+'^{commit}').decode().strip()
@@ -23,15 +37,7 @@ def main(args):
         for name in sorted(x for x in names if x):
             path=Path(name)
             if name.startswith(('.obsidian/','docx工作区/','artifacts/')) or '.env'==path.name or path.is_absolute() or '..' in path.parts:raise ValueError('unapproved package path')
-            allowed=(name.startswith(('stages/07-agent/','stages/04-frontend/src/'))
-                     or name in ('stages/02-backend/deploy/postgres/001_init.sql',
-                                 'stages/02-backend/internal/api/handlers.go',
-                                 'stages/02-backend/internal/model/model.go',
-                                 'stages/02-backend/internal/store/store.go',
-                                 'stages/04-frontend/deploy/backup.sh',
-                                 'stages/04-frontend/deploy/restore-verify.sh')
-                     or (name.startswith('设备知识/') and path.suffix in ('.md','.json')))
-            if not allowed:raise ValueError('unsupported incremental source')
+            if not allowed_source(path):raise ValueError('unsupported incremental source')
             raw=git('show',commit+':'+name)
             member=tarfile.TarInfo(name);member.size=len(raw);member.mode=0o644;member.mtime=0
             package.addfile(member,io.BytesIO(raw))

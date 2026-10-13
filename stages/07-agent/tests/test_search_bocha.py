@@ -13,7 +13,8 @@ from agent.knowledge import Knowledge
 from agent.misses import Misses
 from agent.search import BOCHA_URL, Search
 from agent.schemas import ChatResponse, ModelAnswer
-from agent.orchestrator import Orchestrator, validate_answer
+from legacy_orchestrator import LegacyOrchestrator as Orchestrator
+from agent.orchestrator import validate_answer
 from agent.llm import ProviderError
 from agent.tools import route
 from agent.main import create_app
@@ -36,6 +37,8 @@ class BochaTest(unittest.IsolatedAsyncioTestCase):
     async def test_real_http_disconnect_finishes_miss_and_audit(self):
         sessions, provider, tools, audit, search = (AsyncMock() for _ in range(5))
         sessions.acquire.return_value = ("11111111-1111-4111-8111-111111111111", [])
+        provider.complete.return_value = {"content": json.dumps({"scope":"in_scope","live":False,"knowledge":True,
+            "intent":"general","device":"none","knowledge_query":"风机覆冰应该怎么排查？"})}
         started = asyncio.Event()
         async def pending(query):
             started.set(); await asyncio.sleep(30)
@@ -66,7 +69,7 @@ class BochaTest(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(record['response']['miss_record_status'],'recorded')
                 self.assertEqual(len(next(Path(directory).glob('*.jsonl')).read_text().splitlines()),1)
                 sessions.release.assert_awaited_once()
-                provider.complete.assert_not_awaited();tools.execute.assert_not_awaited()
+                provider.complete.assert_awaited_once();tools.execute.assert_not_awaited()
             finally:
                 server.should_exit=True
                 await asyncio.wait_for(runner,3)
@@ -168,7 +171,7 @@ class BochaTest(unittest.IsolatedAsyncioTestCase):
         provider.complete.return_value = call("shell", {"command":"delete"})
         response = ChatResponse(request_id="r",session_id="s",status="degraded",model="test")
         with self.assertRaises(ProviderError):
-            await Orchestrator(CONFIG,provider,tools).run("风机覆冰怎么排查？",[],"jwt",response,[],context=Context(Knowledge(ROOT/"knowledge/index.json"),search,misses))
+            await Orchestrator(CONFIG,provider,tools).run_evidence_loop("风机覆冰怎么排查？",[],"jwt",response,[],context=Context(Knowledge(ROOT/"knowledge/index.json"),search,misses))
         tools.execute.assert_not_awaited()
         self.assertIsNone(response.conclusion); self.assertEqual(response.suggestions, [])
 

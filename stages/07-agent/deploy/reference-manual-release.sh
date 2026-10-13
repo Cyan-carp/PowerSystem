@@ -58,8 +58,8 @@ with tarfile.open(release/'approved.tar.gz') as package:
                                     'stages/02-backend/internal/store/store.go',
                                     'stages/04-frontend/deploy/backup.sh',
                                     'stages/04-frontend/deploy/restore-verify.sh')
-                 or (member.name.startswith('设备知识/') and path.suffix in ('.md','.json')))
-        if not allowed or path.is_absolute() or '..' in path.parts or not member.isfile() or not target.is_relative_to(root.resolve()) or any(part in ('.env','.git','runtime','artifacts','node_modules','__pycache__') for part in path.parts):
+                 or (member.name.startswith(('设备知识/','资产/设备知识/')) and path.suffix in ('.md','.json')))
+        if not allowed or path.is_absolute() or '..' in path.parts or not member.isfile() or not target.is_relative_to(root.resolve()) or any(part in ('.env','.git','.venv','private','runtime','artifacts','node_modules','__pycache__') for part in path.parts):
             raise ValueError('invalid release member')
     with tarfile.open(release/'source-baseline.tar.gz','w:gz') as baseline:
         for member in members:

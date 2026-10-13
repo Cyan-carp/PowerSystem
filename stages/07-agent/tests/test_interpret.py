@@ -37,7 +37,9 @@ class ModelFailureTest(unittest.IsolatedAsyncioTestCase):
     def test_nested_timestamp_precision_without_new_numbers(self):
         item=evidence()
         item.data['created_at']='2026-10-01T12:53:51.123456+08:00'
-        validate_answer(ModelAnswer.model_validate(answer('创建于2026-10-01 12:53:51')), [item])
+        validate_answer(ModelAnswer.model_validate(answer('创建于2026-10-01 12:53:51+08:00')), [item])
+        with self.assertRaisesRegex(ValueError,'unsupported_temporal_claim'):
+            validate_answer(ModelAnswer.model_validate(answer('创建于2026-10-01 12:53:51')), [item])
         with self.assertRaisesRegex(ValueError,'unsupported_numeric_claim'):
             validate_answer(ModelAnswer.model_validate(answer('每小时增加99')), [item])
 

@@ -6,9 +6,12 @@ __pycache__/
 *.test
 *.out
 artifacts/
+private/
+pytest-cache-files-*/
 runtime/
 data/
 .obsidian/workspace.json
+.obsidian/**/workspace.json
 .workbuddy/
 node_modules/
 dist/

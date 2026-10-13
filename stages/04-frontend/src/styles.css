@@ -155,6 +155,8 @@ h1, h2, h3, p { margin-top: 0; }
   color: var(--ink-3); font-size: 12.5px; cursor: pointer; transition: border-color .15s;
 }
 .gsearch:hover { border-color: var(--brand-line); background: var(--brand-soft); color: var(--ink-2); }
+.gsearch { white-space: nowrap; flex-shrink: 0; }
+.gsearch > span { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .gsearch kbd {
   margin-left: auto; font-family: inherit; font-size: 10px; font-weight: 700;
   background: var(--card); border: 1px solid var(--line-strong); border-radius: 6px;
@@ -501,7 +503,7 @@ h1, h2, h3, p { margin-top: 0; }
 }
 @media (max-width: 900px) {
   .rail { width: 60px; }
-  .gsearch { width: 200px; }
+  .gsearch { display: none; }
   .main-content { padding: 16px 16px 32px; }
   .clock, .user-name { display: none; }
   .detail-grid { grid-template-columns: 1fr; }

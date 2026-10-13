@@ -7,8 +7,10 @@ from pathlib import Path, PurePosixPath
 
 
 def administrative(path):
+    if path.is_absolute() or any(part in ('..', '.env', '.git', '.venv', 'private', 'runtime', 'artifacts', 'node_modules', '__pycache__') for part in path.parts):
+        return False
     name=path.as_posix()
-    return (path.suffix=='.md' and (len(path.parts)==1 or name.startswith(('第一版-平台主体/','第二版-智能体升级/','stages/07-agent/')))
+    return (path.suffix=='.md' and (len(path.parts)==1 or name.startswith(('第一版-平台主体/','第二版-智能体升级/','内容/第一版-平台主体/','内容/第二版-智能体升级/','规范/','手册/','部署/','stages/07-agent/')))
             or name.startswith(('stages/07-agent/scripts/','stages/07-agent/tests/','stages/02-backend/scripts/'))
             or name.startswith('stages/02-backend/internal/api/') and path.name.endswith('_test.go')
             or name in ('stages/07-agent/deploy/events-v2m4.py','stages/07-agent/deploy/sync-v2m4-source.py'))

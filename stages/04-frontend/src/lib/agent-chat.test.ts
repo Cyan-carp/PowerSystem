@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { claimEvidence, evidenceRoute, publicLink, requiresEquipmentReview } from './agent-chat'
+import { chatStatusLabels, claimEvidence, evidenceRoute, publicLink, requiresEquipmentReview } from './agent-chat'
 import { guides } from './page-help'
 import type { ChatEvidence } from '../types'
 
@@ -30,6 +30,8 @@ describe('chat evidence boundaries', () => {
     expect(evidenceRoute(evidence)).toBe('/devices/12')
     expect(evidenceRoute({ ...evidence, source: 'https://evil.org/devices/12' })).toBeNull()
     expect(evidenceRoute({ ...evidence, kind: 'web' })).toBeNull()
+    expect(evidenceRoute({ ...evidence, source: '/api/v1/alarms/statistics', tool: 'get_alarm_statistics' })).toBe('/alarms')
+    expect(chatStatusLabels.out_of_scope).toBe('范围外')
   })
   it('covers each visible business route with offline instructions', () => {
     for (const name of ['dashboard', 'devices', 'device-detail', 'alarms', 'predictions', 'agent-chat']) {

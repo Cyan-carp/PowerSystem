@@ -60,7 +60,7 @@ class Evidence(StrictModel):
 class ChatResponse(StrictModel):
     request_id: str
     session_id: str
-    status: Literal["answered", "unable_to_determine", "degraded"]
+    status: Literal["answered", "unable_to_determine", "degraded", "out_of_scope"]
     conclusion: ResponseClaim | None = None
     evidence: list[Evidence] = Field(default_factory=list)
     suggestions: list[Suggestion] = Field(default_factory=list)
@@ -74,3 +74,6 @@ class ChatResponse(StrictModel):
     source_coverage_percent: int = Field(default=0, ge=0, le=100)
     sourced_claims: int = 0
     total_claims: int = 0
+    verified_facts: list[ResponseClaim] = Field(default_factory=list)
+    unverified_explanations: list[ResponseClaim] = Field(default_factory=list)
+    resolved_devices: list[dict] = Field(default_factory=list)

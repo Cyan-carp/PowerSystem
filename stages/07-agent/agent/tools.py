@@ -51,13 +51,23 @@ class Alarm(StrictModel):
     alarm_id: StrictInt = Field(gt=0)
 
 
+class AlarmStatistics(StrictModel):
+    group_by: Literal["device", "metric", "level", "status"] = "device"
+    start: str
+    end: str
+    device_id: StrictInt | None = Field(default=None, gt=0)
+    status: Literal["unhandled", "acked", "recovered"] | None = None
+
+
 class Empty(StrictModel):
     pass
 
 
 MODELS = {"list_devices": Devices, "get_telemetry": Telemetry, "get_prediction": Device,
-          "list_alarms": Alarms, "get_alarm_detail": Alarm, "get_dashboard_summary": Empty}
+          "list_alarms": Alarms, "get_alarm_detail": Alarm, "get_dashboard_summary": Empty,
+          "get_alarm_statistics": AlarmStatistics}
 DESCRIPTIONS = {
+    "get_alarm_statistics": "数据库全量告警事件聚合，必须指定带时区的起止时间，按设备/指标/级别/状态分组；默认问题最多为近30天触发事件数，含已恢复与未恢复。不得用分页告警列表推断排名。",
     "list_devices": "分页查询设备；group_name 精确分组，keyword 匹配设备名称或编码。",
     "get_telemetry": "查询设备最新值或指定指标历史；latest 返回全部指标，可附 metric 指明关注项；history 必须提供带时区 start/end，最长24小时。",
     "get_prediction": "查询设备模型概率、阈值、模型来源及过期状态。",
@@ -73,13 +83,17 @@ def route(name, arguments):
     if name not in MODELS:
         raise ValueError("unknown_tool")
     args = MODELS[name].model_validate(arguments).model_dump(exclude_none=True)
-    if name in ("get_telemetry", "list_alarms"):
+    if name in ("get_telemetry", "list_alarms", "get_alarm_statistics"):
         start, end = args.get("start"), args.get("end")
         for value in (start, end):
             if value is not None:
                 parse_time(value)
         if start and end and parse_time(end) <= parse_time(start):
             raise ValueError("invalid_range")
+    if name == "get_alarm_statistics":
+        if (parse_time(args["end"]) - parse_time(args["start"])).total_seconds() > 366 * 86400:
+            raise ValueError("statistics_range_exceeds_366d")
+        return "/api/v1/alarms/statistics", args
     if name == "list_devices":
         return "/api/v1/devices", args
     if name == "list_alarms":
@@ -113,11 +127,26 @@ def normalize(name, data):
     data = dict(data)
     if name in ("list_devices", "list_alarms"):
         data["complete"] = data["page"] == 1 and len(data["list"]) == data["total"]
+        if name == "list_devices":
+            data["order"] = "id ASC"
         stamp = now() if name == "list_devices" else None
         if not data["list"]:
             status = "no_data"
         elif name == "list_alarms":
             stamp = max(row["triggered_at"] for row in data["list"])
+    elif name == "get_alarm_statistics":
+        if (data.get("complete") is not True or type(data.get("total_events")) is not int
+                or data["total_events"] < 0 or not isinstance(data.get("groups"), list)
+                or data.get("group_by") not in ("device", "metric", "level", "status")):
+            raise ValueError("incomplete_statistics")
+        if any(not isinstance(row, dict) or type(row.get("count")) is not int or row["count"] < 1
+               or not isinstance(row.get("key"), str) for row in data["groups"]):
+            raise ValueError("invalid_statistics")
+        if len({row["key"] for row in data["groups"]}) != len(data["groups"]) or sum(row["count"] for row in data["groups"]) != data["total_events"]:
+            raise ValueError("statistics_count_mismatch")
+        if parse_time(data["end"]) <= parse_time(data["start"]):
+            raise ValueError("invalid_statistics_range")
+        stamp = now()
     elif name == "get_telemetry" and "points" in data:
         points = data["points"]
         values = [float(row[1]) for row in points if row[1] is not None]
@@ -133,7 +162,9 @@ def normalize(name, data):
             status = "no_data"
     elif name == "get_telemetry":
         stamp = datetime.fromtimestamp(data["ts_ms"]/1000, timezone.utc).isoformat()
-        if (datetime.now(timezone.utc) - parse_time(data["received_at"])).total_seconds() > 15:
+        current = datetime.now(timezone.utc)
+        if any(not -5 <= (current - timestamp).total_seconds() <= 15
+               for timestamp in (parse_time(data["received_at"]), parse_time(stamp))):
             status = "stale"
     elif name == "get_prediction":
         stamp = datetime.fromtimestamp(data["window_end_ms"]/1000, timezone.utc).isoformat()
@@ -181,6 +212,12 @@ class Tools:
                     if envelope["code"] != 0:
                         raise ValueError()
                     status, stamp, data = normalize(name, envelope["data"])
+                    if name == "get_alarm_statistics" and (data["group_by"] != params["group_by"]
+                            or parse_time(data["start"]) != parse_time(params["start"])
+                            or parse_time(data["end"]) != parse_time(params["end"])
+                            or data.get("device_id", 0) != params.get("device_id", 0)
+                            or data.get("status_filter", "") != params.get("status", "")):
+                        raise ValueError("statistics_query_mismatch")
                     serialized = json.dumps(data, ensure_ascii=False)
                     for secret in (jwt, self.config.api_key, self.config.service_token, self.config.monitor_token, self.config.search_key):
                         if secret:

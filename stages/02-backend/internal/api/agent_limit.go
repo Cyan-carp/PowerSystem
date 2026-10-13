@@ -18,17 +18,18 @@ redis.call('ZREMRANGEBYSCORE', KEYS[1], '-inf', now)
 redis.call('ZREMRANGEBYSCORE', KEYS[3], '-inf', now-60000)
 local busy = redis.call('PTTL', KEYS[2])
 if busy > 0 then return math.max(1, math.ceil(busy/1000)) end
-if redis.call('ZCARD', KEYS[1]) >= 4 then
+if redis.call('ZCARD', KEYS[1]) >= tonumber(ARGV[2] or '4') then
   local first = redis.call('ZRANGE', KEYS[1], 0, 0, 'WITHSCORES')
   return math.max(1, math.ceil((tonumber(first[2])-now)/1000))
 end
-if redis.call('ZCARD', KEYS[3]) >= 10 then
+if redis.call('ZCARD', KEYS[3]) >= tonumber(ARGV[3] or '10') then
   local first = redis.call('ZRANGE', KEYS[3], 0, 0, 'WITHSCORES')
   return math.max(1, math.ceil((tonumber(first[2])+60000-now)/1000))
 end
-redis.call('SET', KEYS[2], ARGV[1], 'PX', 50000)
-redis.call('ZADD', KEYS[1], now+50000, ARGV[1])
-redis.call('PEXPIRE', KEYS[1], 51000)
+local lease = tonumber(ARGV[4] or '50000')
+redis.call('SET', KEYS[2], ARGV[1], 'PX', lease)
+redis.call('ZADD', KEYS[1], now+lease, ARGV[1])
+redis.call('PEXPIRE', KEYS[1], lease+1000)
 redis.call('ZADD', KEYS[3], now, ARGV[1])
 redis.call('PEXPIRE', KEYS[3], 61000)
 return 0
@@ -45,6 +46,24 @@ type chatAdmission interface {
 	release(context.Context, chatLease) error
 }
 type redisChatAdmission struct{ client *redis.Client }
+
+type configuredChatAdmission struct {
+	redisChatAdmission
+	concurrent, rate, lease int
+}
+
+func (g configuredChatAdmission) acquire(ctx context.Context, userID int64) (chatLease, int, error) {
+	if g.client == nil || userID <= 0 {
+		return chatLease{}, 0, errors.New("chat admission unavailable")
+	}
+	token, err := randomTicket()
+	if err != nil {
+		return chatLease{}, 0, err
+	}
+	lease := chatLease{strconv.FormatInt(userID, 10), token}
+	retry, err := g.client.Eval(ctx, chatAcquireLua, chatKeys(lease.user), token, g.concurrent, g.rate, g.lease).Int()
+	return lease, retry, err
+}
 
 func chatKeys(user string) []string {
 	return []string{"stage7:chat:leases", "stage7:chat:user:" + user, "stage7:chat:rate:" + user}
@@ -73,7 +92,18 @@ func (g redisChatAdmission) release(ctx context.Context, lease chatLease) error 
 func (s *Server) admitChat(ctx context.Context, userID int64) (func(), int, error) {
 	gate := s.chatGate
 	if gate == nil {
-		gate = redisChatAdmission{s.redis}
+		if s.cfg.AgentChatURL != "" {
+			rate, concurrent := s.cfg.AgentChatRate, s.cfg.AgentChatConcurrency
+			if rate <= 0 {
+				rate = 10
+			}
+			if concurrent <= 0 {
+				concurrent = 4
+			}
+			gate = configuredChatAdmission{redisChatAdmission{s.redis}, concurrent, rate, int((s.chatTimeout() + 25*time.Second) / time.Millisecond)}
+		} else {
+			gate = redisChatAdmission{s.redis}
+		}
 	}
 	lease, retry, err := gate.acquire(ctx, userID)
 	if err != nil || retry > 0 {

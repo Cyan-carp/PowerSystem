@@ -17,7 +17,8 @@ from agent.schemas import ModelAnswer
 from agent.orchestrator import validate_answer
 from agent.llm import ProviderError
 from agent.main import create_app
-from agent.orchestrator import Orchestrator, LIVE_ASSERTION
+from legacy_orchestrator import LegacyOrchestrator as Orchestrator
+from agent.orchestrator import LIVE_ASSERTION
 from test_agent import CFG, answer, evidence, call
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -98,7 +99,7 @@ class KnowledgeAsyncTest(unittest.IsolatedAsyncioTestCase):
         provider.complete.return_value = {"content": json.dumps({
             "conclusion": {"text": "手册描述 AFCI，当前仿真没有实现。", "evidence_ids": [manual.id]},
             "suggestions": [], "limitations": []})}
-        result = await Orchestrator(CFG, provider, tools).run(question, [], "jwt", response, [])
+        result = await Orchestrator(CFG, provider, tools).run_evidence_loop(question, [], "jwt", response, [])
         self.assertEqual(result.status, "answered")
         self.assertEqual(result.answer_mode, "grounded")
         self.assertEqual(result.source_coverage_percent, 100)
@@ -118,7 +119,7 @@ class KnowledgeAsyncTest(unittest.IsolatedAsyncioTestCase):
         provider, tools, search, misses = AsyncMock(), AsyncMock(), AsyncMock(), AsyncMock()
         provider.complete.return_value = {"content":json.dumps(answer("当前没有活动告警"))}
         response = ChatResponse(request_id="r",session_id="s",status="degraded",model="test")
-        result = await Orchestrator(CFG,provider,tools).run(question,[],"jwt",response,[],
+        result = await Orchestrator(CFG,provider,tools).run_evidence_loop(question,[],"jwt",response,[],
             context=Context(knowledge,search,misses))
         self.assertEqual(result.status,"unable_to_determine")
         self.assertIsNone(result.conclusion)
@@ -132,7 +133,7 @@ class KnowledgeAsyncTest(unittest.IsolatedAsyncioTestCase):
             evidence=[evidence()])
         trace = []
         with self.assertRaises(ProviderError):
-            await Orchestrator(CFG,provider,tools).run("查询",[],"jwt",response,trace)
+            await Orchestrator(CFG,provider,tools).run_evidence_loop("查询",[],"jwt",response,trace)
         self.assertEqual(len(trace),1)
         self.assertEqual(trace[0]["validation"],"rejected")
         self.assertTrue(trace[0]["reason"].startswith("schema_"))
@@ -147,7 +148,7 @@ class KnowledgeAsyncTest(unittest.IsolatedAsyncioTestCase):
             evidence=[Evidence(id="E1",tool="web_search",status="ok",kind="web",
                 source="https://docs.example.org/heat",collected_at="2026-10-03T00:00:00Z",
                 data={"title":"公开资料","summary":"讨论风机过热与由人员核查的断电复位建议"})])
-        result = await Orchestrator(CFG,provider,tools).run("风机过热怎么排查？",[],"jwt",response,[])
+        result = await Orchestrator(CFG,provider,tools).run_evidence_loop("风机过热怎么排查？",[],"jwt",response,[])
         self.assertEqual(result.status,"answered")
         self.assertIsNotNone(result.conclusion)
         self.assertTrue(result.suggestions[0].equipment_operation)
@@ -155,7 +156,7 @@ class KnowledgeAsyncTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.suggestions[0].evidence_ids,["E1"])
         tools.execute.assert_not_awaited()
 
-    async def test_fixed_cases_reach_knowledge_through_chat_orchestrator(self):
+    async def test_archived_route_retrieval_regressions(self):
         knowledge = Knowledge(ROOT / "knowledge/index.json")
         cases = json.loads((ROOT / "tests/retrieval-cases.json").read_text(encoding="utf-8"))
         routed, correct = 0, 0
@@ -165,7 +166,7 @@ class KnowledgeAsyncTest(unittest.IsolatedAsyncioTestCase):
                 provider.complete.return_value = {"content": json.dumps(answer("已取得本轮文档依据"))}
                 search.run.return_value = ("no_results", [])
                 response = ChatResponse(request_id="r", session_id="s", status="degraded", model="test")
-                await Orchestrator(CFG, provider, tools).run(case["question"], [], "jwt", response, [],
+                await Orchestrator(CFG, provider, tools).run_evidence_loop(case["question"], [], "jwt", response, [],
                     context=Context(knowledge, search, misses))
                 if "heading" in case:
                     routed += response.knowledge_status != "not_requested"
@@ -189,7 +190,7 @@ class KnowledgeAsyncTest(unittest.IsolatedAsyncioTestCase):
         search.run.return_value = ("not_configured", [])
         response = ChatResponse(request_id="r", session_id="s", status="degraded", model="test")
         provider.complete.return_value = {"content": json.dumps(answer("当前没有活动告警"))}
-        result = await Orchestrator(CFG, provider, tools).run(question, [], "jwt", response, [],
+        result = await Orchestrator(CFG, provider, tools).run_evidence_loop(question, [], "jwt", response, [],
             context=Context(knowledge, search, misses))
         self.assertEqual(result.status, "unable_to_determine")
         self.assertIsNone(result.conclusion)
@@ -203,7 +204,7 @@ class KnowledgeAsyncTest(unittest.IsolatedAsyncioTestCase):
                                          {"content": json.dumps({"possibilities": ["告警列表可能暂时不可用，需重新查询"]})}]
         tools.execute.return_value = evidence().model_copy(update={"id":"E2", "tool":"list_devices"})
         response = ChatResponse(request_id="r", session_id="s", status="degraded", model="test")
-        result = await Orchestrator(CFG, provider, tools).run(question, [], "jwt", response, [],
+        result = await Orchestrator(CFG, provider, tools).run_evidence_loop(question, [], "jwt", response, [],
             context=Context(knowledge, search, misses))
         self.assertEqual(result.answer_mode, "hypothesis")
         self.assertEqual(result.source_coverage_percent, 0)
@@ -214,7 +215,7 @@ class KnowledgeAsyncTest(unittest.IsolatedAsyncioTestCase):
                                          {"content": json.dumps({"possibilities": ["告警列表需由人员再次核验"]})}]
         tools.execute.return_value = evidence().model_copy(update={"id":"E2", "tool":"list_alarms"})
         response = ChatResponse(request_id="r", session_id="s", status="degraded", model="test")
-        result = await Orchestrator(CFG, provider, tools).run(question, [], "jwt", response, [],
+        result = await Orchestrator(CFG, provider, tools).run_evidence_loop(question, [], "jwt", response, [],
             context=Context(knowledge, search, misses))
         self.assertEqual(result.answer_mode, "hypothesis")  # document-only conclusion is rejected
         self.assertEqual(result.source_coverage_percent, 0)
@@ -223,7 +224,7 @@ class KnowledgeAsyncTest(unittest.IsolatedAsyncioTestCase):
         provider.complete.side_effect = [call("list_alarms", {}, "c1"),
                                          {"content": json.dumps(answer("已查询本轮告警列表", "E2"))}]
         response = ChatResponse(request_id="r", session_id="s", status="degraded", model="test")
-        result = await Orchestrator(CFG, provider, tools).run(question, [], "jwt", response, [],
+        result = await Orchestrator(CFG, provider, tools).run_evidence_loop(question, [], "jwt", response, [],
             context=Context(knowledge, search, misses))
         self.assertEqual(result.status, "answered")
         self.assertEqual(result.conclusion.evidence_ids, ["E2"])
@@ -233,7 +234,7 @@ class KnowledgeAsyncTest(unittest.IsolatedAsyncioTestCase):
         provider.complete.return_value = {"content": json.dumps({"possibilities": ["检查公开气象与设备资料后再决定排查步骤"]})}
         search.run.return_value = ("not_configured", [])
         response = ChatResponse(request_id="r",session_id="s",status="degraded",model="test")
-        result = await Orchestrator(CFG,provider,tools).run("风机覆冰应该怎么排查？",[],"jwt",response,[],
+        result = await Orchestrator(CFG,provider,tools).run_evidence_loop("风机覆冰应该怎么排查？",[],"jwt",response,[],
             context=Context(Knowledge(ROOT / "knowledge/index.json"),search,misses))
         self.assertEqual(result.status,"answered")
         self.assertEqual(result.answer_mode,"hypothesis")
@@ -305,7 +306,7 @@ class KnowledgeAsyncTest(unittest.IsolatedAsyncioTestCase):
         provider.complete.side_effect = [two,{"content":json.dumps(answer())}]
         tools.execute.side_effect = [evidence(), evidence("no_data").model_copy(update={"id":"E2"})]
         response = ChatResponse(request_id="r",session_id="s",status="degraded",model="test")
-        result = await Orchestrator(CFG,provider,tools).run("查询",[],"jwt",response,[])
+        result = await Orchestrator(CFG,provider,tools).run_evidence_loop("查询",[],"jwt",response,[])
         self.assertEqual(result.status,"answered")
         self.assertTrue(any("部分" in item for item in result.limitations))
 

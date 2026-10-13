@@ -13,29 +13,37 @@ import (
 )
 
 type Config struct {
-	HTTPAddr              string
-	Broker                string
-	ClientID              string
-	QueuePath             string
-	PostgresDSN           string
-	RedisAddr             string
-	RedisPassword         string
-	TDURL                 string
-	TDUser                string
-	TDPassword            string
-	TDDatabase            string
-	JWTSecret             string
-	AIURL                 string
-	AIEnabled             bool
-	AIPollSeconds         int
-	WSAllowedOrigins      []string
-	BusinessNotifyEnabled bool
-	BusinessNotifyURL     string
-	BusinessNotifyToken   string
-	AgentEnabled          bool
-	AgentURL              string
-	AgentToken            string
-	AgentInterpretEnabled bool
+	HTTPAddr                string
+	Broker                  string
+	ClientID                string
+	QueuePath               string
+	PostgresDSN             string
+	RedisAddr               string
+	RedisPassword           string
+	TDURL                   string
+	TDUser                  string
+	TDPassword              string
+	TDDatabase              string
+	JWTSecret               string
+	AIURL                   string
+	AIEnabled               bool
+	AIPollSeconds           int
+	WSAllowedOrigins        []string
+	BusinessNotifyEnabled   bool
+	BusinessNotifyURL       string
+	BusinessNotifyToken     string
+	AgentEnabled            bool
+	AgentURL                string
+	AgentChatURL            string
+	AgentChatTimeoutSeconds int
+	AgentChatInputChars     int
+	AgentChatRate           int
+	AgentChatConcurrency    int
+	AgentToken              string
+	AgentInterpretEnabled   bool
+	OpsURL                  string
+	OpsToken                string
+	MAActorKey              string
 }
 
 var identifier = regexp.MustCompile(`^[a-z][a-z0-9_]{0,63}$`)
@@ -44,10 +52,15 @@ func Load(service string) (Config, error) {
 	v := viper.New()
 	v.AutomaticEnv()
 	v.SetDefault("HTTP_ADDR", "127.0.0.1:8080")
+	v.SetDefault("AGENT_CHAT_TIMEOUT_SECONDS", 125)
+	v.SetDefault("AGENT_CHAT_INPUT_CHARS", 32000)
+	v.SetDefault("AGENT_CHAT_RATE", 10)
+	v.SetDefault("AGENT_CHAT_CONCURRENCY", 4)
 	v.SetDefault("AI_URL", "http://127.0.0.1:8090")
 	v.SetDefault("AI_ENABLED", false)
 	v.SetDefault("AI_POLL_SECONDS", 300)
 	v.SetDefault("MQTT_BROKER", "tcp://127.0.0.1:1883")
+	v.SetDefault("MQTT_CLIENT_PREFIX", "powersystem-stage2")
 	v.SetDefault("REDIS_ADDR", "127.0.0.1:6379")
 	v.SetDefault("TDENGINE_URL", "http://127.0.0.1:6041")
 	v.SetDefault("TDENGINE_DATABASE", "powersystem_stage2")
@@ -59,7 +72,7 @@ func Load(service string) (Config, error) {
 	v.SetDefault("STAGE2_DATA_DIR", filepath.Join("..", "..", "artifacts", "stage2", "runtime"))
 	cfg := Config{
 		HTTPAddr: v.GetString("HTTP_ADDR"), Broker: v.GetString("MQTT_BROKER"),
-		ClientID:  "powersystem-stage2-" + service,
+		ClientID:  v.GetString("MQTT_CLIENT_PREFIX") + "-" + service,
 		QueuePath: filepath.Join(v.GetString("STAGE2_DATA_DIR"), service+".sqlite"),
 		RedisAddr: v.GetString("REDIS_ADDR"), RedisPassword: v.GetString("REDIS_PASSWORD"),
 		TDURL: v.GetString("TDENGINE_URL"), TDUser: v.GetString("TDENGINE_USER"),
@@ -67,10 +80,30 @@ func Load(service string) (Config, error) {
 		JWTSecret: v.GetString("JWT_SECRET"), AIURL: v.GetString("AI_URL"), AIEnabled: v.GetBool("AI_ENABLED"), AIPollSeconds: v.GetInt("AI_POLL_SECONDS"),
 		BusinessNotifyEnabled: v.GetBool("FEISHU_BUSINESS_ENABLED"), BusinessNotifyURL: v.GetString("FEISHU_BUSINESS_URL"),
 		AgentEnabled: v.GetBool("AGENT_ENABLED"), AgentURL: v.GetString("AGENT_URL"),
+		AgentChatURL: v.GetString("AGENT_CHAT_URL"), AgentChatTimeoutSeconds: v.GetInt("AGENT_CHAT_TIMEOUT_SECONDS"),
+		AgentChatInputChars: v.GetInt("AGENT_CHAT_INPUT_CHARS"), AgentChatRate: v.GetInt("AGENT_CHAT_RATE"), AgentChatConcurrency: v.GetInt("AGENT_CHAT_CONCURRENCY"),
 		AgentInterpretEnabled: v.GetBool("AGENT_INTERPRET_ENABLED"),
 	}
 	// Agent configuration must never prevent the business API from starting.
+	if service == "api" {
+		parsed, err := url.Parse(v.GetString("OPS_URL"))
+		token, tErr := os.ReadFile(v.GetString("OPS_SERVICE_TOKEN_FILE"))
+		key, kErr := os.ReadFile(v.GetString("MA_ACTOR_KEY_FILE"))
+		if err == nil && parsed.Scheme == "http" && parsed.Host != "" && parsed.User == nil && parsed.Path == "" && parsed.RawQuery == "" && parsed.Fragment == "" && tErr == nil && kErr == nil && len(strings.TrimSpace(string(token))) >= 32 && len(strings.TrimSpace(string(key))) >= 32 {
+			cfg.OpsURL = strings.TrimRight(v.GetString("OPS_URL"), "/")
+			cfg.OpsToken = strings.TrimSpace(string(token))
+			cfg.MAActorKey = strings.TrimSpace(string(key))
+		}
+	}
 	if cfg.AgentEnabled && service == "api" {
+		if cfg.AgentChatURL != "" {
+			chatURL, err := url.Parse(cfg.AgentChatURL)
+			if err != nil || chatURL.Scheme != "http" || chatURL.Host == "" || chatURL.User != nil || chatURL.RawQuery != "" || chatURL.Fragment != "" || (chatURL.Path != "" && chatURL.Path != "/") {
+				cfg.AgentChatURL = ""
+			} else {
+				cfg.AgentChatURL = strings.TrimRight(cfg.AgentChatURL, "/")
+			}
+		}
 		if cfg.AgentURL == "" {
 			cfg.AgentURL = "http://127.0.0.1:8092"
 		}

@@ -33,9 +33,9 @@ export function evidenceRoute(evidence: ChatEvidence): string | null {
   const device = evidence.source.match(/^\/api\/v1\/devices\/(\d+)(?:\/|\?|$)/)
   if (device) return `/devices/${device[1]}`
   if (evidence.tool === 'list_devices') return '/devices'
-  if (evidence.tool === 'list_alarms') return '/alarms'
+  if (evidence.tool === 'list_alarms' || evidence.tool === 'get_alarm_statistics') return '/alarms'
   if (evidence.tool === 'get_dashboard_summary') return '/dashboard'
   return null
 }
 
-export const chatStatusLabels = { answered: '已回答', unable_to_determine: '依据不足', degraded: '服务降级' }
+export const chatStatusLabels = { answered: '已回答', unable_to_determine: '依据不足', degraded: '服务故障', out_of_scope: '范围外' }
