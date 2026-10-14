@@ -23,7 +23,7 @@ const navItems = [
   { to: '/devices', match: (path: string) => path.startsWith('/devices'), icon: Monitor, label: '设备管理' },
   { to: '/alarms', match: (path: string) => path === '/alarms', icon: Bell, label: '告警中心' },
   { to: '/predictions', match: (path: string) => path === '/predictions', icon: DataAnalysis, label: '故障预测' },
-  { to: '/agent', match: (path: string) => path === '/agent', icon: ChatDotSquare, label: '值班问答' },
+  { to: '/agent', match: (path: string) => path === '/agent', icon: ChatDotSquare, label: '智能助手' },
 ]
 
 const userInitial = computed(() => (currentUser.value?.real_name || currentUser.value?.username || '值').slice(0, 1))
@@ -110,8 +110,8 @@ onUnmounted(() => {
     <div class="app-col">
       <header class="topbar">
         <div class="topbar-context"><span>运行工作台</span><span class="slash">/</span><strong>{{ route.meta.title || '运行工作台' }}</strong></div>
-        <button class="gsearch" type="button" aria-label="前往值班问答进行检索" @click="goSearch">
-          <el-icon><Search /></el-icon><span>搜索问题，去值班问答…</span><kbd>QA</kbd>
+        <button class="gsearch" type="button" aria-label="前往智能助手进行检索" @click="goSearch">
+          <el-icon><Search /></el-icon><span>搜索问题，去智能助手…</span><kbd>QA</kbd>
         </button>
         <div class="topbar-actions">
           <PageHelp />

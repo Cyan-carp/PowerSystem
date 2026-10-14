@@ -12,11 +12,13 @@ secondary_target=${POWERSYSTEM_BACKUP_SECONDARY_TARGET:-}
 if [ -z "$backup_target" ] && [ -f /etc/powersystem/backup-target ]; then
   backup_target=$(cat /etc/powersystem/backup-target)
 fi
-if [ -z "$backup_target" ]; then
+if [ -z "$backup_target" ] && [ "${POWERSYSTEM_BACKUP_LOCAL_ONLY:-0}" != "1" ]; then
   echo 'Set POWERSYSTEM_BACKUP_TARGET or /etc/powersystem/backup-target before backup' >&2
   exit 2
 fi
-if [ -z "$secondary_target" ] && [ -f /etc/powersystem/backup-secondary-target ]; then
+if [ "${POWERSYSTEM_BACKUP_SKIP_SECONDARY:-0}" = "1" ]; then
+  secondary_target=""
+elif [ -z "$secondary_target" ] && [ -f /etc/powersystem/backup-secondary-target ]; then
   secondary_target=$(cat /etc/powersystem/backup-secondary-target)
 fi
 if [ -n "$secondary_target" ] && [ "$secondary_target" = "$backup_target" ]; then
@@ -81,10 +83,41 @@ if [ -s /etc/powersystem/agent-service-token ]; then
   # Manufacturer originals are private runtime assets, never release files.
   manuals_dir=${POWERSYSTEM_MANUALS_DIR:-$project_dir/runtime/manuals}
   if [ -d "$manuals_dir" ]; then
-    test -s "$project_dir/设备知识/手册来源清单.json"
+    manuals_manifest="$project_dir/资产/设备知识/手册来源清单.json"
+    # Prefer the reviewed new layout; retain compatibility with existing servers.
+    if [ ! -e "$manuals_manifest" ]; then
+      manuals_manifest="$project_dir/设备知识/手册来源清单.json"
+    fi
+    test -s "$manuals_manifest"
     cp -a "$manuals_dir" "$staging/manuals"
-    cp "$project_dir/设备知识/手册来源清单.json" "$staging/manuals-manifest.json"
+    cp "$manuals_manifest" "$staging/manuals-manifest.json"
   fi
+fi
+if docker inspect powersystem-stage4-agent-rag-1 >/dev/null 2>&1; then
+  docker exec -i powersystem-stage4-agent-rag-1 python - < "$project_dir/stages/08-agent-rag/deploy/backup-rag.py" > "$staging/rag-vectors.tar"
+  "${dc[@]}" exec -T postgres pg_dump -U powersystem -d powersystem_agent_rag -Fc > "$staging/rag-postgres.dump"
+  rag_model_dir=$(docker inspect --format '{{range .Mounts}}{{if eq .Destination "/models/multilingual-e5-small"}}{{.Source}}{{end}}{{end}}' powersystem-stage4-agent-rag-1)
+  cp -a "$rag_model_dir" "$staging/rag-model"
+  rag_env_file=$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project.environment_file"}}' powersystem-stage4-agent-rag-1)
+  # Incremental releases keep compose.env in a new directory while RAG_ENV_FILE
+  # still points to the original runtime environment. Follow the active setting.
+  rag_runtime_env_file=$(python3 - "$rag_env_file" "$project_dir" <<'PY'
+import pathlib,sys
+compose=pathlib.Path(sys.argv[1]);root=pathlib.Path(sys.argv[2])
+values=dict(line.split('=',1) for line in compose.read_text().splitlines() if '=' in line and not line.lstrip().startswith('#'))
+value=values['RAG_ENV_FILE'].strip().strip("\"'")
+path=pathlib.Path(value);path=path if path.is_absolute() else root/path
+assert path.is_file() and path.resolve().is_relative_to(root/'runtime')
+print(path)
+PY
+  )
+  cp "$rag_runtime_env_file" "$staging/config/agent/rag.env"
+  cp "$rag_env_file" "$staging/config/agent/rag-compose.env"
+  cp -a "$project_dir/runtime/agent-rag-audit" "$staging/rag-audit"
+fi
+# M4 is optional for old releases; detected active service requires complete backup.
+if docker inspect powersystem-stage4-ops-agent-1 >/dev/null 2>&1; then
+  python3 "$project_dir/stages/09-ops-agent/deploy/backup-ma.py" --output "$staging"
 fi
 find "$staging/config" -type f -exec chmod 600 {} +
 find "$staging/config" -type d -exec chmod 700 {} +
@@ -94,13 +127,15 @@ tar -C "$backup_dir" -czf "$backup_dir/$run_id.tar.gz" "$run_id"
 gpg --batch --yes --pinentry-mode loopback --passphrase-file "$passphrase_file" --symmetric --cipher-algo AES256 --output "$backup_dir/$run_id.tar.gz.gpg" "$backup_dir/$run_id.tar.gz"
 (cd "$backup_dir" && sha256sum "$run_id.tar.gz.gpg" > "$run_id.tar.gz.gpg.sha256")
 upload_failed=0
-if scp -o BatchMode=yes -o StrictHostKeyChecking=yes -i "$backup_key" "$backup_dir/$run_id.tar.gz.gpg" "$backup_dir/$run_id.tar.gz.gpg.sha256" "$backup_target"; then
+if [ "${POWERSYSTEM_BACKUP_LOCAL_ONLY:-0}" = "1" ]; then
+  echo 'Local-only encrypted backup retained; no upload performed'
+elif scp -o BatchMode=yes -o StrictHostKeyChecking=yes -i "$backup_key" "$backup_dir/$run_id.tar.gz.gpg" "$backup_dir/$run_id.tar.gz.gpg.sha256" "$backup_target"; then
   echo 'Primary backup upload succeeded'
 else
   echo 'Primary backup upload failed; local encrypted archive retained' >&2
   upload_failed=1
 fi
-if [ -n "$secondary_target" ]; then
+if [ "${POWERSYSTEM_BACKUP_LOCAL_ONLY:-0}" != "1" ] && [ -n "$secondary_target" ]; then
   if scp -o BatchMode=yes -o StrictHostKeyChecking=yes -i "$backup_key" "$backup_dir/$run_id.tar.gz.gpg" "$backup_dir/$run_id.tar.gz.gpg.sha256" "$secondary_target"; then
     echo 'Secondary backup upload succeeded'
   else

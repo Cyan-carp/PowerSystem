@@ -48,6 +48,13 @@ async def complete(request: Request):
             message={"role":"assistant","content":json.dumps(answer,ensure_ascii=False)}
         else:
             message={"role":"assistant","content":"OK (protocol fixture)"}
+    elif data["tools"][0]["function"]["name"]=="submit_plan":
+        from agent.natural import fallback_plan, Plan
+        question = json.loads(messages[-1]["content"])["question"]
+        if "slow-response" in question:
+            await asyncio.sleep(2)
+        plan = fallback_plan(question) or Plan(scope="in_scope",live=True,knowledge=False,intent="list",device="all")
+        message={"role":"assistant","content":None,"tool_calls":[{"id":"plan1","type":"function","function":{"name":"submit_plan","arguments":plan.model_dump_json()}}]}
     elif data["tools"][0]["function"]["name"]=="submit_interpretation":
         item=json.loads(messages[-1]["content"])["evidence"][0]
         answer={"conclusion":{"text":"事件证据记录了告警触发现象，具体原因需要人工核查。","evidence_ids":[item["id"]]},

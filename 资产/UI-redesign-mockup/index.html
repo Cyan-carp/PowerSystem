@@ -1,0 +1,551 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>源网智联 · UI 重设计样稿（深色运维指挥舱 v1）</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;600;700&family=Noto+Sans+SC:wght@400;500;700&display=swap" rel="stylesheet" />
+<style>
+/* ==========================================================================
+   样稿专用样式 —— 「深色运维指挥舱」Design Tokens
+   ========================================================================== */
+:root {
+  /* 底色层级（近黑蓝灰，四层） */
+  --bg0: #0b0e13;        /* 页面底 */
+  --bg1: #10151c;        /* 顶栏 / 侧栏 */
+  --surface: #151c25;    /* 面板 */
+  --surface2: #1a222d;   /* 面板 hover / 内嵌区 */
+  --line: #232d3a;       /* 主分割线 */
+  --line2: #2e3a49;      /* 强调分割线 */
+
+  /* 文字三级 */
+  --text: #e9eef5;
+  --text2: #93a1b1;
+  --text3: #5c6878;
+
+  /* 品牌强调：电光橙（沿用现有品牌认同） */
+  --accent: #ff7a1a;
+  --accent-hi: #ffa25c;
+  --accent-dim: rgba(255, 122, 26, .14);
+  --accent-line: rgba(255, 122, 26, .45);
+
+  /* 语义色（与强调色分离） */
+  --danger: #ff5347;
+  --warn: #ffb020;
+  --ok: #37d67a;
+
+  --mono: "Rajdhani", Consolas, "JetBrains Mono", monospace;
+  --sans: "Noto Sans SC", "Microsoft YaHei", "PingFang SC", sans-serif;
+
+  --radius: 0px; /* 全直角：延续工程规范 */
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: #06080b; color: var(--text); font-family: var(--sans); padding: 48px 24px 96px; }
+.doc { max-width: 1500px; margin: 0 auto; }
+
+/* ---------- 文档头 ---------- */
+.doc-head { margin-bottom: 40px; }
+.doc-head .kicker { font-family: var(--mono); font-size: 12px; letter-spacing: 4px; color: var(--accent); font-weight: 600; }
+.doc-head h1 { font-size: 30px; font-weight: 700; margin: 10px 0 12px; letter-spacing: 1px; }
+.doc-head p { color: var(--text2); font-size: 13px; max-width: 760px; line-height: 1.8; }
+.token-strip { display: flex; gap: 0; margin-top: 26px; border: 1px solid var(--line); width: fit-content; }
+.token-strip div { width: 74px; height: 44px; position: relative; }
+.token-strip div span { position: absolute; left: 7px; bottom: 5px; font-size: 9px; font-family: var(--mono); color: rgba(255,255,255,.75); letter-spacing: .5px; }
+.token-strip div.light span { color: rgba(0,0,0,.6); }
+
+/* ---------- 画板框架 ---------- */
+.artboard { margin-bottom: 72px; }
+.artboard-label { display: flex; align-items: baseline; gap: 14px; margin-bottom: 14px; }
+.artboard-label .num { font-family: var(--mono); font-size: 13px; color: var(--accent); font-weight: 700; letter-spacing: 2px; }
+.artboard-label h2 { font-size: 17px; font-weight: 600; }
+.artboard-label small { color: var(--text3); font-size: 12px; }
+.screen {
+  width: 100%; aspect-ratio: 1440 / 900; background: var(--bg0);
+  border: 1px solid var(--line2); overflow: hidden; position: relative;
+  box-shadow: 0 30px 80px rgba(0,0,0,.5);
+  font-size: 13px;
+}
+
+/* ==========================================================================
+   通用组件（与将来 Vue 实现的类名对应）
+   ========================================================================== */
+.ico { display: inline-grid; place-items: center; width: 16px; height: 16px; flex: none; }
+
+/* 顶栏 */
+.topbar { height: 56px; background: var(--bg1); border-bottom: 1px solid var(--line); display: flex; align-items: center; gap: 24px; padding: 0 20px; position: relative; }
+.topbar::after { content: ""; position: absolute; left: 0; bottom: -1px; width: 180px; height: 2px; background: var(--accent); box-shadow: 0 0 12px var(--accent-line); }
+.brand { display: flex; align-items: center; gap: 10px; height: 56px; padding-right: 22px; border-right: 1px solid var(--line); flex: none; }
+.brand-mark { width: 30px; height: 30px; background: var(--accent); display: grid; place-items: center; color: #0b0e13; font-weight: 700; font-family: var(--mono); font-size: 15px; box-shadow: 0 0 16px var(--accent-line); }
+.brand-text strong { display: block; font-size: 14px; letter-spacing: 2px; }
+.brand-text small { display: block; font-size: 9px; color: var(--text3); letter-spacing: 1px; margin-top: 1px; }
+.crumb { font-size: 12px; color: var(--text3); }
+.crumb b { color: var(--text); font-weight: 500; }
+.top-actions { margin-left: auto; display: flex; align-items: center; gap: 18px; }
+.conn { font-size: 11px; color: var(--ok); border: 1px solid rgba(55,214,122,.35); padding: 4px 10px; display: flex; align-items: center; gap: 7px; background: rgba(55,214,122,.07); }
+.conn i { width: 6px; height: 6px; background: var(--ok); display: inline-block; box-shadow: 0 0 8px var(--ok); }
+.clock { font-family: var(--mono); font-size: 12px; color: var(--text3); letter-spacing: 1px; }
+.usr { font-size: 12px; color: var(--text2); }
+.usr b { color: var(--text); }
+
+/* 侧栏 */
+.shell-body { display: flex; height: calc(100% - 56px); }
+.sidebar { width: 200px; flex: none; background: var(--bg1); border-right: 1px solid var(--line); display: flex; flex-direction: column; }
+.nav-cap { padding: 20px 20px 8px; font-size: 10px; letter-spacing: 3px; color: var(--text3); font-family: var(--mono); }
+.nav-item { display: flex; align-items: center; gap: 10px; height: 42px; margin: 0 8px; padding: 0 12px; font-size: 13px; color: var(--text2); border-left: 2px solid transparent; }
+.nav-item:hover { color: var(--text); background: var(--surface2); }
+.nav-item.active { color: var(--accent-hi); background: var(--accent-dim); border-left-color: var(--accent); font-weight: 600; }
+.nav-item .ico { opacity: .85; }
+.side-foot { margin-top: auto; padding: 14px 20px; border-top: 1px solid var(--line); font-size: 11px; color: var(--text3); display: flex; align-items: center; gap: 8px; }
+.side-foot i { width: 6px; height: 6px; background: var(--warn); display: inline-block; }
+
+.main { flex: 1; min-width: 0; padding: 20px 24px; overflow: hidden; }
+
+/* 页头 */
+.page-head { display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 16px; }
+.kicker { font-family: var(--mono); font-size: 10px; letter-spacing: 3px; color: var(--accent); font-weight: 700; }
+.page-head h1 { font-size: 20px; font-weight: 600; margin: 4px 0 4px; }
+.page-head p { font-size: 11px; color: var(--text3); }
+.head-meta { text-align: right; }
+.live-pill { font-size: 11px; font-weight: 600; color: var(--accent-hi); background: var(--accent-dim); border: 1px solid var(--accent-line); padding: 4px 10px; display: inline-flex; align-items: center; gap: 7px; }
+.live-pill i { width: 6px; height: 6px; background: var(--accent); display: inline-block; box-shadow: 0 0 8px var(--accent); animation: blink 1.6s infinite; }
+@keyframes blink { 50% { opacity: .35; } }
+.head-meta small { display: block; color: var(--text3); font-size: 10px; margin-top: 6px; font-family: var(--mono); letter-spacing: .5px; }
+
+/* 面板 */
+.surface { background: var(--surface); border: 1px solid var(--line); }
+.surface-head { display: flex; justify-content: space-between; align-items: center; padding: 12px 16px; border-bottom: 1px solid var(--line); }
+.surface-head h2 { font-size: 14px; font-weight: 600; margin-top: 2px; }
+.link { font-size: 12px; color: var(--accent); }
+
+/* KPI */
+.kpi-cap { display: flex; align-items: center; gap: 8px; font-size: 11px; font-weight: 600; color: var(--text2); margin: 14px 0 10px; letter-spacing: 1px; }
+.kpi-cap::before { content: ""; width: 8px; height: 8px; background: var(--accent); box-shadow: 0 0 8px var(--accent-line); }
+.kpi-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+.kpi-grid.triple { grid-template-columns: repeat(3, 1fr); }
+.kpi-card { background: var(--surface); border: 1px solid var(--line); padding: 13px 15px 11px; position: relative; overflow: hidden; }
+.kpi-card::before { content: ""; position: absolute; top: 0; left: 0; right: 0; height: 2px; background: var(--line2); }
+.kpi-card span { font-size: 11px; color: var(--text2); }
+.kpi-card strong { display: block; font-family: var(--mono); font-size: 26px; font-weight: 700; letter-spacing: .5px; margin-top: 8px; font-variant-numeric: tabular-nums; }
+.kpi-card strong em { font-size: 13px; font-style: normal; color: var(--text3); margin-left: 3px; }
+.kpi-card small { display: block; font-size: 10px; color: var(--text3); margin-top: 4px; }
+.kpi-card.hero { background: linear-gradient(135deg, #1c120a 0%, var(--surface) 55%); border-color: var(--accent-line); }
+.kpi-card.hero::before { background: var(--accent); box-shadow: 0 0 10px var(--accent); }
+.kpi-card.hero strong { color: var(--accent-hi); }
+.kpi-card.alarm::before { background: var(--danger); }
+.kpi-card.alarm strong { color: var(--danger); }
+
+/* 按钮 / 输入框（Element Plus 暗化覆写预览） */
+.btn { height: 32px; padding: 0 14px; font-size: 12px; background: var(--surface2); border: 1px solid var(--line2); color: var(--text); display: inline-flex; align-items: center; gap: 6px; }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: #14100b; font-weight: 600; }
+.btn.primary:hover { background: var(--accent-hi); }
+.btn:hover { border-color: var(--text3); }
+.input { height: 32px; background: var(--bg1); border: 1px solid var(--line2); color: var(--text3); font-size: 12px; display: flex; align-items: center; padding: 0 12px; gap: 8px; min-width: 180px; }
+.seg { display: inline-flex; border: 1px solid var(--line2); }
+.seg button { height: 30px; padding: 0 13px; font-size: 12px; background: transparent; border: 0; border-right: 1px solid var(--line2); color: var(--text2); font-family: var(--sans); }
+.seg button:last-child { border-right: 0; }
+.seg button.on { background: var(--accent); color: #14100b; font-weight: 600; }
+
+/* 表格 */
+table.data { width: 100%; border-collapse: collapse; font-size: 12px; }
+table.data th { text-align: left; padding: 10px 16px; color: var(--text3); font-size: 11px; font-weight: 600; background: var(--bg1); border-bottom: 1px solid var(--line); letter-spacing: .5px; }
+table.data td { padding: 11px 16px; border-bottom: 1px solid var(--line); color: var(--text2); }
+table.data tr:hover td { background: var(--surface2); }
+table.data td b { color: var(--text); font-weight: 500; }
+.mono { font-family: var(--mono); font-size: 12px; letter-spacing: .5px; }
+.dot { display: inline-block; width: 8px; height: 8px; margin-right: 8px; vertical-align: middle; }
+.dot.urgent { background: var(--danger); box-shadow: 0 0 8px rgba(255,83,71,.6); }
+.dot.major { background: #ff7a45; }
+.dot.minor { background: var(--warn); }
+.tag { display: inline-block; font-size: 10px; padding: 2px 8px; border: 1px solid var(--line2); color: var(--text2); letter-spacing: 1px; }
+.tag.danger { color: var(--danger); border-color: rgba(255,83,71,.4); background: rgba(255,83,71,.08); }
+.tag.warn { color: var(--warn); border-color: rgba(255,176,32,.4); background: rgba(255,176,32,.08); }
+.tag.ok { color: var(--ok); border-color: rgba(55,214,122,.4); background: rgba(55,214,122,.08); }
+.tag.accent { color: var(--accent-hi); border-color: var(--accent-line); background: var(--accent-dim); }
+.pager { display: flex; justify-content: space-between; align-items: center; padding: 11px 16px; font-size: 11px; color: var(--text3); }
+.pager .pages { display: flex; gap: 4px; }
+.pager .pages b { width: 26px; height: 26px; display: grid; place-items: center; border: 1px solid var(--line2); font-weight: 500; font-family: var(--mono); }
+.pager .pages b.on { background: var(--accent); color: #14100b; border-color: var(--accent); }
+
+/* 告警 feed 行 */
+.feed-row { display: flex; align-items: center; gap: 10px; padding: 10px 16px; border-bottom: 1px solid var(--line); }
+.feed-row:hover { background: var(--surface2); }
+.feed-row:last-child { border-bottom: 0; }
+.feed-main { flex: 1; min-width: 0; }
+.feed-main strong { display: block; font-size: 12px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-weight: 500; }
+.feed-main small { font-size: 10px; color: var(--text3); font-family: var(--mono); }
+.feed-status { font-size: 10px; color: var(--text2); flex: none; }
+
+/* 设备 chips */
+.chip-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1px; background: var(--line); border-top: 1px solid var(--line); }
+.chip { background: var(--surface); padding: 11px 14px; display: flex; align-items: center; gap: 10px; }
+.chip:hover { background: var(--surface2); }
+.chip-ico { width: 30px; height: 30px; flex: none; display: grid; place-items: center; background: var(--accent-dim); color: var(--accent); font-family: var(--mono); font-size: 11px; font-weight: 700; border: 1px solid var(--accent-line); }
+.chip b { display: block; font-size: 12px; font-weight: 500; }
+.chip small { display: block; font-size: 10px; color: var(--text3); font-family: var(--mono); margin-top: 2px; }
+.chip .arr { margin-left: auto; color: var(--text3); font-family: var(--mono); }
+
+/* ==========================================================================
+   画板 1 · 登录
+   ========================================================================== */
+.login-wrap { display: grid; grid-template-columns: 1.15fr 1fr; height: 100%; }
+.login-left { position: relative; overflow: hidden; padding: 7% 8%; display: flex; flex-direction: column; justify-content: center;
+  background:
+    radial-gradient(1000px 600px at 85% 110%, rgba(255,122,26,.10), transparent 60%),
+    repeating-linear-gradient(0deg, transparent 0 47px, rgba(255,255,255,.025) 47px 48px),
+    repeating-linear-gradient(90deg, transparent 0 47px, rgba(255,255,255,.025) 47px 48px),
+    var(--bg1);
+}
+.login-left .mark { width: 46px; height: 46px; background: var(--accent); display: grid; place-items: center; color: #14100b; font-size: 22px; font-weight: 700; font-family: var(--mono); box-shadow: 0 0 26px var(--accent-line); margin-bottom: 56px; }
+.login-left .eyebrow { font-family: var(--mono); font-size: 11px; letter-spacing: 4px; color: var(--accent); font-weight: 700; }
+.login-left h1 { font-size: clamp(22px, 2.6vw, 38px); font-weight: 600; line-height: 1.5; letter-spacing: 1px; margin: 18px 0 14px; }
+.login-left h1 b { color: var(--accent-hi); font-weight: 600; }
+.login-left > p { font-size: 13px; color: var(--text2); }
+.login-line { display: flex; align-items: center; gap: 14px; margin-top: 60px; color: var(--text3); font-size: 11px; letter-spacing: 2px; }
+.login-line::before { content: ""; width: 26px; height: 1px; background: var(--accent); }
+.login-left .big-ring { position: absolute; right: -140px; bottom: -190px; width: 460px; height: 460px; border: 1px solid rgba(255,255,255,.09); border-radius: 50%; }
+.login-left .big-ring::after { content: ""; position: absolute; inset: 60px; border: 1px dashed rgba(255,122,26,.3); border-radius: 50%; }
+.login-right { background: var(--bg0); display: grid; place-items: center; border-left: 1px solid var(--line); }
+.login-form { width: min(360px, 78%); }
+.login-form h2 { font-size: 24px; font-weight: 600; margin: 8px 0 6px; }
+.login-form > p { font-size: 12px; color: var(--text3); margin-bottom: 30px; }
+.fld label { display: block; font-size: 12px; font-weight: 600; color: var(--text2); margin: 18px 0 8px; }
+.fld .input { width: 100%; height: 42px; }
+.login-submit { width: 100%; height: 44px; margin-top: 26px; font-size: 13px; letter-spacing: 4px; font-weight: 700; }
+.login-note { border-top: 1px solid var(--line); margin-top: 36px; padding-top: 14px; font-size: 10px; color: var(--text3); line-height: 1.8; }
+
+/* ==========================================================================
+   画板 2 · 总览大屏
+   ========================================================================== */
+.dash-grid { display: grid; grid-template-columns: 1.55fr .85fr; gap: 12px; margin-top: 12px; }
+.chart-ctx { display: flex; justify-content: space-between; padding: 9px 16px 0; font-size: 10px; color: var(--text3); font-family: var(--mono); letter-spacing: .5px; }
+.device-surface { margin-top: 12px; }
+.empty-hint { display: grid; place-items: center; min-height: 120px; color: var(--text3); font-size: 12px; border: 1px dashed var(--line2); margin: 12px 16px; }
+
+/* ==========================================================================
+   画板 3 · 告警中心
+   ========================================================================== */
+.alarm-layout { display: grid; grid-template-columns: 1fr 360px; gap: 12px; margin-top: 12px; height: calc(100% - 108px); }
+.drawer { background: var(--surface); border: 1px solid var(--line); display: flex; flex-direction: column; overflow: hidden; }
+.drawer-head { padding: 14px 18px; border-bottom: 1px solid var(--line); display: flex; justify-content: space-between; align-items: center; }
+.drawer-head h3 { font-size: 14px; font-weight: 600; }
+.drawer-head .x { color: var(--text3); font-family: var(--mono); cursor: pointer; }
+.drawer-body { padding: 16px 18px; overflow: hidden; }
+.sev-line { display: flex; align-items: center; gap: 8px; font-size: 11px; color: var(--text2); margin-bottom: 14px; }
+.kv { display: grid; grid-template-columns: 84px 1fr; gap: 10px 14px; font-size: 12px; margin-bottom: 18px; }
+.kv dt { color: var(--text3); }
+.kv dd { color: var(--text); font-weight: 500; }
+.kv dd.mono { font-weight: 600; }
+.drawer h4 { font-size: 12px; font-weight: 600; color: var(--text2); margin: 16px 0 8px; letter-spacing: 1px; }
+.note { font-size: 11px; line-height: 1.8; color: var(--text3); background: var(--bg1); border-left: 2px solid var(--accent); padding: 10px 12px; }
+.drawer-actions { display: flex; gap: 8px; margin-top: auto; padding: 14px 18px; border-top: 1px solid var(--line); }
+
+/* ==========================================================================
+   画板 4 · 值班问答
+   ========================================================================== */
+.chat-boundary { font-size: 11px; color: var(--warn); background: rgba(255,176,32,.07); border: 1px solid rgba(255,176,32,.3); padding: 8px 14px; margin-bottom: 14px; }
+.chat-empty { display: grid; place-items: center; min-height: 380px; text-align: center; }
+.chat-empty h2 { font-size: 19px; font-weight: 600; margin-bottom: 10px; }
+.chat-empty p { font-size: 12px; color: var(--text3); line-height: 1.9; }
+.chat-examples { display: flex; gap: 10px; justify-content: center; margin-top: 26px; }
+.chat-ex { background: var(--surface2); border: 1px solid var(--line2); color: var(--text2); font-size: 12px; padding: 9px 16px; font-family: var(--sans); }
+.chat-ex:hover { border-color: var(--accent); color: var(--accent-hi); }
+.chat-input-bar { display: flex; gap: 10px; margin-top: 14px; background: var(--surface); border: 1px solid var(--line2); padding: 10px; }
+.chat-input-bar .input { flex: 1; height: 38px; min-width: 0; }
+.turn { background: var(--surface); border: 1px solid var(--line); margin-bottom: 12px; }
+.turn-head { display: flex; justify-content: space-between; padding: 10px 16px; border-bottom: 1px solid var(--line); font-size: 11px; color: var(--text3); font-family: var(--mono); letter-spacing: 1px; }
+.turn-q { padding: 14px 16px; font-size: 13px; color: var(--text); font-weight: 500; }
+.turn-a { padding: 0 16px 14px; font-size: 12px; line-height: 1.9; color: var(--text2); }
+.evidence { display: flex; gap: 8px; padding: 0 16px 14px; flex-wrap: wrap; }
+.ev { font-size: 10px; font-family: var(--mono); color: var(--accent-hi); background: var(--accent-dim); border: 1px solid var(--accent-line); padding: 3px 9px; letter-spacing: .5px; }
+
+/* 标尺提示 */
+.ruler { position: absolute; top: 0; right: 0; font-family: var(--mono); font-size: 9px; color: var(--text3); padding: 4px 8px; letter-spacing: 1px; opacity: .7; }
+</style>
+</head>
+<body>
+<div class="doc">
+
+  <header class="doc-head">
+    <div class="kicker">UI REDESIGN · MOCKUP V1 · 2026-10-08</div>
+    <h1>源网智联 · 「深色运维指挥舱」视觉样稿</h1>
+    <p>设计方向：面向值班员长时间盯屏场景的暗色运维控制台。近黑蓝灰四层底色 + 单一电光橙强调色（沿用现有品牌认同），全直角几何、方形状态点（延续工程规范）、等宽数字字体、高密度数据排布。业务逻辑、API、路由、组件体系完全不动，仅替换视觉层与 Design Tokens。</p>
+    <div class="token-strip">
+      <div style="background:#0b0e13"><span>bg0</span></div>
+      <div style="background:#10151c"><span>bg1</span></div>
+      <div style="background:#151c25"><span>surface</span></div>
+      <div style="background:#1a222d"><span>sur2</span></div>
+      <div style="background:#232d3a"><span>line</span></div>
+      <div style="background:#ff7a1a"><span class="light">accent</span></div>
+      <div style="background:#ff5347"><span>danger</span></div>
+      <div style="background:#ffb020"><span class="light">warn</span></div>
+      <div style="background:#37d67a"><span class="light">ok</span></div>
+    </div>
+  </header>
+
+  <!-- ============ 画板 01 · 登录 ============ -->
+  <section class="artboard">
+    <div class="artboard-label"><span class="num">01</span><h2>登录页</h2><small>品牌陈述左 + 表单右；深色网格底纹 + 橙色光环，无渐变紫蓝</small></div>
+    <div class="screen">
+      <div class="login-wrap">
+        <div class="login-left">
+          <div class="mark">⚡</div>
+          <div class="eyebrow">POWER SYSTEM OPERATIONS</div>
+          <h1>每一台设备的状态，<br />都值得被<b>及时看见</b>。</h1>
+          <p>源网智联 · 新能源设备智能运维平台</p>
+          <div class="login-line">遥测接入 / 实时告警 / 故障预测 / 值班问答</div>
+          <div class="big-ring"></div>
+        </div>
+        <div class="login-right">
+          <div class="login-form">
+            <div class="kicker">DUTY CONSOLE</div>
+            <h2>登录平台</h2>
+            <p>使用已注册的运维账号进入系统。</p>
+            <div class="fld"><label>账号</label><div class="input">输入账号</div></div>
+            <div class="fld"><label>密码</label><div class="input">输入密码</div></div>
+            <button class="btn primary login-submit">进入工作台</button>
+            <div class="login-note">平台业务接口使用 JWT 鉴权 · 登录有效期 8 小时<br />合成演示系统 · 建议须人工核查</div>
+          </div>
+        </div>
+      </div>
+      <div class="ruler">1440 × 900</div>
+    </div>
+  </section>
+
+  <!-- ============ 画板 02 · 总览大屏 ============ -->
+  <section class="artboard">
+    <div class="artboard-label"><span class="num">02</span><h2>运行总览（Dashboard）</h2><small>双组 KPI · 实时功率曲线 · 告警流 · 设备速览</small></div>
+    <div class="screen">
+      <header class="topbar">
+        <div class="brand"><div class="brand-mark">⚡</div><div class="brand-text"><strong>源网智联</strong><small>新能源设备智能运维平台</small></div></div>
+        <div class="crumb">运行工作台 / <b>总览大屏</b></div>
+        <div class="top-actions">
+          <div class="conn"><i></i>实时连接正常</div>
+          <span class="clock">2026-10-08 15:07:04</span>
+          <span class="usr">值班员 <b>张工</b></span>
+        </div>
+      </header>
+      <div class="shell-body">
+        <aside class="sidebar">
+          <div class="nav-cap">功能导航</div>
+          <div class="nav-item active">▦ <span>总览大屏</span></div>
+          <div class="nav-item">▤ <span>设备管理</span></div>
+          <div class="nav-item">◉ <span>告警中心</span></div>
+          <div class="nav-item">⌁ <span>故障预测</span></div>
+          <div class="nav-item">✎ <span>值班问答</span></div>
+          <div class="side-foot"><i></i>合成数据演示</div>
+        </aside>
+        <main class="main">
+          <div class="page-head">
+            <div><div class="kicker">OPERATION OVERVIEW</div><h1>运行总览</h1><p>实时感知场站设备、功率与告警动态。</p></div>
+            <div class="head-meta"><span class="live-pill"><i></i>实时监测</span><small>最近同步 15:07:02</small></div>
+          </div>
+
+          <div class="kpi-cap">运行状态</div>
+          <div class="kpi-grid">
+            <div class="kpi-card hero"><span>登记设备</span><strong>12</strong><small>台设备</small></div>
+            <div class="kpi-card"><span>在线设备</span><strong>10</strong><small>2 台离线</small></div>
+            <div class="kpi-card"><span>当前功率</span><strong>1,847.3<em>kW</em></strong><small>非累计发电量</small></div>
+            <div class="kpi-card"><span>当日发电量</span><strong>21,402.6<em>kWh</em></strong><small>留存累计 96,110.2 kWh</small></div>
+          </div>
+
+          <div class="kpi-cap">告警与风险</div>
+          <div class="kpi-grid triple">
+            <div class="kpi-card alarm"><span>活动告警</span><strong>3</strong><small>1 台故障设备</small></div>
+            <div class="kpi-card"><span>运行正常占比</span><strong>83<em>%</em></strong><small>依据当前在线状态</small></div>
+            <div class="kpi-card"><span>设备健康度</span><strong>86<em>分</em></strong><small>依据在线、故障与活动告警</small></div>
+          </div>
+
+          <div class="dash-grid">
+            <section class="surface">
+              <div class="surface-head">
+                <div><div class="kicker">LIVE TELEMETRY</div><h2>实时功率趋势</h2></div>
+                <div class="input">风机-07 · FNV-07 ▾</div>
+              </div>
+              <div class="chart-ctx"><span>FNV-07 · STATION-A</span><span>近 5 分钟 · kW</span></div>
+              <svg viewBox="0 0 640 200" style="display:block;width:calc(100% - 32px);margin:6px 16px 14px;" preserveAspectRatio="none">
+                <defs>
+                  <linearGradient id="area" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0" stop-color="#ff7a1a" stop-opacity=".28"/>
+                    <stop offset="1" stop-color="#ff7a1a" stop-opacity="0"/>
+                  </linearGradient>
+                </defs>
+                <g stroke="#232d3a" stroke-width="1">
+                  <line x1="0" y1="40" x2="640" y2="40"/><line x1="0" y1="80" x2="640" y2="80"/>
+                  <line x1="0" y1="120" x2="640" y2="120"/><line x1="0" y1="160" x2="640" y2="160"/>
+                </g>
+                <path d="M0,150 L40,138 L80,144 L120,120 L160,128 L200,100 L240,108 L280,84 L320,96 L360,72 L400,88 L440,60 L480,76 L520,52 L560,68 L600,44 L640,58 L640,200 L0,200 Z" fill="url(#area)"/>
+                <path d="M0,150 L40,138 L80,144 L120,120 L160,128 L200,100 L240,108 L280,84 L320,96 L360,72 L400,88 L440,60 L480,76 L520,52 L560,68 L600,44 L640,58" fill="none" stroke="#ff7a1a" stroke-width="2"/>
+                <circle cx="640" cy="58" r="3.5" fill="#ff7a1a"/>
+                <circle cx="640" cy="58" r="7" fill="none" stroke="#ff7a1a" stroke-opacity=".4"/>
+                <text x="6" y="36" fill="#5c6878" font-size="9" font-family="Rajdhani,monospace">2400</text>
+                <text x="6" y="156" fill="#5c6878" font-size="9" font-family="Rajdhani,monospace">600</text>
+              </svg>
+            </section>
+
+            <section class="surface">
+              <div class="surface-head"><div><div class="kicker">ALARM FEED</div><h2>最新告警</h2></div><span class="link">查看全部 →</span></div>
+              <div class="feed-row"><span class="dot urgent"></span><div class="feed-main"><strong>AI 故障风险升高</strong><small>设备 #7 · 10-08 14:52:11</small></div><span class="feed-status tag danger">紧急</span></div>
+              <div class="feed-row"><span class="dot major"></span><div class="feed-main"><strong>winding_temp 越限</strong><small>设备 #3 · 10-08 14:31:47</small></div><span class="feed-status tag warn">重要</span></div>
+              <div class="feed-row"><span class="dot minor"></span><div class="feed-main"><strong>vibration 越限</strong><small>设备 #5 · 10-08 13:58:02</small></div><span class="feed-status tag warn">一般</span></div>
+              <div class="feed-row"><span class="dot minor"></span><div class="feed-main"><strong>power 波动</strong><small>设备 #2 · 10-08 13:12:39</small></div><span class="feed-status tag ok">已恢复</span></div>
+              <div class="empty-hint" style="margin:12px 16px;min-height:64px;">当前共有 3 条活动告警</div>
+            </section>
+          </div>
+
+          <section class="surface device-surface">
+            <div class="surface-head"><div><div class="kicker">DEVICE FLEET</div><h2>设备速览</h2></div><span class="link">设备列表 →</span></div>
+            <div class="chip-grid">
+              <div class="chip"><div class="chip-ico">07</div><div><b>风机-07</b><small>FNV-07 · STATION-A</small></div><span class="arr">→</span></div>
+              <div class="chip"><div class="chip-ico">03</div><div><b>风机-03</b><small>FNV-03 · STATION-A</small></div><span class="arr">→</span></div>
+              <div class="chip"><div class="chip-ico">05</div><div><b>逆变器-05</b><small>INV-05 · STATION-B</small></div><span class="arr">→</span></div>
+              <div class="chip"><div class="chip-ico">02</div><div><b>风机-02</b><small>FNV-02 · STATION-A</small></div><span class="arr">→</span></div>
+            </div>
+          </section>
+        </main>
+      </div>
+      <div class="ruler">1440 × 900</div>
+    </div>
+  </section>
+
+  <!-- ============ 画板 03 · 告警中心 ============ -->
+  <section class="artboard">
+    <div class="artboard-label"><span class="num">03</span><h2>告警中心（表格 + 详情抽屉）</h2><small>筛选工具条 · 密集表格 · 右侧抽屉承载详情与确认操作</small></div>
+    <div class="screen">
+      <header class="topbar">
+        <div class="brand"><div class="brand-mark">⚡</div><div class="brand-text"><strong>源网智联</strong><small>新能源设备智能运维平台</small></div></div>
+        <div class="crumb">运行工作台 / <b>告警中心</b></div>
+        <div class="top-actions"><div class="conn"><i></i>实时连接正常</div><span class="usr">值班员 <b>张工</b></span></div>
+      </header>
+      <div class="shell-body">
+        <aside class="sidebar">
+          <div class="nav-cap">功能导航</div>
+          <div class="nav-item">▦ <span>总览大屏</span></div>
+          <div class="nav-item">▤ <span>设备管理</span></div>
+          <div class="nav-item active">◉ <span>告警中心</span></div>
+          <div class="nav-item">⌁ <span>故障预测</span></div>
+          <div class="nav-item">✎ <span>值班问答</span></div>
+          <div class="side-foot"><i></i>合成数据演示</div>
+        </aside>
+        <main class="main">
+          <div class="page-head">
+            <div><div class="kicker">ALARM CENTER</div><h1>告警中心</h1><p>越限与风险事件的确认、跟踪与处置闭环。</p></div>
+            <div class="head-meta"><span class="live-pill"><i></i>3 条活动告警</span></div>
+          </div>
+
+          <div class="surface">
+            <div class="surface-head">
+              <div class="seg"><button class="on">全部</button><button>活动</button><button>已确认</button><button>已恢复</button></div>
+              <div style="display:flex;gap:8px;">
+                <div class="input">级别：全部 ▾</div>
+                <div class="input">搜索设备 / 指标</div>
+                <button class="btn">重置</button>
+                <button class="btn primary">查询</button>
+              </div>
+            </div>
+            <table class="data">
+              <thead><tr><th>级别</th><th>告警内容</th><th>设备</th><th>触发时间</th><th>状态</th><th>操作</th></tr></thead>
+              <tbody>
+                <tr><td><span class="dot urgent"></span><b style="color:#ff5347">紧急</b></td><td><b>AI 故障风险 0.82</b></td><td class="mono">#7 · FNV-07</td><td class="mono">10-08 14:52:11</td><td><span class="tag danger">活动</span></td><td><span class="link">详情</span></td></tr>
+                <tr><td><span class="dot major"></span><b style="color:#ff7a45">重要</b></td><td><b>winding_temp 越限 96.4℃</b></td><td class="mono">#3 · FNV-03</td><td class="mono">10-08 14:31:47</td><td><span class="tag danger">活动</span></td><td><span class="link">详情</span></td></tr>
+                <tr><td><span class="dot minor"></span>一般</td><td><b>vibration 越限 7.1 mm/s</b></td><td class="mono">#5 · INV-05</td><td class="mono">10-08 13:58:02</td><td><span class="tag warn">已确认</span></td><td><span class="link">详情</span></td></tr>
+                <tr><td><span class="dot minor"></span>一般</td><td><b>power 波动 ±18%</b></td><td class="mono">#2 · FNV-02</td><td class="mono">10-08 13:12:39</td><td><span class="tag ok">已恢复</span></td><td><span class="link">详情</span></td></tr>
+                <tr><td><span class="dot minor"></span>一般</td><td><b>ambient_temp 越限 41.2℃</b></td><td class="mono">#9 · INV-09</td><td class="mono">10-08 11:45:20</td><td><span class="tag ok">已恢复</span></td><td><span class="link">详情</span></td></tr>
+                <tr><td><span class="dot major"></span><b style="color:#ff7a45">重要</b></td><td><b>ai_failure_risk 升高 0.67</b></td><td class="mono">#4 · FNV-04</td><td class="mono">10-08 10:27:55</td><td><span class="tag warn">已确认</span></td><td><span class="link">详情</span></td></tr>
+              </tbody>
+            </table>
+            <div class="pager"><span>共 42 条 · 第 1 / 3 页</span><div class="pages"><b class="on">1</b><b>2</b><b>3</b><b>›</b></div></div>
+          </div>
+
+          <!-- 抽屉 -->
+          <div class="alarm-layout" style="height:auto;margin-top:12px;">
+            <div class="drawer">
+              <div class="drawer-head"><h3>告警详情 · #1024</h3><span class="x">✕</span></div>
+              <div class="drawer-body">
+                <div class="sev-line"><span class="dot urgent"></span>紧急级别 · 活动状态 <span class="tag danger" style="margin-left:auto">需确认</span></div>
+                <dl class="kv">
+                  <dt>告警内容</dt><dd>AI 故障风险升高至 0.82</dd>
+                  <dt>设备</dt><dd class="mono">#7 · 风机-07 · FNV-07</dd>
+                  <dt>触发时间</dt><dd class="mono">2026-10-08 14:52:11</dd>
+                  <dt>当前值</dt><dd class="mono">0.82 <span style="color:#5c6878">/ 阈值 0.80</span></dd>
+                  <dt>来源指标</dt><dd class="mono">ai_failure_risk</dd>
+                </dl>
+                <h4>平台提示</h4>
+                <div class="note">预测风险已超过关注阈值。建议现场核查该设备温度、振动与绝缘状态；若 24 小时内风险未回落，考虑降载运行并安排检修窗口。</div>
+                <h4>处置建议</h4>
+                <div class="note" style="border-left-color:#ff5347">此告警由 AI 预测链路触发，非实测越限；确认前请核对预测新鲜度（模型版本 v2.3 · 14:00 批次）。</div>
+              </div>
+              <div class="drawer-actions">
+                <button class="btn primary" style="flex:1">确认告警</button>
+                <button class="btn">查看设备详情</button>
+              </div>
+            </div>
+            <div class="surface" style="display:grid;place-items:center;color:var(--text3);font-size:12px;border-style:dashed;">
+              点击表格行 → 右侧滑出抽屉（Element Plus el-drawer，暗化覆写）
+            </div>
+          </div>
+        </main>
+      </div>
+      <div class="ruler">1440 × 900</div>
+    </div>
+  </section>
+
+  <!-- ============ 画板 04 · 值班问答 ============ -->
+  <section class="artboard">
+    <div class="artboard-label"><span class="num">04</span><h2>值班问答（Agent Chat）</h2><small>空态引导 · 问答回合 · 证据链标签 · 底部输入条</small></div>
+    <div class="screen" style="aspect-ratio:1440/820;">
+      <header class="topbar">
+        <div class="brand"><div class="brand-mark">⚡</div><div class="brand-text"><strong>源网智联</strong><small>新能源设备智能运维平台</small></div></div>
+        <div class="crumb">运行工作台 / <b>值班问答</b></div>
+        <div class="top-actions"><div class="conn"><i></i>实时连接正常</div><span class="usr">值班员 <b>张工</b></span></div>
+      </header>
+      <div class="shell-body">
+        <aside class="sidebar">
+          <div class="nav-cap">功能导航</div>
+          <div class="nav-item">▦ <span>总览大屏</span></div>
+          <div class="nav-item">▤ <span>设备管理</span></div>
+          <div class="nav-item">◉ <span>告警中心</span></div>
+          <div class="nav-item">⌁ <span>故障预测</span></div>
+          <div class="nav-item active">✎ <span>值班问答</span></div>
+          <div class="side-foot"><i></i>合成数据演示</div>
+        </aside>
+        <main class="main">
+          <div class="page-head">
+            <div><div class="kicker">AGENT ASSISTANT</div><h1>值班问答</h1><p>受控知识库 · 只读业务查询 · 证据核对</p></div>
+            <button class="btn">新会话</button>
+          </div>
+          <div class="chat-boundary">⚠ 合成演示系统。建议须人工核查；请勿输入账号、密码、密钥或个人信息。</div>
+
+          <section class="chat-empty surface">
+            <div>
+              <h2>描述你要核查的问题</h2>
+              <p>例如：确认告警和已恢复有什么区别？设备 1 的预测是否新鲜？<br />本地知识库不足时会显示提示，适合的通用问题再联网补充。</p>
+              <div class="chat-examples">
+                <button class="chat-ex">确认告警和已恢复有什么区别？</button>
+                <button class="chat-ex">设备 1 的预测是否新鲜？</button>
+              </div>
+            </div>
+          </section>
+
+          <article class="turn">
+            <div class="turn-head"><span>问题 1 · SESSION a3f9…c21d</span><span style="color:#37d67a">已回答 · 引用 2 条知识</span></div>
+            <p class="turn-q">确认告警和已恢复有什么区别？</p>
+            <p class="turn-a">「已确认」表示值班员已人工查看并确认该告警为真实事件，进入处置流程；「已恢复」表示触发指标已回落到阈值以内，事件自动关闭。两者可同时存在：先确认、后恢复，是完整的处置闭环。</p>
+            <div class="evidence"><span class="ev">K9f2…a1 · 告警状态机说明 v3</span><span class="ev">K77e…04 · 运维处置流程 v2</span></div>
+          </article>
+
+          <div class="chat-input-bar">
+            <div class="input">向值班助手提问，例如「设备 7 今天有哪些告警？」</div>
+            <button class="btn primary">发送</button>
+            <button class="btn">停止</button>
+          </div>
+        </main>
+      </div>
+      <div class="ruler">1440 × 820</div>
+    </div>
+  </section>
+
+</div>
+</body>
+</html>

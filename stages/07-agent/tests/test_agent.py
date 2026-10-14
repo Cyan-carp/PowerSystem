@@ -4,14 +4,15 @@ import tempfile
 import unittest
 from dataclasses import replace
 from pathlib import Path
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 import httpx
 from fastapi.testclient import TestClient
 from agent.config import Config, base_url
 from agent.schemas import Evidence, ChatResponse, ModelAnswer
 from agent.tools import Tools, route, normalize, ToolDenied
 from agent.llm import Provider, ProviderError
-from agent.orchestrator import Orchestrator, validate_answer
+from legacy_orchestrator import LegacyOrchestrator as Orchestrator
+from agent.orchestrator import validate_answer
 from agent.audit import Audit
 from agent.sessions import SessionError
 from agent.main import create_app
@@ -38,7 +39,7 @@ def call(name="get_prediction", args=None, call_id="c1"):
 
 
 class RoutesTest(unittest.TestCase):
-    def test_six_tools(self):
+    def test_existing_six_read_only_routes(self):
         cases = [("list_devices", {}, "/devices"), ("list_alarms", {}, "/alarms"),
                  ("get_alarm_detail", {"alarm_id": 3}, "/alarms/3"),
                  ("get_prediction", {"device_id": 1}, "/devices/1/prediction"),
@@ -150,7 +151,7 @@ class AsyncAgentTest(unittest.IsolatedAsyncioTestCase):
         tools=AsyncMock();tools.execute.return_value=evidence()
         response=ChatResponse(request_id="r",session_id="s",status="degraded",model="test")
         trace=[]
-        result=await Orchestrator(CFG,provider,tools).run("查询",[],"jwt",response,trace)
+        result=await Orchestrator(CFG,provider,tools).run_evidence_loop("查询",[],"jwt",response,trace)
         self.assertEqual(result.status,"answered");self.assertIn("需人工确认",result.suggestions[0].text)
 
     async def test_evidence_timestamp_offset_and_numeric_integrity(self):
@@ -173,7 +174,7 @@ class AsyncAgentTest(unittest.IsolatedAsyncioTestCase):
         tools=AsyncMock();tools.execute.return_value=evidence()
         response=ChatResponse(request_id="r",session_id="s",status="degraded",model="test")
         trace=[]
-        result=await Orchestrator(CFG,provider,tools).run("查询",[],"jwt",response,trace)
+        result=await Orchestrator(CFG,provider,tools).run_evidence_loop("查询",[],"jwt",response,trace)
         self.assertEqual(result.status,"answered")
         self.assertEqual(result.conclusion.text,"风险概率为72%")
         self.assertEqual(provider.complete.call_args.args[1],[])
@@ -188,7 +189,7 @@ class AsyncAgentTest(unittest.IsolatedAsyncioTestCase):
                         data={"device_code":"INV-1001","power":57.588})
         provider=AsyncMock();tools=AsyncMock();tools.execute.side_effect=[device,sample]
         response=ChatResponse(request_id="r",session_id="s",status="degraded",model="test")
-        result=await Orchestrator(CFG,provider,tools).run("INV-1001 现在功率是多少？",[],"jwt",response,[])
+        result=await Orchestrator(CFG,provider,tools).run_evidence_loop("INV-1001 现在功率是多少？",[],"jwt",response,[])
         self.assertEqual(result.status,"answered")
         self.assertIn("57.588 kW",result.conclusion.text)
         self.assertEqual(result.conclusion.evidence_ids,["E1","E2"])
@@ -198,7 +199,7 @@ class AsyncAgentTest(unittest.IsolatedAsyncioTestCase):
         stale=sample.model_copy(update={"status":"stale"})
         tools.execute.side_effect=[device,stale]
         response=ChatResponse(request_id="r",session_id="s",status="degraded",model="test")
-        result=await Orchestrator(CFG,provider,tools).run("INV-1001 现在功率是多少？",[],"jwt",response,[])
+        result=await Orchestrator(CFG,provider,tools).run_evidence_loop("INV-1001 现在功率是多少？",[],"jwt",response,[])
         self.assertEqual(result.status,"unable_to_determine")
         self.assertIsNone(result.conclusion)
         self.assertEqual(result.source_coverage_percent,0)
@@ -209,7 +210,7 @@ class AsyncAgentTest(unittest.IsolatedAsyncioTestCase):
                              {"device_code":"INV-1001"},{"device_code":"INV-1002"}],"complete":True})
         provider=AsyncMock();tools=AsyncMock();tools.execute.return_value=listing
         response=ChatResponse(request_id="r",session_id="s",status="degraded",model="test")
-        result=await Orchestrator(CFG,provider,tools).run("查询所有设备列表，附证据。",[],"jwt",response,[])
+        result=await Orchestrator(CFG,provider,tools).run_evidence_loop("查询所有设备列表，附证据。",[],"jwt",response,[])
         self.assertEqual(result.status,"answered")
         self.assertEqual(result.conclusion.evidence_ids,["E1"])
         self.assertIn("INV-1001、INV-1002",result.conclusion.text)
@@ -222,7 +223,7 @@ class AsyncAgentTest(unittest.IsolatedAsyncioTestCase):
                          "offline":1,"fault":0,"active_alarms":1})
         provider=AsyncMock();tools=AsyncMock();tools.execute.return_value=summary
         response=ChatResponse(request_id="r",session_id="s",status="degraded",model="test")
-        result=await Orchestrator(CFG,provider,tools).run("设备状态如何？",[],"jwt",response,[])
+        result=await Orchestrator(CFG,provider,tools).run_evidence_loop("设备状态如何？",[],"jwt",response,[])
         self.assertEqual(result.status,"answered")
         self.assertIn("在线 2 台、离线 1 台",result.conclusion.text)
         self.assertEqual(result.conclusion.evidence_ids,["E1"])
@@ -232,7 +233,7 @@ class AsyncAgentTest(unittest.IsolatedAsyncioTestCase):
 
         tools.execute.return_value=summary.model_copy(update={"status":"backend_unavailable"})
         response=ChatResponse(request_id="r",session_id="s",status="degraded",model="test")
-        result=await Orchestrator(CFG,provider,tools).run("设备状态如何？",[],"jwt",response,[])
+        result=await Orchestrator(CFG,provider,tools).run_evidence_loop("设备状态如何？",[],"jwt",response,[])
         self.assertEqual(result.status,"unable_to_determine")
         self.assertIsNone(result.conclusion)
 
@@ -244,7 +245,7 @@ class AsyncAgentTest(unittest.IsolatedAsyncioTestCase):
                         data={"device_code":"INV-1001","status":1})
         provider=AsyncMock();tools=AsyncMock();tools.execute.side_effect=[device,sample]
         response=ChatResponse(request_id="r",session_id="s",status="degraded",model="test")
-        result=await Orchestrator(CFG,provider,tools).run("INV-1001 状态怎么样？",[],"jwt",response,[])
+        result=await Orchestrator(CFG,provider,tools).run_evidence_loop("INV-1001 状态怎么样？",[],"jwt",response,[])
         self.assertEqual(result.status,"answered")
         self.assertIn("发电中",result.conclusion.text)
         self.assertEqual(result.conclusion.evidence_ids,["E1","E2"])
@@ -256,23 +257,23 @@ class AsyncAgentTest(unittest.IsolatedAsyncioTestCase):
                 {"content":json.dumps({"possibilities":["检查数据采集链路是否暂时不可用"]})}]
             tools=AsyncMock();tools.execute.return_value=evidence(status)
             response=ChatResponse(request_id="r",session_id="s",status="degraded",model="test")
-            result=await Orchestrator(CFG,provider,tools).run("查询",[],"jwt",response,[])
+            result=await Orchestrator(CFG,provider,tools).run_evidence_loop("查询",[],"jwt",response,[])
             self.assertEqual(result.status,"answered")
             self.assertEqual(result.answer_mode,"hypothesis")
             self.assertEqual(result.source_coverage_percent,0)
         provider=AsyncMock();provider.complete.return_value={"content":json.dumps(answer())}
         response=ChatResponse(request_id="r",session_id="s",status="degraded",model="test")
-        self.assertEqual((await Orchestrator(CFG,provider,AsyncMock()).run("查询",[],"jwt",response,[])).status,"unable_to_determine")
+        self.assertEqual((await Orchestrator(CFG,provider,AsyncMock()).run_evidence_loop("查询",[],"jwt",response,[])).status,"unable_to_determine")
 
     async def test_limits_and_invalid_output(self):
         provider=AsyncMock();provider.complete.side_effect=[call(call_id=f"c{i}") for i in range(8)]
         tools=AsyncMock();tools.execute.return_value=evidence()
         response=ChatResponse(request_id="r",session_id="s",status="degraded",model="test")
-        with self.assertRaisesRegex(ProviderError,"tool_limit"): await Orchestrator(CFG,provider,tools).run("查询",[],"jwt",response,[])
+        with self.assertRaisesRegex(ProviderError,"tool_limit"): await Orchestrator(CFG,provider,tools).run_evidence_loop("查询",[],"jwt",response,[])
         self.assertEqual(tools.execute.await_count,5)
         provider.complete.side_effect=[call(),{"content":"plain text"}]
         response.evidence=[]
-        with self.assertRaisesRegex(ProviderError,"validation"): await Orchestrator(CFG,provider,tools).run("查询",[],"jwt",response,[])
+        with self.assertRaisesRegex(ProviderError,"validation"): await Orchestrator(CFG,provider,tools).run_evidence_loop("查询",[],"jwt",response,[])
 
     async def test_audit_redaction(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -283,6 +284,24 @@ class AsyncAgentTest(unittest.IsolatedAsyncioTestCase):
 
 
 class HTTPTest(unittest.TestCase):
+    def test_partial_business_timeout_saves_reference_before_releasing_session(self):
+        from agent.schemas import ResponseClaim
+        sessions=AsyncMock();sessions.acquire.return_value=("11111111-1111-4111-8111-111111111111",[])
+        async def partial(_self,message,history,jwt,response,trace,context=None):
+            response.evidence.append(evidence())
+            response.verified_facts.append(ResponseClaim(text="INV-1002 本轮告警 0 条。",evidence_ids=["E1"]))
+            response.resolved_devices=[{"id":2,"device_code":"INV-1002"}]
+            await asyncio.sleep(.2)
+        app=create_app(replace(CFG,total_timeout=.05),sessions,AsyncMock(),AsyncMock(),AsyncMock())
+        with patch("agent.main.Orchestrator.run",partial),TestClient(app) as client:
+            result=client.post("/internal/agent/chat",headers=self.headers(),json={"message":"第二台状态及原因？","user_id":1})
+        self.assertEqual(result.status_code,200)
+        self.assertEqual(result.json()["status"],"answered")
+        self.assertIn("本轮告警",result.json()["conclusion"]["text"])
+        saved=json.loads(sessions.save.call_args.args[1][-1]["content"])
+        self.assertEqual(saved["device_context"][0]["id"],2)
+        self.assertLess([row[0] for row in sessions.mock_calls].index("save"),[row[0] for row in sessions.mock_calls].index("release"))
+
     def make(self, session_error=None, audit_error=None, provider_error=None, delay=0):
         sessions=AsyncMock();sessions.acquire.return_value=("11111111-1111-4111-8111-111111111111",[])
         if session_error: sessions.acquire.side_effect=session_error
@@ -303,7 +322,7 @@ class HTTPTest(unittest.TestCase):
             self.assertEqual(client.get("/health").status_code,200)
             self.assertEqual(client.post("/internal/agent/chat",json={"message":"x","user_id":1}).status_code,401)
             self.assertEqual(client.post("/internal/agent/chat",headers=self.headers(),json={"message":"x","user_id":1,"jwt":"secret"}).status_code,422)
-            self.assertEqual(client.post("/internal/agent/chat",headers=self.headers(),json={"message":"x","user_id":1}).json()["status"],"unable_to_determine")
+            self.assertEqual(client.post("/internal/agent/chat",headers=self.headers(),json={"message":"x","user_id":1}).json()["status"],"degraded")
 
     def test_session_failures(self):
         for status,reason in [(403,"session_forbidden"),(409,"session_busy"),(503,"session_unavailable")]:

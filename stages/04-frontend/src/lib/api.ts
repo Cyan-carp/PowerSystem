@@ -1,8 +1,10 @@
 import { clearSession, token } from './auth'
-import type { Alarm, ApiEnvelope, Device, History, LoginResult, Metric, Page, Prediction, PredictionListItem, Summary, Telemetry, Interpretation, AgentModelStatus, AgentChatResponse, KnowledgeSource } from '../types'
+import { retryAfterSeconds } from './retry-after'
+import type { OpsTask } from '../types'
+import type { Alarm, ApiEnvelope, Device, History, LoginResult, Metric, Page, Prediction, PredictionListItem, Summary, Telemetry, Interpretation, AgentModelStatus, KnowledgeSource, RAGChatResponse, RAGSession, RAGTurn, VerificationInput } from '../types'
 
 export class ApiError extends Error {
-  constructor(public status: number, public code: number, message: string) { super(message) }
+  constructor(public status: number, public code: number, message: string, public retryAfter = 0) { super(message) }
 }
 
 function query(params: Record<string, string | number | undefined>): string {
@@ -25,22 +27,32 @@ export async function request<T>(path: string, init: RequestInit = {}): Promise<
     throw new ApiError(0, 0, '无法连接后端服务，请检查本机服务状态')
   }
   let envelope: ApiEnvelope<T>
+  const retryAfter = retryAfterSeconds(response.headers?.get('Retry-After'))
   try { envelope = await response.json() as ApiEnvelope<T> }
-  catch { throw new ApiError(response.status, 0, response.ok ? '服务返回了无法解析的数据' : `后端服务暂不可用（HTTP ${response.status}）`) }
+  catch { throw new ApiError(response.status, 0, response.ok ? '服务返回了无法解析的数据' : `后端服务暂不可用（HTTP ${response.status}）`, retryAfter) }
   if (!response.ok || envelope.code !== 0) {
     if (response.status === 401 && token.value) {
       clearSession()
       window.location.replace('/login')
     }
-    throw new ApiError(response.status, envelope.code, envelope.message || '请求失败')
+    throw new ApiError(response.status, envelope.code, envelope.message || '请求失败', retryAfter)
   }
   return envelope.data
 }
 
 export const api = {
-  chat: (message: string, sessionID?: string, signal?: AbortSignal) => request<AgentChatResponse>('/api/v1/agent/chat', {
+  opsTasks: (sessionID?: string, offset = 0) => request<{ list: OpsTask[]; offset: number; page_size: number }>(`/api/v1/agent/tasks${query({ session_id: sessionID, offset })}`),
+  opsTask: (id: string, signal?: AbortSignal) => request<OpsTask>(`/api/v1/agent/tasks/${encodeURIComponent(id)}`, { signal }),
+  cancelOpsTask: (id: string) => request<OpsTask>(`/api/v1/agent/tasks/${encodeURIComponent(id)}/cancel`, { method: 'POST' }),
+  decideOpsApproval: (id: string, approvalID: string, decision: 'approve' | 'reject') => request<OpsTask>(`/api/v1/agent/tasks/${encodeURIComponent(id)}/approvals/${encodeURIComponent(approvalID)}/decision`, { method: 'POST', body: JSON.stringify({ decision }) }),
+  chat: (message: string, sessionID?: string, signal?: AbortSignal) => request<RAGChatResponse>('/api/v1/agent/chat', {
     method: 'POST', body: JSON.stringify({ message, ...(sessionID ? { session_id: sessionID } : {}) }), signal,
   }),
+  chatSessions: (offset = 0) => request<{ list: RAGSession[]; offset: number; page_size: number }>(`/api/v1/agent/sessions?offset=${offset}`),
+  verifyChat: (id: string, body: VerificationInput, signal?: AbortSignal) => request<RAGChatResponse>(`/api/v1/agent/sessions/${encodeURIComponent(id)}/verify`, { method: 'POST', body: JSON.stringify(body), signal }),
+  chatSession: (id: string) => request<{ session_id: string; turns: RAGTurn[] }>(`/api/v1/agent/sessions/${encodeURIComponent(id)}`),
+  deleteChatSession: (id: string) => request(`/api/v1/agent/sessions/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  ragSource: (id: string) => request<{ document: string; heading: string; content: string; version: string; page?: number }>(`/api/v1/agent/rag/sources/${encodeURIComponent(id)}`),
   knowledge: (id: string, signal?: AbortSignal) => request<KnowledgeSource>(`/api/v1/agent/knowledge/${encodeURIComponent(id)}`, { signal }),
   interpretations: (page = 1, attention = false) => request<Page<Interpretation>>(`/api/v1/agent/interpretations${query({ page, page_size: 100, attention: attention ? 'true' : undefined })}`),
   interpretation: (id: number) => request<Interpretation>(`/api/v1/agent/interpretations/${id}`),

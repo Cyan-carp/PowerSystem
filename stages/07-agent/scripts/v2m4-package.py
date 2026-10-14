@@ -10,6 +10,15 @@ from pathlib import Path
 ROOT=Path(__file__).resolve().parents[3]
 
 
+def allowed_source(path):
+    if path.is_absolute() or any(part in ('..', '.env', '.git', '.venv', 'private', 'runtime', 'artifacts', 'node_modules', '__pycache__') for part in path.parts):
+        return False
+    name=path.as_posix()
+    return (name.startswith(('stages/07-agent/', 'stages/02-backend/internal/api/', 'stages/02-backend/scripts/',
+                             '第二版-智能体升级/', '第一版-平台主体/', '内容/第二版-智能体升级/', '内容/第一版-平台主体/'))
+            or path.suffix=='.md' and (len(path.parts)==1 or name.startswith(('规范/', '手册/', '部署/'))))
+
+
 def main(args):
     def git(*values):return subprocess.check_output(['git',*values],cwd=ROOT)
     commit=git('rev-parse',args.commit+'^{commit}').decode().strip()
@@ -23,8 +32,7 @@ def main(args):
         for name in sorted(x for x in names if x):
             path=Path(name)
             if name.startswith(('.obsidian/','docx工作区/','artifacts/')) or '.env'==path.name or path.is_absolute() or '..' in path.parts:raise ValueError('unapproved package path')
-            allowed=name.startswith(('stages/07-agent/','stages/02-backend/internal/api/','stages/02-backend/scripts/','第二版-智能体升级/','第一版-平台主体/')) or (len(path.parts)==1 and path.suffix=='.md')
-            if not allowed:raise ValueError('unsupported incremental source')
+            if not allowed_source(path):raise ValueError('unsupported incremental source')
             raw=git('show',commit+':'+name)
             member=tarfile.TarInfo(name);member.size=len(raw);member.mode=0o644;member.mtime=0
             package.addfile(member,io.BytesIO(raw))

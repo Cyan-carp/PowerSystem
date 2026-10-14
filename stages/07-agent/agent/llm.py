@@ -43,8 +43,8 @@ class Provider:
                 "max_tokens": 1500}
         if tools:
             body["tools"] = tools
-            if len(tools) == 1 and tools[0].get("function", {}).get("name") == "submit_interpretation":
-                body["tool_choice"] = {"type": "function", "function": {"name": "submit_interpretation"}}
+            if len(tools) == 1 and tools[0].get("function", {}).get("name", "").startswith("submit_"):
+                body["tool_choice"] = {"type": "function", "function": {"name": tools[0]["function"]["name"]}}
         # The authentication header is separate; known credentials are never
         # allowed in model content, even if pasted by a caller.
         raw = json.dumps(body, ensure_ascii=False)

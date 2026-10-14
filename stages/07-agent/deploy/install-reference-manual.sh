@@ -8,7 +8,10 @@ fi
 
 project_dir=${POWERSYSTEM_DIR:-/opt/powersystem}
 manuals_dir=${POWERSYSTEM_MANUALS_DIR:-$project_dir/runtime/manuals}
-manifest="$project_dir/设备知识/手册来源清单.json"
+manifest="$project_dir/资产/设备知识/手册来源清单.json"
+if [ ! -e "$manifest" ]; then
+  manifest="$project_dir/设备知识/手册来源清单.json"
+fi
 source_file=$1
 case "$manuals_dir" in /*) ;; *) echo 'manuals directory must be absolute' >&2; exit 2 ;; esac
 test -f "$source_file"

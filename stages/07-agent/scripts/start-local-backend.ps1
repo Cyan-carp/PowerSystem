@@ -8,7 +8,7 @@ try {
     $env:GOCACHE=Join-Path $Stage7Repo 'artifacts/go-cache'
     $env:GOMODCACHE=Join-Path $Stage7Repo 'artifacts/go-mod'
     $env:GOTELEMETRY='off'
-    $env:STAGE2_DATA_DIR=Join-Path $Stage7Repo 'artifacts/stage2/runtime'
+    if (-not $env:STAGE2_DATA_DIR) { $env:STAGE2_DATA_DIR=Join-Path $Stage7Repo 'artifacts/stage2/runtime' }
     $bin=Join-Path $Stage7Repo 'artifacts/stage7-智能体/bin'
     New-Item -ItemType Directory -Path $bin -Force | Out-Null
     Push-Location (Join-Path $Stage7Repo 'stages/02-backend')

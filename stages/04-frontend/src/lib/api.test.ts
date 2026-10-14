@@ -21,4 +21,10 @@ describe('API authorization', () => {
     expect(replace).toHaveBeenCalledWith('/login')
     vi.unstubAllGlobals()
   })
+  it('keeps Retry-After on a non-JSON 429 response', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 429, headers: new Headers({ 'Retry-After': '8' }), json: async () => { throw new SyntaxError('plain-text rate limit') } }))
+    const { request } = await import('./api')
+    await expect(request('/api/v1/agent/tasks/fixture')).rejects.toMatchObject({ status: 429, retryAfter: 8 })
+    vi.unstubAllGlobals()
+  })
 })

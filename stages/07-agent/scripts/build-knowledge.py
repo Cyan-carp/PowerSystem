@@ -12,6 +12,7 @@ def build(root=ROOT):
     manifest = json.loads((root / "stages/07-agent/knowledge/sources.json").read_text(encoding="utf-8"))
     chunks = []
     for source in manifest:
+        document = source.get("title", source["path"])
         path = (root / source["path"]).resolve()
         if not path.is_relative_to(root.resolve()) or path.suffix != ".md":
             raise ValueError("source outside repository")
@@ -35,9 +36,9 @@ def build(root=ROOT):
             content = re.sub(r"(?:https?://)?(?:\d{1,3}\.){3}\d{1,3}(?::\d+)?", "[管理员提供的地址]", content)
             for n in range(0, len(content), 5000):
                 body = content[n:n+5000]
-                key = source["path"] + heading + str(n)
+                key = document + heading + str(n)
                 chunks.append({"id": "K" + hashlib.sha256(key.encode()).hexdigest()[:20],
-                    "document": source["path"], "heading": heading, "content": body,
+                    "document": document, "heading": heading, "content": body,
                     "authority": source["authority"], "document_date": source.get("date"),
                     "source_kind": source.get("kind", "project_guide"),
                     "source_revision": source.get("source_version"),
