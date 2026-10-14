@@ -32,10 +32,12 @@ def create_app(config=None, store=None, redis=None, provider=None, run_worker=Tr
             raise RuntimeError("ops_single_process_required")
         client = httpx.AsyncClient(follow_redirects=False, trust_env=False)
         app.state.worker = Worker(cfg, app.state.store, app.state.redis, client, app.state.contexts, provider)
-        if app.state.store.security_gates:
-            await app.state.store.security_gates.controller.recover()
-        await app.state.store.recover(startup=True)
-        loop = asyncio.create_task(app.state.worker.loop()) if run_worker else None
+        restore = cfg.runtime_profile == "m4-restore-readonly"
+        if not restore:
+            if app.state.store.security_gates:
+                await app.state.store.security_gates.controller.recover()
+            await app.state.store.recover(startup=True)
+        loop = asyncio.create_task(app.state.worker.loop()) if run_worker and not restore else None
         try: yield
         finally:
             if loop: loop.cancel(); await asyncio.gather(loop, return_exceptions=True)
@@ -51,6 +53,8 @@ def create_app(config=None, store=None, redis=None, provider=None, run_worker=Tr
     @app.middleware("http")
     async def security(req, next_handler):
         cfg = app.state.cfg
+        if cfg.runtime_profile == "m4-restore-readonly" and req.method not in ("GET", "HEAD"):
+            return JSONResponse(status_code=403, content={"detail":"restore_read_only"})
         if req.url.path in ('/internal/ma/v1/execution-grants/claim','/internal/ma/v1/write-grants/claim','/internal/ma/v1/security-snapshots/claim'):
             if not cfg.infra_enabled or not cfg.executor_token or not hmac.compare_digest(req.headers.get('X-MA-Executor-Token','').encode(),cfg.executor_token.encode()):
                 return JSONResponse(status_code=403,content={'detail':'invalid_adapter_token'})
@@ -162,8 +166,9 @@ def create_app(config=None, store=None, redis=None, provider=None, run_worker=Tr
         for a in report['approvals']:
             a['can_decide']=app.state.cfg.enabled and app.state.cfg.write_enabled and req.state.actor['role']=='admin' and report['status']=='awaiting_approval' and a['status']=='pending' and datetime.fromisoformat(a['expires_at'].replace('Z','+00:00'))>datetime.now(timezone.utc)
             if app.state.store.security_required:
-                from .runtime_reviews import contract
-                a['can_decide']=a['can_decide'] and app.state.store.security_gates is not None and a['plan'].get('security_policy')==contract.RUNTIME_POLICY
+                from .runtime_reviews import task_policy
+                row=await app.state.store.get(tid,owner(req))
+                a['can_decide']=a['can_decide'] and app.state.store.security_gates is not None and a['plan'].get('security_policy')==task_policy(row,app.state.cfg)[0]
         return report
 
     def match(req, sid):
@@ -172,6 +177,8 @@ def create_app(config=None, store=None, redis=None, provider=None, run_worker=Tr
     async def accept(task, req, verification=None):
         cfg = app.state.cfg
         if not cfg.enabled: raise HTTPException(503, "ops_disabled")
+        if task.task_kind=='security_inspection' and (not cfg.inspection_enabled or not cfg.security_enabled or verification is not None):
+            raise HTTPException(403,'inspection_disabled')
         actor = req.state.actor
         match(req, task.session_id)
         if task.actor.user_id != owner(req) or task.actor.role != actor["role"] or str(task.trace_id) != actor["trace_id"] or hashlib.sha256(task.user_request.encode()).hexdigest() != actor["request_hash"]:
@@ -215,9 +222,11 @@ def create_app(config=None, store=None, redis=None, provider=None, run_worker=Tr
         jwt=req.headers.get('Authorization','')
         if not jwt.startswith('Bearer '): raise HTTPException(401,'missing_user_token')
         from .runtime_reviews import licensed_summary
-        payload=licensed_summary(report)
+        payload=licensed_summary(report, app.state.cfg)
         row=await store.get(tid,owner(req))
         steps=await store.pool.fetch('SELECT * FROM ma_task_steps WHERE task_id=$1 AND asset_id IS NOT NULL ORDER BY step_no DESC',tid)
+        if not steps and report.get('task_kind')=='security_inspection':
+            steps=await store.pool.fetch('SELECT * FROM ma_task_steps WHERE task_id=$1 ORDER BY step_no DESC LIMIT 1',tid)
         if not steps: raise HTTPException(409,'security_invalid')
         step=steps[0]
         try:
@@ -304,6 +313,7 @@ def create_app(config=None, store=None, redis=None, provider=None, run_worker=Tr
             body = Task.model_validate(raw)
             payload = Verification.model_validate(json.loads(body.intent))
         except Exception: raise HTTPException(400, "invalid_verification") from None
+        if body.task_kind!='ops': raise HTTPException(400,'invalid_verification')
         if payload.session_id != body.session_id or payload.parent_turn_id != body.parent_turn_id or payload.verification_id != body.idempotency_key: raise HTTPException(400, "invalid_verification")
         return await accept(body, req, payload)
 

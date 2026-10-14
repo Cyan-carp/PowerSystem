@@ -1,11 +1,9 @@
-*
-!Dockerfile
+**
 !requirements.txt
 !review_contract.py
-!security_agent/
-!security_agent/*.py
-!policy/
-!policy/*.txt
-!policy/*.json
+!security_agent
+!security_agent/**
+!policy
+!policy/**
 **/__pycache__
 **/*.pyc

@@ -5,7 +5,7 @@ sequenceDiagram
   participant C as 程序控制
   participant R as 独立Security
   participant T as 受限工具
-  Note over U,T: SEC-M2本机演练；当前身份经Go校验；模型意见不授权
+  Note over U,T: SEC-M3本机只读 / 既有SEC-M2；当前身份经Go校验；模型意见不授权
   U->>S: 需求与可信上下文
   S->>C: ma/v1任务委派
   C->>C: 所有权 / 领取 / 预算
@@ -14,6 +14,15 @@ sequenceDiagram
     C->>T: 固定R0读取
     T-->>C: 核验事实与实际时间
     Note over C,R: 主动核验所有模型零调用
+  else 用户主动项目巡检
+    C->>C: 登记范围 / 版本 / 固定清单与预算
+    C->>R: 必要敏感读取最小审核
+    R-->>C: 允许后仍重核程序条件
+    C->>T: 固定R0取证，缺能力不调用
+    T-->>C: 事实 / 时间 / 视角 / 引用
+    C->>C: 固定规则报告，未检查与不确定保留
+    C->>R: inspection_report独立复核
+    R-->>C: 意见不改程序事实 / 不自动修复
   else 模型运维任务
     C->>O: 预算内规划
     O->>C: 注册工具计划

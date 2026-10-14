@@ -1,0 +1,69 @@
+# Overlay on the existing stage4/7/8 project. No published ports.
+services:
+  ops-agent:
+    image: ${MA_OPS_IMAGE:?fixed M4 image required}
+    env_file: ["${MA_OPS_ENV_FILE:?private Ops environment required}"]
+    user: "10003:10003"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs: [/tmp]
+    volumes:
+      - ${MA_PRIVATE_DIR:?private release directory}:/run/ma:ro
+      - ${MA_OPS_AUDIT_DIR:?private Ops audit directory}:/audit
+    restart: unless-stopped
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8094/health',timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+  security-agent:
+    image: ${MA_SECURITY_IMAGE:?fixed M4 image required}
+    env_file: ["${MA_SECURITY_ENV_FILE:?private Security environment required}"]
+    user: "10004:10004"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs: [/tmp]
+    volumes:
+      - ${MA_SECURITY_PRIVATE_DIR:?private security directory}:/run/ma-security:ro
+    restart: unless-stopped
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8100/health',timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+  ops-executor:
+    image: ${MA_EXECUTOR_IMAGE:?fixed M4 image required}
+    environment:
+      OPS_EXECUTOR_CONFIG_FILE: /run/ma-executor/executor.json
+    user: "10005:10005"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs: [/tmp]
+    extra_hosts: ["host.docker.internal:host-gateway"]
+    volumes:
+      - ${MA_EXECUTOR_PRIVATE_DIR:?private Executor directory}:/run/ma-executor:ro
+    restart: unless-stopped
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8095/health',timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+  agent-rag:
+    env_file: ["${MA_RAG_ENV_FILE:?private integrated RAG environment required}"]
+    environment:
+      OPS_URL: http://ops-agent:8094
+      OPS_SERVICE_TOKEN_FILE: /run/ma-supervisor/ops-token
+      MA_ACTOR_KEY_FILE: /run/ma-supervisor/actor-key
+      MA_ENVELOPE_KEY_FILE: /run/ma-supervisor/envelope-key
+    volumes:
+      - ${MA_SUPERVISOR_PRIVATE_DIR:?private Supervisor directory}:/run/ma-supervisor:ro
+  api:
+    environment:
+      OPS_URL: http://ops-agent:8094
+      OPS_SERVICE_TOKEN_FILE: /run/ma-api/ops-token
+      MA_ACTOR_KEY_FILE: /run/ma-api/actor-key
+    volumes:
+      - ${MA_API_PRIVATE_DIR:?private API directory}:/run/ma-api:ro

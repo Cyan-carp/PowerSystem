@@ -25,7 +25,7 @@ async def database():
     path=os.getenv('SEC_TEST_CONFIG_FILE')
     if not path:pytest.skip('SEC isolated PostgreSQL regression config required')
     cfg=json.loads(Path(path).read_text(encoding='utf-8'))
-    port_allowed = cfg['port']==15432 or (cfg['port']==15433 and cfg.get('purpose')=='SEC-M2 isolated regression')
+    port_allowed = cfg['port']==15432 or (cfg['port']==15433 and cfg.get('purpose')=='SEC-M2 isolated regression') or (cfg['port']==15434 and cfg.get('purpose')=='SEC-M3 isolated regression') or (cfg['port']==15435 and cfg.get('purpose')=='SEC-M4 isolated regression')
     if cfg['regression_database']!='sec_m1_regression_test' or cfg['host']!='127.0.0.1' or not port_allowed:
         raise RuntimeError('isolated_sec_database_required')
     pool=await asyncpg.create_pool(host=cfg['host'],port=cfg['port'],user=cfg['user'],

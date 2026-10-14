@@ -55,7 +55,7 @@ def create_app(config=None, provider=None):
         cfg = app.state.cfg
         return {'engine': 'security-agent', 'enabled': cfg.enabled, 'model': cfg.model,
                 'model_timeout_seconds': cfg.model_timeout, 'acceptance_timeout_exception': cfg.acceptance_timeout_exception,
-                'model_validated': False, 'policy_version': POLICY, 'execution_tools': False}
+                'model_validated': False, 'policy_version': {'m4-local':'sec-m4-policy/v2','m4-server-readonly':'sec-m4-policy/v5'}.get(cfg.runtime_profile,POLICY), 'runtime_profile':cfg.runtime_profile, 'execution_tools': False}
 
     @app.post('/internal/ma-review/v1/reviews')
     async def review(body: ReviewRequest, req: Request):
@@ -63,6 +63,12 @@ def create_app(config=None, provider=None):
         if not cfg.enabled: raise HTTPException(503, 'security_disabled')
         if body.policy_version!=POLICY and (cfg.model!='deepseek-v4-flash-0731' or cfg.model_timeout!=30 or cfg.acceptance_timeout_exception):
             raise HTTPException(503,'runtime_model_configuration_blocked')
+        if body.policy_version.startswith("sec-m4-policy/"):
+            expected_policy={"m4-local":"sec-m4-policy/v2","m4-server-readonly":"sec-m4-policy/v5"}.get(cfg.runtime_profile)
+            if body.policy_version!=expected_policy:raise HTTPException(403,"runtime_policy_blocked")
+            expected={"m4-local":"sec-m4-local-integration/v2","m4-server-readonly":"sec-m4-project-readonly/v5"}.get(cfg.runtime_profile)
+            if body.scope_version != expected: raise HTTPException(403,"runtime_scope_blocked")
+        elif cfg.runtime_profile != "legacy": raise HTTPException(403,"runtime_scope_blocked")
         raw = body.model_dump(mode='json')
         try:
             signature = verify_message(req.headers.get('X-SEC-Request', ''), cfg.request_key,

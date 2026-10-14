@@ -17,6 +17,17 @@ POLICY = 'sec-m1-policy/v6'
 SCOPE = 'sec-m1-synthetic/v3'
 RUNTIME_POLICY = 'sec-m2-policy/v5'
 RUNTIME_SCOPE = 'sec-m2-local-drill/v1'
+INSPECTION_POLICY = 'sec-m3-policy/v3'
+INSPECTION_SCOPE = 'sec-m3-local-inspection/v1'
+M4_POLICY = 'sec-m4-policy/v2'
+M4_LOCAL_SCOPE = 'sec-m4-local-integration/v2'
+M4_SERVER_POLICY_V3 = 'sec-m4-policy/v3'
+M4_SERVER_POLICY_V4 = 'sec-m4-policy/v4'
+M4_SERVER_POLICY = 'sec-m4-policy/v5'
+M4_SERVER_SCOPE_PREVIOUS = 'sec-m4-project-readonly/v2'
+M4_SERVER_SCOPE_V3 = 'sec-m4-project-readonly/v3'
+M4_SERVER_SCOPE_V4 = 'sec-m4-project-readonly/v4'
+M4_SERVER_SCOPE = 'sec-m4-project-readonly/v5'
 RULES = tuple(f'SEC-R{i:02}' for i in range(1, 13))
 KINDS = Literal['sensitive_read', 'data_egress', 'write_plan', 'write_preflight', 'post_execution', 'inspection_report']
 HASH = r'^[a-f0-9]{64}$'
@@ -26,7 +37,8 @@ FACT_KEYS = {'status', 'project_scope', 'criticality', 'explicit_execution', 'ap
              'identity_verified','ownership_verified','tool_registered','args_validated','audit_ready',
              'approval_current_epoch','approval_expires_at','approval_valid','plan_bypasses_approval'}
 M1_FACT_KEYS = frozenset(FACT_KEYS)
-FACT_KEYS |= {'running', 'health', 'image_digest', 'snapshot_hash', 'material_hash',
+FACT_KEYS |= {'inspection_rule','inspection_status','inspection_reason','coverage_limited',
+              'running', 'health', 'image_digest', 'snapshot_hash', 'material_hash',
               'egress_permitted', 'plan_unchanged', 'policy_current', 'event_count', 'connection_count', 'registry_verified', 'payload_bound', 'approval_consumed'}
 SECRET = re.compile(r'(?i)\bBearer\s+\S+|\bsk-[a-z0-9_-]{16,}|eyJ[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+|-----BEGIN [A-Z ]*PRIVATE KEY-----|(?:password|api_key|secret|authorization|cookie)\s*[:=]\s*\S+|(?:postgres(?:ql)?|redis)://[^\s]+')
 
@@ -138,6 +150,14 @@ class LocalEgress(Strict):
         return self
 
 
+class InspectionEgress(LocalEgress):
+    scope_version: Literal['sec-m3-local-inspection/v1']
+
+
+class M4Egress(LocalEgress):
+    scope_version: Literal['sec-m4-local-integration/v1', 'sec-m4-project-readonly/v1', 'sec-m4-local-integration/v2', 'sec-m4-project-readonly/v2', 'sec-m4-project-readonly/v3', 'sec-m4-project-readonly/v4', 'sec-m4-project-readonly/v5']
+
+
 class ReviewRequest(Strict):
     protocol: Literal['ma-review/v1']
     review_id: UUID
@@ -149,11 +169,11 @@ class ReviewRequest(Strict):
     actor: Actor
     tool: Tool
     asset: Asset | None = None
-    policy_version: Literal['sec-m1-policy/v6', 'sec-m2-policy/v1', 'sec-m2-policy/v2', 'sec-m2-policy/v3', 'sec-m2-policy/v4', 'sec-m2-policy/v5']
-    scope_version: Literal['sec-m1-synthetic/v3', 'sec-m2-local-drill/v1']
+    policy_version: Literal['sec-m1-policy/v6', 'sec-m2-policy/v1', 'sec-m2-policy/v2', 'sec-m2-policy/v3', 'sec-m2-policy/v4', 'sec-m2-policy/v5', 'sec-m3-policy/v1', 'sec-m3-policy/v2', 'sec-m3-policy/v3', 'sec-m4-policy/v1', 'sec-m4-policy/v2', 'sec-m4-policy/v3', 'sec-m4-policy/v4', 'sec-m4-policy/v5']
+    scope_version: Literal['sec-m1-synthetic/v3', 'sec-m2-local-drill/v1', 'sec-m3-local-inspection/v1', 'sec-m4-local-integration/v1', 'sec-m4-project-readonly/v1', 'sec-m4-local-integration/v2', 'sec-m4-project-readonly/v2', 'sec-m4-project-readonly/v3', 'sec-m4-project-readonly/v4', 'sec-m4-project-readonly/v5']
     normalized_intent: str = Field(min_length=1, max_length=1000)
     evidence: list[Evidence] = Field(max_length=20)
-    egress: Egress | LocalEgress | None = None
+    egress: Egress | LocalEgress | InspectionEgress | M4Egress | None = None
     deadline: datetime
 
     @model_validator(mode='after')
@@ -163,7 +183,7 @@ class ReviewRequest(Strict):
         if len({e.ref for e in self.evidence}) != len(self.evidence): raise ValueError('duplicate_evidence_ref')
         if self.kind == 'data_egress' and self.egress is None: raise ValueError('egress_required')
         if self.tool.risk_class == 'R2' and self.asset is None: raise ValueError('asset_required')
-        if (self.policy_version, self.scope_version) not in ((POLICY, SCOPE), ('sec-m2-policy/v1', RUNTIME_SCOPE), ('sec-m2-policy/v2', RUNTIME_SCOPE), ('sec-m2-policy/v3', RUNTIME_SCOPE), ('sec-m2-policy/v4', RUNTIME_SCOPE), (RUNTIME_POLICY, RUNTIME_SCOPE)):
+        if (self.policy_version, self.scope_version) not in ((POLICY, SCOPE), ('sec-m2-policy/v1', RUNTIME_SCOPE), ('sec-m2-policy/v2', RUNTIME_SCOPE), ('sec-m2-policy/v3', RUNTIME_SCOPE), ('sec-m2-policy/v4', RUNTIME_SCOPE), (RUNTIME_POLICY, RUNTIME_SCOPE), (INSPECTION_POLICY, INSPECTION_SCOPE), ('sec-m3-policy/v1',INSPECTION_SCOPE), ('sec-m3-policy/v2',INSPECTION_SCOPE), (M4_POLICY,M4_LOCAL_SCOPE), (M4_POLICY,M4_SERVER_SCOPE_PREVIOUS), (M4_SERVER_POLICY_V3,M4_SERVER_SCOPE_V3), (M4_SERVER_POLICY_V4,M4_SERVER_SCOPE_V4), (M4_SERVER_POLICY,M4_SERVER_SCOPE), ('sec-m4-policy/v1','sec-m4-local-integration/v1'), ('sec-m4-policy/v1','sec-m4-project-readonly/v1')):
             raise ValueError('policy_scope_mismatch')
         if self.scope_version == SCOPE:
             if any(f.key not in M1_FACT_KEYS for e in self.evidence for f in e.facts):
@@ -172,7 +192,13 @@ class ReviewRequest(Strict):
         else:
             if any(e.source != 'program' or e.untrusted_excerpt is not None for e in self.evidence):
                 raise ValueError('runtime_program_evidence_required')
-            if self.egress is not None and not isinstance(self.egress, LocalEgress): raise ValueError('unlicensed_egress')
+            if self.scope_version==INSPECTION_SCOPE:
+                if self.tool.risk_class!='R0' or self.kind in ('write_plan','write_preflight','post_execution'): raise ValueError('inspection_read_only_required')
+                if self.egress is not None and (not isinstance(self.egress, InspectionEgress) or self.egress.scope_version!=self.scope_version): raise ValueError('unlicensed_egress')
+            elif self.scope_version in (M4_LOCAL_SCOPE,M4_SERVER_SCOPE_PREVIOUS,M4_SERVER_SCOPE_V3,M4_SERVER_SCOPE_V4,M4_SERVER_SCOPE,'sec-m4-local-integration/v1','sec-m4-project-readonly/v1'):
+                if self.scope_version in (M4_SERVER_SCOPE_PREVIOUS,M4_SERVER_SCOPE_V3,M4_SERVER_SCOPE_V4,M4_SERVER_SCOPE,'sec-m4-project-readonly/v1') and (self.tool.risk_class!='R0' or self.kind in ('write_plan','write_preflight','post_execution')): raise ValueError('server_read_only_required')
+                if self.egress is not None and (not isinstance(self.egress,M4Egress) or self.egress.scope_version!=self.scope_version): raise ValueError('unlicensed_egress')
+            elif self.egress is not None and (not isinstance(self.egress, LocalEgress) or self.egress.scope_version!=self.scope_version): raise ValueError('unlicensed_egress')
         return self
 
 
@@ -225,7 +251,7 @@ def projection(request, secrets=()):
     result['actor_role'] = request.actor.role
     result['execution_epoch']=request.execution_epoch
     result['reviewed_at']=datetime.now(timezone.utc).isoformat()
-    if request.scope_version == RUNTIME_SCOPE: result['scope_version'] = RUNTIME_SCOPE
+    if request.scope_version in (RUNTIME_SCOPE,INSPECTION_SCOPE,M4_LOCAL_SCOPE,M4_SERVER_SCOPE_PREVIOUS,M4_SERVER_SCOPE_V3,M4_SERVER_SCOPE_V4,M4_SERVER_SCOPE): result['scope_version'] = request.scope_version
     if len(canonical(result)) > 32768: raise ValueError('projection_too_large')
     return result
 

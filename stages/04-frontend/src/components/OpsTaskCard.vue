@@ -5,6 +5,7 @@ import { api, ApiError } from '../lib/api'
 import { terminalTask, taskLabels, pollDelay, canDecideApproval, approvalLabels, attemptLabels, taskErrorText } from '../lib/ops-task'
 import { currentUser } from '../lib/auth'
 import { renderAnswer } from '../lib/rag-chat'
+import InspectionReport from './InspectionReport.vue'
 import BusinessEvidence from './BusinessEvidence.vue'
 import InfrastructureEvidence from './InfrastructureEvidence.vue'
 import SecurityReviews from './SecurityReviews.vue'
@@ -46,7 +47,7 @@ onUnmounted(() => { stopped = true; clearTimeout(timer); controller?.abort(); do
 
 <template>
   <section class="ops-task" :data-task-id="task.task_id">
-    <header><strong>运维任务</strong><span>{{ taskLabels[task.status] }}</span></header>
+    <header><strong>{{ task.task_kind === 'security_inspection' ? '项目只读巡检' : '运维任务' }}</strong><span>{{ taskLabels[task.status] }}</span></header>
     <p class="ops-muted">{{ task.intent }}</p>
     <p v-if="error" class="ops-error" role="alert">{{ error }}</p>
     <p v-if="task.error" :class="task.status === 'cancelled' ? 'ops-muted' : 'ops-error'">{{ taskErrorText(task.error) }}</p>
@@ -63,6 +64,7 @@ onUnmounted(() => { stopped = true; clearTimeout(timer); controller?.abort(); do
       </div>
       <p v-if="approval.consumed_at" class="ops-muted">审批已消费，不能重放。</p>
     </section>
+    <InspectionReport v-if="task.inspection_report" :report="task.inspection_report" :historical="historical || initial.historical || task.historical" />
     <SecurityReviews :reviews="task.security_reviews || []" :historical="historical || initial.historical || task.historical" />
     <section v-if="task.execution_attempts?.length" class="ops-approval"><strong>程序操作记录</strong>
       <p v-for="attempt in task.execution_attempts" :key="attempt.attempt_id">{{ attemptLabels[attempt.status] }} · {{ attempt.call_id }}</p>

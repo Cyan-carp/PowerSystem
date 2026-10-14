@@ -1,0 +1,27 @@
+{
+  "scope_version": "sec-m4-project-readonly/v4",
+  "policy_version": "sec-m4-policy/v4",
+  "runtime_profile": "m4-server-readonly",
+  "project_scope": "powersystem",
+  "environments": [
+    "production"
+  ],
+  "risk_classes": [
+    "R0"
+  ],
+  "fields": [
+    "normalized_intent",
+    "tool",
+    "asset",
+    "evidence",
+    "policy_version"
+  ],
+  "fixed_log_summary_tools": [
+    "docker.get_container_logs",
+    "linux.get_system_logs"
+  ],
+  "log_summary_only": true,
+  "raw_logs_paths_environment_sql_credentials_forbidden": true,
+  "write_execution_forbidden": true,
+  "semantic_revision": "明示已有固定安全摘要能力；不增加工具或外发字段"
+}

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [ "$#" -ne 1 ]; then
-  echo "usage: restore-verify.sh /var/backups/powersystem/powersystem-...tar.gz.gpg" >&2
+if [ "$#" -lt 1 ] || [ "$#" -gt 2 ]; then
+  echo "usage: restore-verify.sh /var/backups/powersystem/powersystem-...tar.gz.gpg [rN]" >&2
   exit 2
 fi
 
@@ -18,7 +18,11 @@ case "$archive" in
 esac
 test -r "$archive"
 run_id=$(basename "$archive" .tar.gz.gpg)
+attempt=${2:-r1}
+[[ "$attempt" =~ ^r[1-9][0-9]*$ ]] || { echo "restore attempt must be r1, r2, ..." >&2; exit 2; }
 restore_root="$backup_dir/restore-$run_id"
+if [ "$attempt" != r1 ]; then restore_root="$restore_root-$attempt"; fi
+restore_name=$(basename "$restore_root")
 mkdir -m 700 "$restore_root"
 gpg --batch --yes --pinentry-mode loopback --passphrase-file "$passphrase_file" --decrypt --output "$restore_root/archive.tar.gz" "$archive"
 tar -C "$restore_root" -xzf "$restore_root/archive.tar.gz"
@@ -54,8 +58,8 @@ dc=(docker compose --project-name "$project_name" --env-file "$env_file" -f "$co
 "${dc[@]}" up -d --wait
 pg_container=$("${dc[@]}" ps -q postgres)
 docker cp "$restore_root/$run_id/postgres.dump" "$pg_container:/tmp/postgres.dump"
-"${dc[@]}" exec -T postgres pg_restore -U powersystem -d powersystem /tmp/postgres.dump
-"${dc[@]}" exec -T tdengine sh -c 'taosdump -p"$TAOS_ROOT_PASSWORD" -i "$1"' sh "/backup/restore-$run_id/$run_id/tdengine"
+"${dc[@]}" exec -T postgres pg_restore -U powersystem -d powersystem --no-owner --no-privileges /tmp/postgres.dump
+"${dc[@]}" exec -T tdengine sh -c 'taosdump -p"$TAOS_ROOT_PASSWORD" -i "$1"' sh "/backup/$restore_name/$run_id/tdengine"
 printf 'isolated_project=%s\n' "$project_name"
 printf 'postgres_inbox_rows='
 "${dc[@]}" exec -T postgres psql -U powersystem -d powersystem -Atqc 'SELECT COUNT(*) FROM telemetry_inbox'
@@ -100,4 +104,7 @@ printf 'tdengine_rows='
 snapshot_queues=$(find "$restore_root/$run_id/queues" -maxdepth 1 -name '*.sqlite' -type f | wc -l)
 test "$snapshot_queues" -ge 2
 printf 'snapshot_queues=%s\n' "$snapshot_queues"
+if [ -f "$restore_root/$run_id/ma/ma_ops.dump" ]; then
+  python3 "$project_dir/stages/09-ops-agent/deploy/restore-ma.py" --source "$restore_root/$run_id/ma" --postgres-container "$pg_container"
+fi
 printf 'restore_files=%s\n' "$restore_root/$run_id"

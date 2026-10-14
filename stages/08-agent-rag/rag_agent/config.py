@@ -67,7 +67,8 @@ class Config:
         cfg.acceptance_drill_only=os.getenv('MA_DRILL_ACCEPTANCE_ONLY','false').lower()=='true'
         legacy_drill = cfg.database_url.endswith('/ma_m3_rag_test') and cfg.backend_url == 'http://127.0.0.1:18103'
         sec_drill = cfg.database_url.endswith('/sec_m2_rag_acceptance_test') and cfg.backend_url == 'http://127.0.0.1:18104'
-        if cfg.acceptance_drill_only and not (legacy_drill or sec_drill):
+        sec_inspection=cfg.database_url.endswith('/sec_m3_rag_acceptance_test') and cfg.backend_url=='http://127.0.0.1:18105' and cfg.ops_url=='http://127.0.0.1:8111'
+        if cfg.acceptance_drill_only and not (legacy_drill or sec_drill or sec_inspection or (cfg.database_url.endswith("/sec_m4_rag_acceptance_test") and cfg.backend_url=="http://127.0.0.1:18106" and cfg.ops_url=="http://127.0.0.1:8115")):
             raise ValueError('dedicated_drill_acceptance_required')
         origin = urlsplit(cfg.ops_url)
         if origin.scheme != "http" or not origin.hostname or origin.username or origin.path or origin.query or origin.fragment:

@@ -15,6 +15,7 @@ TERMINAL = {"succeeded", "failed", "cancelled", "timeout"}
 class Dispatch(Args):
     intent: str = Field(min_length=1, max_length=4000)
     target_description: str | None = Field(default=None, max_length=2000)
+    task_kind: __import__('typing').Literal['ops','security_inspection'] = 'ops'
     operation: __import__('typing').Literal['read_only','restart_drill_container'] = 'read_only'
 
 
@@ -47,9 +48,13 @@ class Ops:
         except (TimeoutError, OSError): raise HTTPException(503, "ops_unavailable") from None
         except __import__('httpx').HTTPError: raise HTTPException(503, "ops_unavailable") from None
 
-    async def dispatch(self, intent, target=None, key=None, parent=None, verification=False, operation='read_only'):
+    async def dispatch(self, intent, target=None, key=None, parent=None, verification=False, operation='read_only', task_kind='ops'):
         actor = self.actor
         if actor is None: raise HTTPException(503, "ops_unconfigured")
+        if task_kind=='security_inspection':
+            if verification or operation!='read_only': raise HTTPException(400,'inspection_read_only_required')
+            if not __import__('re').search(r'巡检|安全检查|安全审查|安全排查|security inspection',self.question,__import__('re').I):
+                raise HTTPException(400,'invalid_inspection_intent')
         if operation=='restart_drill_container':
             import re
             if actor['role']!='admin': raise HTTPException(403,'admin_required')
@@ -58,6 +63,7 @@ class Ops:
                         parent_turn_id=parent, actor={"user_id": self.user, "role": actor["role"]}, intent=intent,
                         user_request=self.question, targets=[{"description": target, "asset_id": None}] if target else [],
                         constraints={"max_risk_class": "R2" if operation=='restart_drill_container' else "R0", "timeout_sec": 300}, created_at=datetime.now(timezone.utc).isoformat(),operation=operation)
+        if task_kind!='ops': envelope['task_kind']=task_kind
         # Reuse exactly one envelope and key for a transport retry after a lost acceptance response.
         for attempt in range(2):
             try: return await self.request("POST", "/internal/ma/v1/verifications" if verification else "/internal/ma/v1/tasks", envelope, envelope)
@@ -89,7 +95,7 @@ class Ops:
 
 class SupervisorTools:
     schemas = [s for s in Tools.schemas if s["function"]["name"] in ("search_knowledge", "web_search")] + [
-        {"type": "function", "function": {"name": "dispatch_ops_task", "description": "委派平台查数或本项目基础设施只读诊断，默认operation=read_only。用户明确要求重启本机隔离演练容器时可提出operation=restart_drill_container，由程序检查当前admin并生成审批卡；不直接执行，不审批，不用于生产容器。服务器慢或帮我处理先只读诊断，不推导重启授权。目标不明确先澄清，纯技术解释不创建任务，一次请求只委派一个完整任务。", "parameters": Dispatch.model_json_schema()}},
+        {"type": "function", "function": {"name": "dispatch_ops_task", "description": "委派平台查数或本项目基础设施只读诊断，默认operation=read_only。用户主动要求项目安全巡检时设置task_kind=security_inspection、operation=read_only；明确本项目可检查登记集合，指代不明先澄清。巡检与修复请求必须分开，不能推导重启。用户明确要求重启本机隔离演练容器时可提出operation=restart_drill_container，由程序检查当前admin并生成审批卡；不直接执行，不审批，不用于生产容器。服务器慢或帮我处理先只读诊断，不推导重启授权。目标不明确先澄清，纯技术解释不创建任务，一次请求只委派一个完整任务。", "parameters": Dispatch.model_json_schema()}},
         {"type": "function", "function": {"name": "get_ops_task", "description": "读取本人运维任务结果用于解释；历史报告不是当前状态。", "parameters": GetTask.model_json_schema()}}]
 
     def __init__(self, original, ops, deadline):
@@ -112,7 +118,7 @@ class SupervisorTools:
                 args = Dispatch.model_validate(json.loads(arguments))
                 trace["arguments"] = args.model_dump(exclude_none=True)
                 if self.dispatched is None:
-                    self.dispatched = await self.ops.dispatch(args.intent, args.target_description,operation=args.operation)
+                    self.dispatched = await self.ops.dispatch(args.intent, args.target_description,operation=args.operation, **({"task_kind":args.task_kind} if args.task_kind!="ops" else {}))
                     result["task_cards"] = [self.dispatched]
                     result["response_mode"] = "task_dispatched"
                 task = await self.ops.wait(self.dispatched, min(15, max(0, self.deadline-time.monotonic()-5)))
@@ -126,7 +132,7 @@ class SupervisorTools:
                 result.setdefault("task_cards", []).append({**task, "historical": True})
             else: raise ValueError("unknown_supervisor_tool")
             trace.update(status="ok", result={"task_id": task["task_id"], "status": task["status"]})
-            if task.get('security_reviews'):
+            if task.get('security_reviews') or task.get('inspection_report') or task.get('task_kind')=='security_inspection':
                 security_required = True
                 # Full report remains in task_cards. No report prose or private material reaches a model.
                 if task['status'] not in TERMINAL:

@@ -41,12 +41,14 @@ class Store(ApprovalStore):
         pool = await asyncpg.create_pool(cfg.database_url, min_size=1, max_size=8, command_timeout=10)
         async with pool.acquire() as c, c.transaction():
             await c.execute("SELECT pg_advisory_xact_lock(90900)")
-            await c.execute((Path(__file__).resolve().parents[1] / "deploy/001_tasks.sql").read_text(encoding="utf-8"))
-            await c.execute((Path(__file__).resolve().parents[1] / 'deploy/002_assets.sql').read_text(encoding='utf-8'))
-            await c.execute((Path(__file__).resolve().parents[1] / 'deploy/004_approvals.sql').read_text(encoding='utf-8'))
-            if cfg.security_enabled:
-                for migration in ('005_security_reviews.sql', '006_security_gates.sql'):
-                    await c.execute((Path(__file__).resolve().parents[1] / 'deploy' / migration).read_text(encoding='utf-8'))
+            if cfg.runtime_profile != "m4-restore-readonly":
+                await c.execute((Path(__file__).resolve().parents[1] / "deploy/001_tasks.sql").read_text(encoding="utf-8"))
+                await c.execute((Path(__file__).resolve().parents[1] / 'deploy/002_assets.sql').read_text(encoding='utf-8'))
+                await c.execute((Path(__file__).resolve().parents[1] / 'deploy/004_approvals.sql').read_text(encoding='utf-8'))
+                await c.execute((Path(__file__).resolve().parents[1] / 'deploy/007_runtime_context.sql').read_text(encoding='utf-8'))
+                if cfg.security_enabled:
+                    for migration in ('005_security_reviews.sql', '006_security_gates.sql'):
+                        await c.execute((Path(__file__).resolve().parents[1] / 'deploy' / migration).read_text(encoding='utf-8'))
             has_reviews = await c.fetchval("SELECT to_regclass('ma_security_reviews') IS NOT NULL")
             has_gates = await c.fetchval("SELECT to_regclass('ma_security_gate_contexts') IS NOT NULL")
         store = cls(pool, cfg); store.security_tables = has_reviews
@@ -55,7 +57,12 @@ class Store(ApprovalStore):
 
     async def create(self, task):
         value = task.model_dump(mode="json")
-        hashed = digest({k: value[k] for k in ("session_id", "intent", "targets", "constraints", "user_request", "operation")})
+        material = {k: value[k] for k in ("session_id", "intent", "targets", "constraints", "user_request", "operation")}
+        if task.task_kind != "ops": material["task_kind"] = task.task_kind
+        from .runtime_profile import context
+        runtime = context(self.cfg)
+        if runtime is not None: material["runtime_context"] = runtime
+        hashed = digest(material)
         value = json.loads(self.cfg.redact(encode(value)))
         async with self.pool.acquire() as c, c.transaction():
             await c.execute("SELECT pg_advisory_xact_lock(90901)")
@@ -70,6 +77,8 @@ class Store(ApprovalStore):
             if count >= self.cfg.user_active_limit or queue >= self.cfg.queue_capacity:
                 raise HTTPException(429, "task_capacity", headers={"Retry-After": "2"})
             await c.execute("INSERT INTO ma_tasks(task_id,trace_id,session_id,user_id,parent_turn_id,idempotency_key,request_hash,envelope,status,deadline) VALUES($1,$2,$3,$4,$5,$6,$7,$8::jsonb,'queued',now()+$9*interval '1 second')", task.task_id, task.trace_id, task.session_id, task.actor.user_id, task.parent_turn_id, task.idempotency_key, hashed, encode(value), min(task.constraints.timeout_sec, self.cfg.task_timeout))
+            if runtime is not None:
+                await c.execute("UPDATE ma_tasks SET runtime_context=$2::jsonb WHERE task_id=$1", task.task_id, encode(runtime))
             await c.execute("INSERT INTO ma_outbox(task_id) VALUES($1)", task.task_id)
             await c.execute("INSERT INTO ma_task_events(task_id,to_status,execution_epoch,reason) VALUES($1,'queued',0,'accepted')", task.task_id)
         return task.task_id, True
@@ -101,6 +110,8 @@ class Store(ApprovalStore):
                 "verification_results": result.get("verification_results"), "device": result.get("device"),
                 "model_calls": row["model_calls"], "link_pending": row["link_pending"], "evidence": build_evidence(result.get("tool_calls", []), self.cfg),
                 "created_at": row["created_at"], "finished_at": row["finished_at"]}
+        report['task_kind']=row['envelope'].get('task_kind','ops')
+        report['inspection_report']=result.get('inspection_report')
         report['infrastructure_evidence']=result.get('infrastructure_evidence',[])
         approvals=await self.pool.fetch('SELECT * FROM ma_approvals WHERE task_id=$1 ORDER BY created_at',tid)
         report['approvals']=[{**dict(a),'plan':json.loads(a['plan'])} for a in approvals]

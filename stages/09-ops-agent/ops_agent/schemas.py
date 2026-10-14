@@ -40,10 +40,13 @@ class Task(Strict):
     targets: list[Target] = Field(default_factory=list, max_length=20)
     constraints: Constraints = Field(default_factory=Constraints)
     created_at: datetime
+    task_kind: Literal['ops','security_inspection'] = 'ops'
     operation: Literal['read_only','restart_drill_container'] = 'read_only'
 
     @model_validator(mode='after')
     def operation_risk(self):
+        if self.task_kind=='security_inspection' and (self.operation!='read_only' or self.constraints.max_risk_class!='R0'):
+            raise ValueError('inspection_read_only_required')
         if (self.operation=='restart_drill_container') != (self.constraints.max_risk_class=='R2'):
             raise ValueError('operation_risk_mismatch')
         if self.operation=='restart_drill_container' and self.actor.role!='admin':
@@ -119,6 +122,8 @@ class ToolCall(Strict):
 
 
 class ResultEnvelope(Strict):
+    task_kind: Literal['ops','security_inspection'] = 'ops'
+    inspection_report: dict | None = None
     protocol: Literal['ma/v1']
     task_id: UUID
     trace_id: UUID

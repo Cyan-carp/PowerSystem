@@ -24,6 +24,7 @@ class Config:
     user_concurrency: int = 1
     max_tokens: int = 2048
     acceptance_timeout_exception: bool = False
+    runtime_profile: str = "legacy"
 
     @classmethod
     def load(cls):
@@ -37,10 +38,13 @@ class Config:
         exception = os.getenv('SEC_ACCEPTANCE_TIMEOUT_EXCEPTION_ENABLED', 'false').lower()
         if exception not in ('true', 'false'): raise ValueError('invalid_security_timeout_exception')
         cfg.acceptance_timeout_exception = exception == 'true'
+        cfg.runtime_profile = os.getenv("SEC_RUNTIME_PROFILE", "legacy")
         cfg.validate()
         return cfg
 
     def validate(self):
+        if self.runtime_profile not in ("legacy", "m4-local", "m4-server-readonly"): raise ValueError("unknown_security_profile")
+        if self.runtime_profile != "legacy" and (self.model != "deepseek-v4-flash-0731" or self.model_timeout != 30 or self.acceptance_timeout_exception): raise ValueError("m4_model_configuration_required")
         if min(map(len, (self.service_token, self.request_key, self.result_key))) < 32:
             raise ValueError('security_private_credentials_required')
         if len({self.service_token, self.request_key, self.result_key}) != 3:

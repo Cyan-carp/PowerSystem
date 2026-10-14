@@ -114,7 +114,7 @@ func TestRedisChatAdmissionIntegration(t *testing.T) {
 		t.Skip("explicit disposable Redis required")
 	}
 	opts, err := redis.ParseURL(url)
-	if err != nil || !((opts.Addr == "127.0.0.1:16379" && opts.DB == 0) || (opts.Addr == "127.0.0.1:16378" && opts.DB == 8) || (opts.Addr == "127.0.0.1:16377" && opts.DB == 8)) {
+	if err != nil || !((opts.Addr == "127.0.0.1:16379" && opts.DB == 0) || (opts.Addr == "127.0.0.1:16378" && opts.DB == 8) || (opts.Addr == "127.0.0.1:16379" && opts.DB == 8) || (opts.Addr == "127.0.0.1:16380" && opts.DB == 8) || (opts.Addr == "127.0.0.1:16377" && opts.DB == 8)) {
 		t.Fatal("only explicit MA disposable loopback Redis/database accepted")
 	}
 	r := redis.NewClient(opts)

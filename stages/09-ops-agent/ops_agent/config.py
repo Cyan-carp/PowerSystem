@@ -49,6 +49,8 @@ class Config:
     future_skew_seconds: float = 60
     redis_prefix: str = "ma:"
     audit_dir: Path = Path("artifacts/stage9-ops-agent/audit")
+    runtime_profile: str = "legacy"
+    inspection_enabled: bool = False
     security_enabled: bool = False
     security_url: str = 'http://127.0.0.1:8100'
     security_service_token: str = field(default='', repr=False)
@@ -63,6 +65,9 @@ class Config:
                   knowledge_token=secret("AGENT_SERVICE_TOKEN_FILE"),
                   executor_token=secret('OPS_EXECUTOR_TOKEN_FILE'),executor_grant_key=secret('OPS_EXECUTOR_GRANT_KEY_FILE'))
         cfg.executor_write_key=secret('OPS_EXECUTOR_WRITE_KEY_FILE')
+        raw_inspection = os.getenv('OPS_INSPECTION_ENABLED','false').lower()
+        if raw_inspection not in ('true','false'): raise ValueError('invalid_inspection_switch')
+        cfg.inspection_enabled = raw_inspection == 'true'
         raw_security = os.getenv('OPS_SECURITY_ENABLED', 'false').lower()
         if raw_security not in ('true', 'false'): raise ValueError('invalid_security_switch')
         cfg.security_enabled = raw_security == 'true'
@@ -83,21 +88,28 @@ class Config:
             name = "OPS_" + field.upper() + ("_SECONDS" if field in ("task_timeout", "model_timeout", "tool_timeout") else "")
             setattr(cfg, field, int(os.getenv(name, getattr(cfg, field))))
         cfg.audit_dir = Path(os.getenv("OPS_AUDIT_DIR", str(cfg.audit_dir)))
+        cfg.runtime_profile = os.getenv("OPS_RUNTIME_PROFILE", "legacy")
         cfg.validate()
         return cfg
 
     def validate(self):
+        from .runtime_profile import validate
+        validate(self)
+        m4 = self.runtime_profile in ("m4-local", "m4-server-readonly", "m4-restore-readonly")
         legacy_drill = self.database_url.endswith('/ma_m3_ops_test') and self.backend_url == 'http://127.0.0.1:18103'
         sec_drill = self.security_enabled and self.database_url.endswith('/sec_m2_acceptance_test') and self.backend_url == 'http://127.0.0.1:18104'
-        if self.acceptance_drill_only and not (legacy_drill or sec_drill):
+        sec_inspection = self.inspection_enabled and self.security_enabled and urlsplit(self.database_url).path in ('/sec_m3_acceptance_test','/sec_m3_regression_test') and self.backend_url=='http://127.0.0.1:18105' and self.security_url=='http://127.0.0.1:8110' and self.supervisor_url=='http://127.0.0.1:18097' and self.executor_url=='http://127.0.0.1:8112'
+        if self.inspection_enabled and not m4 and (not sec_inspection or not self.infra_enabled or self.write_enabled):
+            raise ValueError('isolated_read_only_inspection_required')
+        if self.acceptance_drill_only and not (legacy_drill or sec_drill or sec_inspection or self.runtime_profile == "m4-local"):
             raise ValueError('dedicated_drill_acceptance_required')
         if self.security_enabled:
-            if self.security_url not in ('http://127.0.0.1:8100', 'http://security-agent:8100'):
+            if self.security_url not in ('http://127.0.0.1:8100', 'http://security-agent:8100') and not sec_inspection and not m4:
                 raise ValueError('invalid_security_origin')
             values = (self.security_service_token, self.security_request_key, self.security_result_key)
             if min(map(len, values)) < 32 or len(set(values)) != 3:
                 raise ValueError('security_private_credentials_required')
-            if urlsplit(self.database_url).path not in ('/sec_m2_acceptance_test', '/sec_m2_regression_test'):
+            if urlsplit(self.database_url).path not in ('/sec_m2_acceptance_test', '/sec_m2_regression_test') and not sec_inspection and not m4:
                 raise ValueError('isolated_sec_m2_database_required')
         if self.write_enabled and (not self.infra_enabled or len(self.executor_write_key)<32):
             raise ValueError('write_private_credentials_required')

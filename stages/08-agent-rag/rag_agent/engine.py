@@ -26,7 +26,7 @@ class Engine:
         # Drop whole old turns from model context, while retaining all turns in PostgreSQL.
         for turn in reversed(previous):
             block = turn["model_messages"]
-            if any(t.get('security_reviews') or t.get('infrastructure_evidence') or t.get('operation_evidence') or t.get('approvals') for t in turn.get('response',{}).get('task_cards',[])):
+            if any(t.get('task_kind')=='security_inspection' or t.get('inspection_report') or t.get('security_reviews') or t.get('infrastructure_evidence') or t.get('operation_evidence') or t.get('approvals') for t in turn.get('response',{}).get('task_cards',[])):
                 block=[{'role':'assistant','content':'历史运维报告仅供页面查看；需要解释时重新读取本人任务并取得外发审查许可。'}]
             size = len(json.dumps(block, ensure_ascii=False))
             if used + size > cfg.context_chars - len(question) - 4000:
@@ -103,6 +103,6 @@ class Engine:
         # A failed/incomplete turn is display history, never an orphan tool exchange in later model context.
         if result["status"] != "answered":
             current = [{"role": "user", "content": question}, {"role": "assistant", "content": "服务故障：" + "；".join(result["warnings"])}]
-        if any(t.get('security_reviews') or t.get('infrastructure_evidence') or t.get('operation_evidence') or t.get('approvals') for t in result.get('task_cards',[])):
+        if any(t.get('task_kind')=='security_inspection' or t.get('inspection_report') or t.get('security_reviews') or t.get('infrastructure_evidence') or t.get('operation_evidence') or t.get('approvals') for t in result.get('task_cards',[])):
             return [{'role':'assistant','content':'本轮运维任务报告已保存，历史数据不自动重发给模型。'}]
         return current

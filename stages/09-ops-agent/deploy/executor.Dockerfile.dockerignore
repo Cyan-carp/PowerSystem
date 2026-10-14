@@ -1,0 +1,10 @@
+**
+!stages
+!stages/09-ops-agent
+!stages/09-ops-agent/requirements.txt
+!stages/09-ops-agent/ops_contract.py
+!stages/09-ops-agent/ops_write_contract.py
+!stages/09-ops-agent/ops_executor
+!stages/09-ops-agent/ops_executor/**
+**/__pycache__
+**/*.pyc

@@ -35,8 +35,8 @@ class ApprovalStore:
             aid=uuid4()
             security_policy=None
             if self.security_gates:
-                from .runtime_reviews import contract
-                security_policy=contract.RUNTIME_POLICY
+                from .runtime_reviews import task_policy
+                security_policy=task_policy(row,self.cfg)[0]
             plan=saved_plan(args,snapshot,security_policy)
             if self.security_gates:
                 await self.security_gates.validate_in_tx(c,tid,step,epoch,'write_plan',digest(args),plan)
@@ -89,8 +89,8 @@ class ApprovalStore:
                 plan=json.loads(a['plan'])
                 try:
                     if self.security_required:
-                        from .runtime_reviews import contract
-                        if plan.get('security_policy')!=contract.RUNTIME_POLICY:raise ValueError('policy_version_changed')
+                        from .runtime_reviews import task_policy
+                        if plan.get('security_policy')!=task_policy(task,self.cfg)[0]:raise ValueError('policy_version_changed')
                     proof(current)
                     if not matches(plan['snapshot'],current) or digest(plan['args'])!=a['args_hash']: raise ValueError('approval_invalidated')
                     await self._check_snapshot(c,current)

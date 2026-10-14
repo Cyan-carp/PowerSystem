@@ -115,6 +115,10 @@ PY
   cp "$rag_env_file" "$staging/config/agent/rag-compose.env"
   cp -a "$project_dir/runtime/agent-rag-audit" "$staging/rag-audit"
 fi
+# M4 is optional for old releases; detected active service requires complete backup.
+if docker inspect powersystem-stage4-ops-agent-1 >/dev/null 2>&1; then
+  python3 "$project_dir/stages/09-ops-agent/deploy/backup-ma.py" --output "$staging"
+fi
 find "$staging/config" -type f -exec chmod 600 {} +
 find "$staging/config" -type d -exec chmod 700 {} +
 (cd "$staging" && find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS)

@@ -19,6 +19,8 @@ if __name__=='__main__':
     if not re.fullmatch(r'[a-z0-9-]{1,60}',args.attempt):raise ValueError('invalid_attempt')
     for line in (run/'private'/f'{args.layer}-test.env').read_text(encoding='utf-8').splitlines():
         key,value=line.split('=',1);os.environ[key]=value
+    if (run/'private/m4-test.env').exists():os.environ['SEC_M4_TEST_ENV_FILE']=str(run/'private/m4-test.env')
+    if (run/'private/m3-test.env').exists():os.environ['SEC_M3_TEST_ENV_FILE']=str(run/'private/m3-test.env')
     if args.layer=='sec':os.environ['SEC_TEST_CONFIG_FILE']=str(run/'private/m1-regression.json')
     for name in ('stages/09-ops-agent','stages/08-agent-rag','stages/10-security-agent'):
         sys.path.insert(0,str(ROOT/name))

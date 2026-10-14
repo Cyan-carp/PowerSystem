@@ -58,9 +58,9 @@ async def prepare(executor,row,epoch,step,arguments,jwt,result):
     result.setdefault('operation_evidence',[]).append({'phase':'preflight','snapshot':state['snapshot']})
     if executor.store.security_gates:
         from .approvals import saved_plan
-        from .runtime_reviews import contract
+        from .runtime_reviews import task_policy
         await executor.store.security_gates.require(executor,row,epoch,step+1,TOOL,args,jwt,result,'write_plan',
-            plan=saved_plan(args,state['snapshot'],contract.RUNTIME_POLICY),facts={'running':state['snapshot']['running'],'health':state['snapshot']['health']})
+            plan=saved_plan(args,state['snapshot'],task_policy(row,cfg)[0]),facts={'running':state['snapshot']['running'],'health':state['snapshot']['health']})
     await executor.store.prepare_approval(row['task_id'],epoch,step+1,args,state['snapshot'],state['policy'],result)
     raise ApprovalPending()
 
@@ -69,8 +69,8 @@ async def execute(executor,row,epoch,approval,jwt,result):
     cfg=executor.cfg;tid=row['task_id'];plan=approval['plan'];cid=None
     if not cfg.enabled or not cfg.write_enabled: raise ValueError('write_disabled')
     if executor.store.security_required:
-        from .runtime_reviews import contract
-        if plan.get('security_policy')!=contract.RUNTIME_POLICY:raise ValueError('approval_invalidated')
+        from .runtime_reviews import task_policy
+        if plan.get('security_policy')!=task_policy(row,cfg)[0]:raise ValueError('approval_invalidated')
     actor=await executor.identity(jwt)
     if actor['user_id']!=row['user_id'] or actor['role']!='admin': raise PermissionError('permission_denied')
     if executor.store.security_gates:

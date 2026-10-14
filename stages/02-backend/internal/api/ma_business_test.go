@@ -34,7 +34,7 @@ func TestMAC19BusinessContinuesWithOperationUnavailable(t *testing.T) {
 	}
 	parsed, parseErr := url.Parse(dsn)
 	redisOptions, redisErr := redis.ParseURL(rawRedis)
-	redisAllowed := parseErr == nil && redisErr == nil && ((parsed.Path == "/ma_m1_business_test" && redisOptions.Addr == "127.0.0.1:16379" && redisOptions.DB == 0) || (parsed.Path == "/ma_m2_business_test" && redisOptions.Addr == "127.0.0.1:16378" && redisOptions.DB == 8) || (parsed.Path == "/ma_m3_business_test" && redisOptions.Addr == "127.0.0.1:16377" && redisOptions.DB == 8))
+	redisAllowed := parseErr == nil && redisErr == nil && ((parsed.Path == "/ma_m1_business_test" && redisOptions.Addr == "127.0.0.1:16379" && redisOptions.DB == 0) || (parsed.Path == "/ma_m2_business_test" && redisOptions.Addr == "127.0.0.1:16378" && redisOptions.DB == 8) || (parsed.Host == "127.0.0.1:15435" && parsed.Path == "/ma_m2_business_test" && redisOptions.Addr == "127.0.0.1:16380" && redisOptions.DB == 8) || (parsed.Host == "127.0.0.1:15434" && parsed.Path == "/ma_m2_business_test" && redisOptions.Addr == "127.0.0.1:16379" && redisOptions.DB == 8) || (parsed.Path == "/ma_m3_business_test" && redisOptions.Addr == "127.0.0.1:16377" && redisOptions.DB == 8))
 	if parseErr != nil || parsed.Hostname() != "127.0.0.1" || (parsed.Path != "/ma_m1_business_test" && parsed.Path != "/ma_m2_business_test" && parsed.Path != "/ma_m3_business_test") || !redisAllowed {
 		t.Fatal("dedicated MA test destinations required")
 	}

@@ -17,11 +17,24 @@ except ModuleNotFoundError:
     spec.loader.exec_module(contract)
 
 from .reviews import ReviewController, ControlFailure
+from .runtime_profile import environments
 from ops_contract import digest, validate_args
 from ops_write_contract import TOOL, explicit_restart, restart_args, matches
 
 SENSITIVE = frozenset({'linux.get_system_logs', 'docker.get_container_logs',
                        'docker.inspect_container', 'postgresql.get_connection_stats'})
+METRIC_FIELDS={
+    'linux.get_cpu_usage':{'cpu_percent','load_1m','logical_cpus','sample_seconds'},
+    'linux.get_memory_usage':{'total_bytes','available_bytes','used_bytes','swap_total_bytes','swap_free_bytes'},
+    'linux.get_disk_status':{'filesystem_count','filesystems_total_bytes','filesystems_available_bytes'},
+    'linux.list_services':{'registered_service_count','active_service_count','failed_service_count'},
+    'docker.list_containers':{'registered_container_count','running_container_count'},
+    'docker.get_container_stats':{'cpu_percent','memory_usage_bytes','memory_limit_bytes','memory_working_set_bytes','sample_seconds'},
+    'postgresql.get_db_status':{'database_size_bytes','connections','commits','rollbacks','deadlocks'},
+    'postgresql.get_connection_stats':{'connections','active','idle','idle_in_transaction','waiting','max_connections'},
+}
+
+
 ERRORS = frozenset({'security_denied', 'security_clarification_required', 'security_unavailable',
                     'security_invalid', 'security_review_stale', 'security_projection_blocked'})
 
@@ -30,32 +43,61 @@ def unpack(value):
     return json.loads(value) if isinstance(value, str) else value
 
 
+def task_policy(task, cfg=None):
+    from .runtime_profile import check_context
+    if cfg and cfg.runtime_profile != "legacy":
+        saved = check_context(task, cfg)
+        return saved["policy_version"], saved["scope_version"]
+    env=unpack(task['envelope'])
+    return (contract.INSPECTION_POLICY,contract.INSPECTION_SCOPE) if env.get('task_kind')=='security_inspection' else (contract.RUNTIME_POLICY,contract.RUNTIME_SCOPE)
+
+
 def sensitive_report(report):
-    return bool(report.get('infrastructure_evidence') or report.get('operation_evidence') or report.get('approvals'))
+    return bool(report.get('inspection_report') or report.get('task_kind')=='security_inspection' or report.get('infrastructure_evidence') or report.get('operation_evidence') or report.get('approvals'))
 
 
-def validate_payload(payload):
-    if not isinstance(payload,dict) or set(payload)!={'task_status','evidence','actions'}:
+def validate_payload(payload, cfg=None):
+    if not isinstance(payload,dict) or set(payload) not in ({'task_status','evidence','actions'}, {'task_status','evidence','actions','inspection'}):
         raise ValueError('security_projection_blocked')
     if payload['task_status'] not in ('queued','planning','executing','awaiting_approval','succeeded','failed','cancelled','timeout'):
         raise ValueError('security_projection_blocked')
     if not isinstance(payload['evidence'],list) or not isinstance(payload['actions'],list): raise ValueError('security_projection_blocked')
     for e in payload['evidence']:
-        if not isinstance(e,dict) or set(e)-{'evidence_ref','tool','asset_id','asset_version','status','complete','truncated','collected_at','sampled_at','state','assets'}:
+        if not isinstance(e,dict) or set(e)-{'evidence_ref','tool','asset_id','asset_version','status','complete','truncated','collected_at','sampled_at','state','assets','metrics'}:
             raise ValueError('security_projection_blocked')
         if not isinstance(e.get('state',{}),dict) or set(e.get('state',{}))-{'running','health','state','image_digest'}:
             raise ValueError('security_projection_blocked')
+        if 'metrics' in e:
+            m=e['metrics']
+            if not cfg or cfg.runtime_profile not in ('m4-local','m4-server-readonly') or not isinstance(m,dict) or set(m)-METRIC_FIELDS.get(e.get('tool'),set()):raise ValueError('security_projection_blocked')
+            import math
+            if any(not (k=='cpu_percent' and v is None) and (type(v) not in (int,float) or not math.isfinite(v) or v<0) for k,v in m.items()):raise ValueError('security_projection_blocked')
+            if e.get('tool')=='linux.get_cpu_usage' and m.get('cpu_percent') is not None and m['cpu_percent']>100:raise ValueError('security_projection_blocked')
         for a in e.get('assets',[]):
             if not isinstance(a,dict) or set(a)-{'asset_id','kind','parent_id','version','criticality','enabled'}:
                 raise ValueError('security_projection_blocked')
     for a in payload['actions']:
         if not isinstance(a,dict) or set(a)!={'status'} or a['status'] not in ('started','succeeded','failed','execution_uncertain'):
             raise ValueError('security_projection_blocked')
+    if 'inspection' in payload:
+        inspection=payload['inspection']
+        if not isinstance(inspection,dict) or set(inspection)!={'version','items','completeness'} or inspection['version']!='sec-m3-report/v1' or inspection['completeness']!='limited_project_checks':
+            raise ValueError('security_projection_blocked')
+        if not isinstance(inspection['items'],list) or len(inspection['items'])>40: raise ValueError('security_projection_blocked')
+        statuses={'passed','finding','inconclusive','not_checked'}
+        reasons={'insufficient_evidence','collection_failed','asset_version_mismatch','time_unknown','historical_evidence','stale_or_future_evidence','empty_or_truncated','observed_abnormal_event','filtered_events_not_full_audit','incomplete_evidence','container_not_running_or_unhealthy','registered_container_running_healthy','health_not_sufficient','service_failed','registered_services_active','service_state_inconclusive','database_unreachable','registered_database_reachable','capability_unavailable','inspection_interrupted'}
+        rules={None,'observation_only','operational_event_observed','container_running_and_health','registered_service_state','database_reachability'}
+        for item in inspection['items']:
+            if not isinstance(item,dict) or set(item)!={'status','reason','rule','evidence_refs','asset_id','asset_version'}: raise ValueError('security_projection_blocked')
+            if item['status'] not in statuses or item['reason'] not in reasons or item['rule'] not in rules: raise ValueError('security_projection_blocked')
+            if item['asset_id'] is not None: contract.safe_text(item['asset_id']); __import__('ops_contract').asset_id(item['asset_id'])
+            if item['asset_version'] is not None and (type(item['asset_version']) is not int or item['asset_version']<1): raise ValueError('security_projection_blocked')
+            if not isinstance(item['evidence_refs'],list) or any(ref not in {e.get('evidence_ref') for e in payload['evidence']} for ref in item['evidence_refs']): raise ValueError('security_projection_blocked')
     contract.safe_text(contract.canonical(payload).decode())
     return payload
 
 
-def licensed_summary(report):
+def licensed_summary(report, cfg=None):
     """Only fixed scalar state/aliases/hashes; no user request, model prose or raw tool body."""
     rows = []
     for e in report.get('infrastructure_evidence', []):
@@ -65,13 +107,29 @@ def licensed_summary(report):
         if calls:
             data=calls[-1].get('result',{})
             value['state']={k:data[k] for k in ('running','health','state','image_digest') if k in data}
+            if cfg and cfg.runtime_profile in ('m4-local','m4-server-readonly') and e.get('status')=='ok':
+                fields=METRIC_FIELDS.get(e.get('tool'),set())
+                metrics={k:data[k] for k in fields if k in data}
+                if e.get('tool')=='linux.get_disk_status':
+                    rows_fs=data.get('filesystems',[])
+                    metrics={'filesystem_count':len(rows_fs),'filesystems_total_bytes':sum(f['total_bytes'] for f in rows_fs),'filesystems_available_bytes':sum(f['available_bytes'] for f in rows_fs)}
+                elif e.get('tool')=='linux.list_services':
+                    services=data.get('list',[])
+                    metrics={'registered_service_count':len(services),'active_service_count':sum(s.get('ActiveState')=='active' for s in services),'failed_service_count':sum(s.get('ActiveState')=='failed' for s in services)}
+                elif e.get('tool')=='docker.list_containers':
+                    containers=data.get('list',[])
+                    metrics={'registered_container_count':len(containers),'running_container_count':sum(c.get('running') is True for c in containers)}
+                if metrics:value['metrics']=metrics
             if e.get('tool')=='assets.list':
-                if any(a.get('environment') not in ('acceptance','fixture') for a in data.get('list',[])):
+                from .runtime_profile import environments
+                if any(a.get('environment') not in environments(cfg) for a in data.get('list',[])):
                     raise ValueError('security_projection_blocked')
                 value['assets']=[{k:a[k] for k in ('asset_id','kind','parent_id','version','criticality','enabled') if k in a} for a in data.get('list',[])]
         rows.append(value)
-    return validate_payload({'task_status': report['status'], 'evidence': rows,
-            'actions': [{'status': a['status']} for a in report.get('execution_attempts', [])]})
+    payload={'task_status':report['status'],'evidence':rows,'actions':[{'status':a['status']} for a in report.get('execution_attempts',[])]}
+    if report.get('inspection_report'):
+        payload['inspection']={'version':'sec-m3-report/v1','completeness':'limited_project_checks','items':[{k:i[k] for k in ('status','reason','rule','evidence_refs','asset_id','asset_version')} for i in report['inspection_report']['items']]}
+    return validate_payload(payload, cfg)
 
 
 async def public_reviews(pool, tid, user):
@@ -91,6 +149,7 @@ async def public_reviews(pool, tid, user):
 
 class RuntimeController(ReviewController):
     def __init__(self,*args,**kwargs):
+        self.cfg = kwargs.pop("runtime_config", None)
         super().__init__(*args,**kwargs)
         self.prepared={}
 
@@ -112,7 +171,10 @@ class RuntimeController(ReviewController):
 
     async def check_database(self):
         if not self.database_checked:
-            if await self.pool.fetchval('SELECT current_database()') not in ('sec_m2_acceptance_test', 'sec_m2_regression_test'):
+            allowed = ('sec_m2_acceptance_test', 'sec_m2_regression_test', 'sec_m3_acceptance_test', 'sec_m3_regression_test')
+            if self.cfg and self.cfg.runtime_profile == 'm4-local': allowed = ('sec_m4_acceptance_test', 'sec_m4_regression_test')
+            if self.cfg and self.cfg.runtime_profile == 'm4-server-readonly': allowed = ('ma_ops',)
+            if await self.pool.fetchval('SELECT current_database()') not in allowed:
                 raise ControlFailure('isolated_sec_m2_database_required')
             self.database_checked = True
 
@@ -149,7 +211,7 @@ class RuntimeController(ReviewController):
             a = await self.pool.fetchrow('SELECT * FROM ma_assets WHERE asset_id=$1', step['asset_id'])
             if not a or not a['enabled'] or not a['verified_at'] or a['version'] != step['asset_version']:
                 raise ControlFailure('security_review_stale')
-            if a['environment'] not in ('fixture', 'acceptance'): raise ControlFailure('security_projection_blocked')
+            if a['environment'] not in environments(self.cfg): raise ControlFailure('security_projection_blocked')
             if a['identity_hash'] != material['asset_identity_hash']: raise ControlFailure('security_review_stale')
             if args.get('asset_id') != a['asset_id']: raise ControlFailure('security_invalid')
             asset = {k: a[k] for k in ('asset_id', 'version', 'identity_hash', 'project_scope', 'criticality')}
@@ -160,7 +222,7 @@ class RuntimeController(ReviewController):
             trace_id=task['trace_id'], step_no=step_no, execution_epoch=task['execution_epoch'], kind=kind,
             actor={'user_id': user_id, 'role': role}, tool={'name': step['tool'], 'version': step['version'],
                 'risk_class': step['risk_class'], 'args_hash': step['args_hash'], 'plan_hash': material['plan_hash']},
-            asset=asset, policy_version=contract.RUNTIME_POLICY, scope_version=contract.RUNTIME_SCOPE,
+            asset=asset, policy_version=task_policy(task, self.cfg)[0], scope_version=task_policy(task, self.cfg)[1],
             normalized_intent=material['intent'], evidence=material['evidence'], egress=material.get('egress'),
             deadline=material['deadline'])
         contract.projection(request, (self.service_token, self.request_key, self.result_key))
@@ -171,7 +233,7 @@ class SecurityGates:
     def __init__(self, cfg, store, client):
         self.cfg, self.store = cfg, store
         self.controller = RuntimeController(store.pool, client, cfg.security_service_token,
-            cfg.security_request_key, cfg.security_result_key, url=cfg.security_url)
+            cfg.security_request_key, cfg.security_result_key, url=cfg.security_url, runtime_config=cfg)
 
     async def prepare_step(self, row, epoch, step, name, args, asset):
         async with self.store.pool.acquire() as c, c.transaction():
@@ -185,16 +247,18 @@ class SecurityGates:
             else:
                 await c.execute("INSERT INTO ma_task_steps(task_id,step_no,tool,args,args_hash,risk_class,status,execution_epoch,asset_id,asset_version) VALUES($1,$2,$3,$4::jsonb,$5,$6,'pending',$7,$8,$9)", row['task_id'], step, name, json.dumps(args), digest(args), 'R2' if name == TOOL else 'R0', epoch, asset['asset_id'] if asset else None, asset['version'] if asset else None)
 
-    async def require(self, executor, row, epoch, step, name, args, jwt, result, kind, plan=None, payload=None, receiver='operation', facts=None, history=False):
+    async def require(self, executor, row, epoch, step, name, args, jwt, result, kind, plan=None, payload=None, receiver='operation', facts=None, history=False, opinion_only=False):
         """No network request until identity, scope, safe material and durable audit pass."""
         actor = await executor.identity(jwt)
         if actor['user_id'] != row['user_id'] or actor['role'] not in ('admin', 'operator'):
             raise ValueError('security_invalid')
         current = await self.store.get(row['task_id'], row['user_id'])
         if current['execution_epoch'] != epoch: raise ValueError('security_review_stale')
+        policy,scope=task_policy(current, self.cfg)
+        if opinion_only and (kind!='inspection_report' or scope not in (contract.INSPECTION_SCOPE, contract.M4_LOCAL_SCOPE, contract.M4_SERVER_SCOPE)): raise ValueError('security_invalid')
         if not history: await self.store.check(row['task_id'], epoch)
         asset = await self.store.resolve_asset(args['asset_id'], name) if args.get('asset_id') else None
-        if asset and asset['environment'] not in ('fixture', 'acceptance'):
+        if asset and asset['environment'] not in environments(self.cfg):
             raise ValueError('security_projection_blocked')
         if name == TOOL and actor['role'] != 'admin': raise ValueError('security_invalid')
         if not history: await self.prepare_step(row, epoch, step, name, args, asset)
@@ -215,21 +279,30 @@ class SecurityGates:
             'truncated': False, 'facts': [{'key': k, 'value': v} for k, v in values.items()]}]
         material = {'args_hash': digest(args), 'asset_identity_hash': asset['identity_hash'] if asset else None,
             'plan_hash': digest(plan or {'tool': name, 'version': '1.0', 'args': args, 'asset': asset['identity_hash'] if asset else None}),
-            'intent': {'sensitive_read': '审查本项目登记本机演练目标的固定安全字段读取',
+            'intent': {'sensitive_read': '审查本项目登记许可范围内目标的固定安全字段读取',
                        'write_plan': '审查本机隔离无状态演练容器重启提案，随后人工审批',
                        'write_preflight': '审查已人工批准的本机演练容器保存计划',
                        'post_execution': '复核本机演练已保存动作事实，禁止自动补写',
-                       'data_egress': '审查许可内本机演练状态摘要发往现有网关'}[kind],
+                       'data_egress': '审查许可内本项目许可内状态摘要发往现有网关',
+                       'inspection_report':'复核本轮限定项目只读巡检报告，不改事实或自动修复'}[kind],
             'evidence': evidence, 'deadline': deadline.isoformat()}
-        if kind == 'data_egress':
-            validate_payload(payload)
+        if kind in ('data_egress','inspection_report'):
+            validate_payload(payload, self.cfg)
+            if kind=='inspection_report' and 'inspection' not in payload: raise ValueError('security_projection_blocked')
             bindings=[]
             for e in payload['evidence']:
-                for a in e.get('assets',[]):
+                scope_assets=list(e.get('assets',[]))
+                if e.get('asset_id'): scope_assets.append({'asset_id':e['asset_id'],'version':e['asset_version']})
+                for a in scope_assets:
                     current_asset=await self.store.pool.fetchrow('SELECT * FROM ma_assets WHERE asset_id=$1',a['asset_id'])
-                    if not current_asset or not current_asset['enabled'] or not current_asset['verified_at'] or current_asset['version']!=a['version'] or current_asset['environment'] not in ('fixture','acceptance'):
+                    if not current_asset or not current_asset['enabled'] or not current_asset['verified_at'] or current_asset['version']!=a['version'] or current_asset['environment'] not in environments(self.cfg):
                         raise ValueError('security_projection_blocked')
                     bindings.append({k:current_asset[k] for k in ('asset_id','version','identity_hash')})
+            for item in payload.get('inspection',{}).get('items',[]):
+                if item['asset_id']:
+                    a=await self.store.pool.fetchrow('SELECT * FROM ma_assets WHERE asset_id=$1',item['asset_id'])
+                    if not a or not a['enabled'] or not a['verified_at'] or a['version']!=item['asset_version'] or a['environment'] not in environments(self.cfg): raise ValueError('security_review_stale')
+                    bindings.append({k:a[k] for k in ('asset_id','version','identity_hash')})
             material['registry_bindings']=bindings
             contract.safe_text(contract.canonical(payload).decode(), (jwt, *self.cfg_secrets()))
             if len(contract.canonical(payload)) > 32768: raise ValueError('security_projection_blocked')
@@ -238,9 +311,18 @@ class SecurityGates:
             values['payload_bound'] = True
             values['material_hash'] = digest(payload)
             evidence[0]['facts'] = [{'key': k, 'value': v} for k, v in values.items()]
-            material['egress'] = {'destination': 'existing-gateway', 'scope_version': contract.RUNTIME_SCOPE,
+            material['egress'] = {'destination': 'existing-gateway', 'scope_version': scope,
                 'receiver': receiver, 'model': 'deepseek-v4.1-flash' if receiver == 'supervisor' else 'deepseek-v4-flash-0731',
                 'fields': ['normalized_intent', 'tool', 'asset', 'evidence', 'policy_version'], 'payload_hash': digest(payload)}
+            if kind=='inspection_report': material.pop('egress',None)
+            if kind=='inspection_report' and scope in (contract.INSPECTION_SCOPE, contract.M4_LOCAL_SCOPE, contract.M4_SERVER_SCOPE) and 'inspection' in payload:
+                items=payload['inspection']['items']
+                evidence[0]['facts'] += [{'key':'checked_items','value':sum(i['status']!='not_checked' for i in items)}, {'key':'not_checked_items','value':sum(i['status']=='not_checked' for i in items)}, {'key':'coverage_limited','value':True}]
+                for index,item in enumerate(items):
+                    evidence.append({'ref':'C'+str(index+1),'source':'program','collected_at':now.isoformat(),'complete':True,'filtered':True,'truncated':False,
+                        'facts':[{'key':'inspection_status','value':item['status']},{'key':'inspection_reason','value':item['reason']},{'key':'inspection_rule','value':item['rule']}]})
+                # Bounded report <=16 tools plus category/asset missing items; summarize if needed without dropping coverage.
+                if len(evidence)>20: raise ValueError('inspection_scope_too_large')
         rid = uuid4()
         from .write import audit
         audit(executor, {'event': 'security_gate_ready', 'task_id': str(row['task_id']), 'step_no': step,
@@ -255,7 +337,7 @@ class SecurityGates:
             raise ValueError(exc.code if exc.code in ERRORS else 'security_invalid') from None
         finally:
             self.controller.prepared.pop(rid,None)
-        if record['decision']['decision'] != 'allow':
+        if record['decision']['decision'] != 'allow' and not opinion_only:
             result.setdefault('diagnosis', {})['clarification'] = record['decision']['reason']
             raise ValueError('security_denied' if record['decision']['decision'] == 'deny' else 'security_clarification_required')
         # Reauthenticate after the await; a decision is never a substitute for live identity.
@@ -293,10 +375,12 @@ class SecurityGates:
         if not row['expires_at'] or row['expires_at'] <= datetime.now(timezone.utc): raise ValueError('security_review_stale')
         if row['binding_hash'] != digest(request) or row['decision_hash'] != digest(decision) or digest(material) != row['material_hash']:
             raise ValueError('security_invalid')
-        if request['policy_version'] != contract.RUNTIME_POLICY or request['scope_version'] != contract.RUNTIME_SCOPE or material['args_hash'] != args_hash:
+        task=await c.fetchrow('SELECT * FROM ma_tasks WHERE task_id=$1',tid)
+        policy,scope=task_policy(task, self.cfg)
+        if request['policy_version'] != policy or request['scope_version'] != scope or material['args_hash'] != args_hash:
             raise ValueError('security_review_stale')
         if plan is not None and material['plan_hash'] != digest(plan): raise ValueError('security_review_stale')
-        if plan is not None and plan.get('security_policy')!=contract.RUNTIME_POLICY:raise ValueError('security_review_stale')
+        if plan is not None and plan.get('security_policy')!=policy:raise ValueError('security_review_stale')
         if request.get('asset'):
             a = await c.fetchrow('SELECT * FROM ma_assets WHERE asset_id=$1 FOR SHARE', request['asset']['asset_id'])
             if not a or not a['enabled'] or not a['verified_at'] or a['version'] != request['asset']['version'] or a['identity_hash'] != request['asset']['identity_hash']:

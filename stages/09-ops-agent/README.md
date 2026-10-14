@@ -4,6 +4,8 @@ tags: [源网智联, 多智能体, 源码运行]
 
 # 阶段9 · 双智能体、基础设施诊断与受控演练
 
+> 2026-10-14当前：SEC-M4本机限定签收及r6追加准入通过；MA-C32～C35和最终文档门槛已完成，MA-M4及联合阶段四在声明范围正式技术签收。服务器r6/v5、恢复维护修订3；本机唯一批准动作保留，写窗口关闭，生产仅登记R0。
+
 > 2026-10-13当前路线：MA-M1～M3及SEC-M1既有签收保留；SEC-M2本机限定技术验收签收、窗口已关闭并实测阻断，可进入SEC-M3开发准备但未自动启动。安全前三阶段后先SEC-M4本地集成，再评估MA-M4发布。服务器保持既有发布。最新真相入口：[[内容/第二版-智能体升级/多智能体协作建设/02-安全审查模型/开发阶段2-强制门禁集成/03-SEC-M2测试与交付]]。
 
 > MA-T01～MA-T16源码入口。MA-M1平台GET闭环保留；MA-M2新增独立无模型适配服务及受限远端采集。运维模型进程不持SSH、数据库诊断凭据或Docker socket。当前正式状态以[MA-M2测试与交付](../../内容/第二版-智能体升级/多智能体协作建设/01-基础运维模型/开发阶段2-基础设施只读诊断/03-MA-M2测试与交付.md)为MA-M2历史签收依据；MA-M3当前本机签收见下文。下文M1命令保留为历史环境入口。
@@ -217,10 +219,9 @@ node node_modules/vite/bin/vite.js build --outDir ../../artifacts/stage9-ops-age
 
 Dockerfile使用非root、单worker、无Docker socket；本轮未构建/部署服务器镜像。服务及数据库回退须保留ma_ops审计和会话数据；完整服务器回退属MA-M4，不能用开关替代。
 
-
 ## 三智能体计划与阶段9边界（2026-10-13）
 
-MA-M1/M2技术签收、MA-M3本机隔离通过，当前写窗口关闭；MA-M4延期等待安全集成后评估。现有ops_agent、安全签名模块、审批、Executor与broker是程序控制机制，不能称新增Security模型已实现。
+MA-M1/M2技术签收、MA-M3本机隔离通过，当前写窗口关闭；2026-10-13当次MA-M4延期等待安全集成后评估；2026-10-14已联合启动，当前状态见阶段四交付页。现有ops_agent、安全签名模块、审批、Executor与broker是程序控制机制，当次不能称新增Security模型已实现；后续SEC独立模型的实际签收见阶段10及阶段四入口。
 
 未来SEC在严格计划之后提供独立结论，程序仍验证当前身份、所有权、Manifest、资产/策略/参数、epoch/租约/取消/预算和审批一次消费。安全allow不打开写开关，不替代admin决定；后审不能覆写execution_uncertain或补写。
 
@@ -231,6 +232,54 @@ MA-M1/M2技术签收、MA-M3本机隔离通过，当前写窗口关闭；MA-M4�
 SEC-M2本机候选已通过runtime_reviews接入Worker/Executor/ApprovalStore，复用005、增量006；敏感读和R2最后领取/消费重新核对，审查默认关闭、已安装库不能降级旁路。门禁配套镜像deploy/security.Dockerfile包含共享协议，根上下文使用配套正向dockerignore。M1合成reviews控制器限制不变。
 
 当前状态见[[内容/第二版-智能体升级/多智能体协作建设/02-安全审查模型/开发阶段2-强制门禁集成/03-SEC-M2测试与交付]]；本阶段统一运行命令见[阶段10源码README](../10-security-agent/README.md)。历史“尚未接入”段落指建设前状态，不能作当前源码判定。
+
+## 阶段四当前交付与导航
+
+- [[内容/第二版-智能体升级/多智能体协作建设/03-联合发布验收/02-服务器发布与恢复验收/03-MA-M4测试与交付]]
+- [[内容/第二版-智能体升级/多智能体协作建设/03-联合发布验收/01-本地协作集成验收/03-SEC-M4测试与交付]] · [[内容/第二版-智能体升级/多智能体协作建设/03-联合发布验收/02-服务器发布与恢复验收/03-MA-M4测试与交付]]
+
+## 阶段四服务器发布、回退与恢复
+
+> 仅R730XD的/opt/powersystem及本期新ma-m4-*运行目录；先取得SEC-M4正式签收与对应运行摘要。candidate.tar.gz必须由正向白名单构成，运行日志、凭据和模型key私有保存；server写能力关闭，不复制本机写key。模型key只能直接传至既有业务主机私有目录，勿经公网入口主机中转。
+
+#### 步骤1 · 准备、旧版备份与固定候选
+
+```bash
+python3 /opt/powersystem/runtime/<本期MA批次>/controller.py prepare --release /opt/powersystem/runtime/<本期MA批次>
+bash /opt/powersystem/stages/04-frontend/deploy/backup.sh
+python3 /opt/powersystem/runtime/<本期MA批次>/controller.py build --release /opt/powersystem/runtime/<本期MA批次>
+python3 /opt/powersystem/runtime/<本期MA批次>/configure-ma.py --release /opt/powersystem/runtime/<本期MA批次>
+python3 /opt/powersystem/runtime/<本期MA批次>/controller.py migrate --release /opt/powersystem/runtime/<本期MA批次>
+python3 /opt/powersystem/runtime/<本期MA批次>/bootstrap-assets.py --release /opt/powersystem/runtime/<本期MA批次>
+```
+
+controller.py是本轮ma-release.py的稳定私有副本，实际回退后仍可恢复同候选。prepare从运行容器读取实际env来源及可寻址镜像，备份保存配套旧源码与collector登记。既有加密备份目标按密文SHA256实际核对，不能只检查文件存在。
+
+#### 步骤2 · 激活、重新登记、真实页面与回退
+
+```bash
+python3 /opt/powersystem/runtime/<本期MA批次>/controller.py activate --release /opt/powersystem/runtime/<本期MA批次>
+python3 /opt/powersystem/runtime/<本期MA批次>/controller.py refresh_assets --release /opt/powersystem/runtime/<本期MA批次>
+python3 /opt/powersystem/runtime/<本期MA批次>/controller.py rollback --release /opt/powersystem/runtime/<本期MA批次>
+python3 /opt/powersystem/runtime/<本期MA批次>/controller.py activate --release /opt/powersystem/runtime/<本期MA批次>
+python3 /opt/powersystem/runtime/<本期MA批次>/controller.py refresh_assets --release /opt/powersystem/runtime/<本期MA批次>
+```
+
+初始任务库由主机发布维护程序引入已核验collector实际版本，imported_by=0表示程序维护，不伪造旧版本或用户JWT；每次容器身份变化后，控制器按保留库版本单调递增，沿用Store导入校验与事务记录程序来源；旧版本审查和审批不能复用。分别验证原版恢复及同一候选重新运行，数据库/审计保留。公网HTTPS/WSS、当前角色、跨用户404、旧历史、任务/巡检及内部接口隔离由实际页面登记；不制造真实群通知。
+
+#### 步骤3 · 最终备份、隔离恢复与观察
+
+```bash
+bash /opt/powersystem/stages/04-frontend/deploy/backup.sh
+bash /opt/powersystem/stages/04-frontend/deploy/restore-verify.sh <最终密文备份绝对路径>
+python3 /opt/powersystem/stages/09-ops-agent/deploy/observe-ma.py --release /opt/powersystem/runtime/<本期MA批次> --seconds 1800
+```
+
+最终备份前停止接纳并排空本轮任务，补充备份钩子保存14张表、实际env引用/策略/审批/审查/资产版本。恢复钩子仅接受新建隔离项目、只读角色及Redis ACL，无模型和执行凭据、禁Worker/POST，不重放队列与批准。观察六个固定镜像及整个原业务项目状态，每30秒不少于1800秒；中断或候选变化必须新批次计时。备份/恢复与DB回归串行，生产故障注入放隔离环境。
+
+## v3.0.0仓库发行
+
+仓库大版本v3.0.0覆盖本阶段与Supervisor/Security集成；运行候选仍r6/v5及维护修订3，生产仅R0。源码使用固定标签获取，部署仍依本页唯一入口，不能由GitHub发行自动开放写窗口。记录见[[部署/部署与运维/v3.0.0-GitHub发布记录]]。
 
 ## 相关笔记
 

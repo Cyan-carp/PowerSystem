@@ -6,7 +6,8 @@ flowchart TB
     executing -->|"write_plan allow且程序校验"| awaiting_approval
     awaiting_approval -->|"admin批准"| queued
     queued -->|"保存计划 / 新代次重核"| executing
-    executing -->|"完成与存证"| succeeded
+    executing -->|"R0巡检完成 / 报告复核独立记录"| succeeded
+    Note["巡检无审批迁移 / 缺能力列未检查<br/>复核故障保留事实 / 不自动续跑"]
   end
   subgraph Exceptions["异常迁移：具体前态以正文条件为准"]
     direction LR

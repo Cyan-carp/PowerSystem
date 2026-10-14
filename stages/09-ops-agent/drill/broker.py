@@ -28,7 +28,7 @@ class Broker:
         labels=info.get('Config',{}).get('Labels') or {};hc=info['HostConfig'];cc=info['Config']
         expected=cfg['policy']
         milestone=expected.get('milestone','MA-M3')
-        if milestone not in ('MA-M3','SEC-M2'): raise ValueError('guard_blocked')
+        if milestone not in ('MA-M3','SEC-M2','SEC-M3','SEC-M4'): raise ValueError('guard_blocked')
         env={v.split('=',1)[0] for v in cc.get('Env') or []}
         stateless=(not info.get('Mounts') and hc.get('ReadonlyRootfs') is True and not hc.get('Privileged') and
                    hc.get('RestartPolicy',{}).get('Name') in ('no','') and 'ALL' in (hc.get('CapDrop') or []) and
@@ -51,6 +51,7 @@ class Broker:
             'stateless_verified':True,'collected_at':datetime.now(timezone.utc).isoformat()})
 
     def restart(self,token):
+        if self.config['policy'].get('milestone')=='SEC-M3': raise ValueError('write_disabled')
         g=verify(token,self.key)
         if g['action']!='restart': raise ValueError('guard_blocked')
         gate=json.loads(Path(self.config['window_file']).read_text(encoding='utf-8-sig')) if self.config.get('window_file') else self.config

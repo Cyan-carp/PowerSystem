@@ -26,7 +26,7 @@ class ReviewController:
     def __init__(self, pool, client, service_token, request_key, result_key,
                  url='http://127.0.0.1:8100', model='deepseek-v4-flash-0731', timeout=30, ttl=300,
                  acceptance_timeout_exception=False):
-        if url not in ('http://127.0.0.1:8100', 'http://security-agent:8100'):
+        if url not in ('http://127.0.0.1:8100', 'http://security-agent:8100', 'http://127.0.0.1:8110', 'http://127.0.0.1:8114'):
             raise ValueError('invalid_security_origin')
         if min(map(len, (service_token, request_key, result_key))) < 32 or len({service_token, request_key, result_key}) != 3:
             raise ValueError('security_private_credentials_required')

@@ -28,6 +28,16 @@ class Worker:
             self.schemas=[s for s in self.schemas if s['function']['name'] in ('assets__list','docker__inspect_container','docker__restart_drill_container')]
         self.id = str(uuid4()); self.jobs = {}; self.group = "ops-workers"
 
+    async def available_schemas(self):
+        if self.cfg.runtime_profile not in ('m4-local','m4-server-readonly'):return self.schemas
+        from .runtime_profile import environments
+        assets=await self.store.pool.fetch('SELECT capabilities FROM ma_assets WHERE enabled AND verified_at IS NOT NULL AND environment=ANY($1::text[])',list(environments(self.cfg)))
+        capabilities={name for asset in assets for name in (json.loads(asset['capabilities']) if isinstance(asset['capabilities'],str) else asset['capabilities'])}
+        def allowed(schema):
+            name=schema['function']['name'].replace('__','.')
+            return name=='assets.list' or name not in INFRA_MANIFEST and name!='docker.restart_drill_container' or name in capabilities
+        return [schema for schema in self.schemas if allowed(schema)]
+
     async def model(self, messages, row=None, epoch=None, jwt=None, result=None):
         if getattr(self.store,'security_required',False) and not self.store.security_gates and result and result.get('infrastructure_evidence'):
             raise ValueError('security_unavailable')
@@ -36,7 +46,7 @@ class Worker:
                 raise ValueError('security_projection_blocked')
             from .runtime_reviews import licensed_summary
             # Full local evidence stays in the task report. Only licensed summary goes out.
-            summary = licensed_summary({'status':'executing', **result})
+            summary = licensed_summary({'status':'executing', **result}, self.cfg)
             evidence = result['infrastructure_evidence'][-1]
             step = await self.store.pool.fetchrow('SELECT * FROM ma_task_steps WHERE task_id=$1 ORDER BY step_no DESC LIMIT 1', row['task_id'])
             rid=await self.store.security_gates.require(self.executor,row,epoch,step['step_no'],step['tool'],json.loads(step['args']),jwt,result,'data_egress',payload=summary)
@@ -44,10 +54,11 @@ class Worker:
             messages.append({'role':'user','content':'以下是本轮程序已读取的安全摘要，assets为已核验目录；直接用实际asset_id执行必要查询，不重复查询相同台账。\n'+json.dumps(summary,ensure_ascii=False)})
             from ops_contract import digest
             await self.store.security_gates.check_egress(row['task_id'],rid,row['user_id'],digest(summary),'operation')
-        if self.provider: return await self.provider(messages, self.schemas)
+        schemas=await self.available_schemas()
+        if self.provider: return await self.provider(messages, schemas)
         cfg = self.cfg
         reply = await self.client.post(cfg.llm_url + "/chat/completions", headers={"Authorization": "Bearer " + cfg.llm_key},
-            json=json.loads(cfg.redact(json.dumps({"model": cfg.model, "messages": messages, "tools": self.schemas, "tool_choice": "auto", "max_tokens": cfg.max_tokens, "stream": False}, ensure_ascii=False))), timeout=cfg.model_timeout)
+            json=json.loads(cfg.redact(json.dumps({"model": cfg.model, "messages": messages, "tools": schemas, "tool_choice": "auto", "max_tokens": cfg.max_tokens, "stream": False}, ensure_ascii=False))), timeout=cfg.model_timeout)
         if reply.status_code != 200: raise ValueError("model_http_" + str(reply.status_code))
         msg = reply.json()["choices"][0]["message"]
         return {"role": "assistant", "content": msg.get("content"), **({"tool_calls": msg["tool_calls"]} if msg.get("tool_calls") else {})}
@@ -79,7 +90,10 @@ class Worker:
                 return await self.executor.call(row, epoch, step, name, args, ctx["jwt"], result)
             remaining = max(.001, (row["deadline"] - datetime.now(timezone.utc)).total_seconds())
             async with asyncio.timeout(remaining):
-                if ctx.get("verification"):
+                if payload.get('task_kind')=='security_inspection':
+                    from .inspection import run as run_inspection
+                    await run_inspection(self,row,epoch,payload,ctx['jwt'],result,call)
+                elif ctx.get("verification"):
                     result["verification_results"] = {}
                     await fixed_verification(ctx["verification"], call, result, self.cfg)
                 else:
@@ -139,8 +153,11 @@ class Worker:
             result["warnings"].append("执行异常诊断：" + json.dumps(diagnostic, ensure_ascii=False))
             status = "timeout" if isinstance(exc, TimeoutError) else "cancelled" if isinstance(exc, InterruptedError) else "failed"
             allowed = {"auth_context_lost", "permission_denied", "guard_blocked", "invalid_args", "invalid_device", "required_tool_failed", "model_budget_exceeded", "tool_budget_exceeded",'asset_not_found','asset_not_verified','asset_version_changed','capability_unavailable','target_ambiguous','approval_invalidated','approval_expired','write_disabled','drill_not_healthy'}
+            allowed.update({'inspection_scope_blocked','inspection_scope_too_large'})
             allowed.update({'security_denied','security_clarification_required','security_unavailable','security_invalid','security_review_stale','security_projection_blocked'})
             code = str(exc) if str(exc) in allowed or str(exc).startswith("model_http_") else "timeout" if status == "timeout" else "cancelled" if status == "cancelled" else "execution_failed"
+            if code in ('target_ambiguous','inspection_scope_too_large') and payload.get('task_kind')=='security_inspection':
+                result['diagnosis']['clarification']='请指定明确的在册资产；检查本轮登记集合请明确说本项目。' if code=='target_ambiguous' else '本轮范围超过任务预算，请缩小到具体在册资产后重新发起。'
             result["error"] = {"code": code, "message": code, "retryable": False}
             try: await self.store.transition(tid, epoch, status, result, code)
             except LostLease: pass

@@ -1,8 +1,61 @@
 ---
+
+## SEC-M3本机项目只读巡检（2026-10-14）
+
+以下M3历史本机隔离技术签收见[SEC-M3正式交付](../../内容/第二版-智能体升级/多智能体协作建设/02-安全审查模型/开发阶段3-项目只读巡检/03-SEC-M3测试与交付.md)。该M3批次零写，M3没有open阶段；旧SEC-M2历史命令范围保持独立，不得用它打开本轮巡检写窗口。许可sec-m3-local-inspection/v1，策略sec-m3-policy/v3，模型0731/30秒，旧模型质量失败保留。
+
+### 步骤1 · 建立新批次与隔离实例
+
+从仓库根目录执行；run必须新建，不覆盖已存在private。15434/16379/18105/18097/8110～8113/15179全部回环预检，冲突停止。仅本批Compose对象，原服务/卷保持；模型凭据只继承私有引用，不打印。
+
+```powershell
+& artifacts/stage9-ops-agent/venv/Scripts/python.exe -X utf8 stages/10-security-agent/scripts/prepare-m3.py --run artifacts/stage10-security-agent/sec-m3-<日期>-<批次> --phase config
+docker compose -f artifacts/stage10-security-agent/<本批次>/private/compose.json up -d postgres redis drill
+& artifacts/stage9-ops-agent/venv/Scripts/python.exe -X utf8 stages/10-security-agent/scripts/prepare-m3.py --run artifacts/stage10-security-agent/<本批次> --phase databases
+& artifacts/stage9-ops-agent/venv/Scripts/python.exe -X utf8 stages/10-security-agent/scripts/prepare-m3.py --run artifacts/stage10-security-agent/<本批次> --phase drill
+docker compose -f artifacts/stage10-security-agent/<本批次>/private/compose.json up -d broker
+stages/10-security-agent/scripts/start-m3.ps1 -ConfigFile artifacts/stage10-security-agent/<本批次>/private/local.env -Initialize -Frontend
+& artifacts/stage9-ops-agent/venv/Scripts/python.exe -X utf8 stages/10-security-agent/scripts/accept-m3.py --run artifacts/stage10-security-agent/<本批次> --phase import --output artifacts/stage10-security-agent/<本批次>/import-<尝试>
+```
+
+### 步骤2 · 软件与真实分层验收
+
+验收sec_m3_acceptance_test/rag_acceptance与可清理sec_m3_regression_test/rag_regression分离；旧SEC/MA回归只使用本轮新PG内独立库。每次attempt/output新建，失败不覆盖。数据库回归完成后再做依赖恢复，不并行重启同一PG。
+
+```powershell
+& artifacts/stage9-ops-agent/venv/Scripts/python.exe -X utf8 stages/10-security-agent/scripts/run-regression.py --run artifacts/stage10-security-agent/<本批次> --layer sec --attempt <尝试>
+& artifacts/stage9-ops-agent/venv/Scripts/python.exe -X utf8 stages/10-security-agent/scripts/run-regression.py --run artifacts/stage10-security-agent/<本批次> --layer ops --attempt <尝试>
+& artifacts/stage8-agent-rag/venv/Scripts/python.exe -X utf8 stages/10-security-agent/scripts/run-regression.py --run artifacts/stage10-security-agent/<本批次> --layer rag --attempt <尝试>
+& artifacts/stage9-ops-agent/venv/Scripts/python.exe -X utf8 stages/10-security-agent/scripts/accept-m3.py --run artifacts/stage10-security-agent/<本批次> --phase read --output artifacts/stage10-security-agent/<本批次>/read-<尝试>
+& artifacts/stage9-ops-agent/venv/Scripts/python.exe -X utf8 stages/10-security-agent/scripts/accept-m3.py --run artifacts/stage10-security-agent/<本批次> --phase target --output artifacts/stage10-security-agent/<本批次>/target-<尝试>
+& artifacts/stage9-ops-agent/venv/Scripts/python.exe -X utf8 stages/10-security-agent/scripts/quality-m3.py --run artifacts/stage10-security-agent/<本批次> --output artifacts/stage10-security-agent/<本批次>/quality-<尝试>
+& artifacts/stage9-ops-agent/venv/Scripts/python.exe -X utf8 stages/10-security-agent/scripts/accept-m3.py --run artifacts/stage10-security-agent/<本批次> --phase explain --task <本人task-id> --output artifacts/stage10-security-agent/<本批次>/explain-<尝试>
+```
+
+真实质量脚本为条件fixture，零grant/工具，不代偿实际取证。本机仅登记容器inspect，其余能力未检查；完整报告仅本人页面，解释只发送新审查摘要。前端/Go测试命令见对应源码README，business-test.env仅本轮专库，不输出私有值。
+
+### 步骤3 · 页面、恢复与关闭
+
+fixture-cancel只建立明确标注的合成等待任务，由本轮本人实际页面取消，零模型/远端读取/写；不能拿它证明真实主机故障。实际应用/PG重启先保存基线，回归全部结束后才停止本批进程，禁止down -v。
+
+```powershell
+& artifacts/stage9-ops-agent/venv/Scripts/python.exe -X utf8 stages/10-security-agent/scripts/verify-m3.py --run artifacts/stage10-security-agent/<本批次> --phase fixture-cancel --output artifacts/stage10-security-agent/<本批次>/cancel-<尝试>
+& artifacts/stage9-ops-agent/venv/Scripts/python.exe -X utf8 stages/10-security-agent/scripts/verify-m3.py --run artifacts/stage10-security-agent/<本批次> --phase before-recovery --task <本人task-id> --output artifacts/stage10-security-agent/<本批次>/before-<尝试>
+stages/10-security-agent/scripts/start-m3.ps1 -ConfigFile artifacts/stage10-security-agent/<本批次>/private/local.env -Stop
+docker compose -f artifacts/stage10-security-agent/<本批次>/private/compose.json restart postgres
+stages/10-security-agent/scripts/start-m3.ps1 -ConfigFile artifacts/stage10-security-agent/<本批次>/private/local.env -Frontend
+& artifacts/stage9-ops-agent/venv/Scripts/python.exe -X utf8 stages/10-security-agent/scripts/verify-m3.py --run artifacts/stage10-security-agent/<本批次> --phase after-recovery --task <本人task-id> --baseline artifacts/stage10-security-agent/<本批次>/before-<尝试>/baseline.json --output artifacts/stage10-security-agent/<本批次>/after-<尝试>
+& artifacts/stage9-ops-agent/venv/Scripts/python.exe -X utf8 stages/10-security-agent/scripts/verify-m3.py --run artifacts/stage10-security-agent/<本批次> --phase closed --task <本人task-id> --output artifacts/stage10-security-agent/<本批次>/closed-<尝试>
+```
+
+进程/库/端口当前状态以实际检查为准；健康不替代模型、实际读取、页面和存证。SEC-M3通过只判SEC-M4准入，服务器及知识不自动发布。
+
 tags: [源网智联, 第二版, 安全审查, 源码运行]
 ---
 
 # 阶段10 · 独立安全审查与强制门禁
+
+> 2026-10-14当前：SEC-M4本机限定签收及r6追加准入通过；MA-C32～C35和最终文档门槛已完成，MA-M4及联合阶段四在声明范围正式技术签收。服务器r6/v5、恢复维护修订3；本机唯一批准动作保留，写窗口关闭，生产仅登记R0。
 
 > 当前：SEC-M1常规配置签收；SEC-M2本机限定技术验收签收，窗口已关闭并实测阻断，SEC-M3未启动。最新结果、问题和下一阶段判定见[SEC-M2测试与交付](../../内容/第二版-智能体升级/多智能体协作建设/02-安全审查模型/开发阶段2-强制门禁集成/03-SEC-M2测试与交付.md)。本页维护运行命令；旧SEC-M1批次及其命令保留为历史。
 
@@ -156,8 +209,6 @@ $env:SEC_TEST_CONFIG_FILE="$PWD/artifacts/stage10-security-agent/<本批次>/pri
 
 SEC-M2负责门禁和security_reviews报告集成；SEC-M3负责主动只读巡检。安全前三阶段签收后统一启动第四阶段，先SEC-M4本地集成，再MA-M4发布验收。本轮不发布服务器、不开写、不导入知识、不提交或推送。
 
-
-
 ## 六、0731服务/模型层十样例验收
 
 #### 步骤1 · 显式运行服务层模式
@@ -238,6 +289,65 @@ stages/10-security-agent/scripts/start-local.ps1 -ConfigFile artifacts/stage10-s
 ```
 
 依本页前节执行程序/专库、MA/BND与prepare→专用PG重启→ready→verify的恢复核验；理由需另与合成事实核对，程序summary不能代替语义复核。最终real-return-v6-program-db-r1完整10/10、最长9.884秒，124/108/114+2子测试及恢复/绑定通过；原v5首批摘要误述保留quality-review，不作为当前签收批次。当前策略v6，默认30秒/例外关闭，旧有效期不延长，未启动后续或发布。
+
+## 阶段四当前交付与导航
+
+- [[内容/第二版-智能体升级/多智能体协作建设/03-联合发布验收/01-本地协作集成验收/03-SEC-M4测试与交付]]
+- [[内容/第二版-智能体升级/多智能体协作建设/03-联合发布验收/01-本地协作集成验收/03-SEC-M4测试与交付]] · [[内容/第二版-智能体升级/多智能体协作建设/03-联合发布验收/02-服务器发布与恢复验收/03-MA-M4测试与交付]]
+
+## 十、SEC-M4独立本机集成
+
+> 在仓库根执行，沿用现有两套虚拟环境与已装依赖。每次失败使用新输出目录；先核对端口与拥有标签。旧M1～M3卷/配置保留。下列占位批次不能复用已消费窗口；真实approve仅由本人admin点击任务卡，脚本不批准。
+
+#### 步骤1 · 新建批次并串行准备
+
+```powershell
+& artifacts/stage9-ops-agent/venv/Scripts/python.exe -X utf8 stages/10-security-agent/scripts/prepare-m4.py --run artifacts/stage10-security-agent/<新SEC-M4批次> --phase config
+& artifacts/stage9-ops-agent/venv/Scripts/python.exe -X utf8 stages/10-security-agent/scripts/prepare-m4.py --run artifacts/stage10-security-agent/<新SEC-M4批次> --phase databases
+& artifacts/stage9-ops-agent/venv/Scripts/python.exe -X utf8 stages/10-security-agent/scripts/prepare-m4.py --run artifacts/stage10-security-agent/<新SEC-M4批次> --phase drill
+pwsh -NoProfile -File stages/10-security-agent/scripts/start-m4.ps1 -ConfigFile artifacts/stage10-security-agent/<新SEC-M4批次>/private/local.env -Initialize -Frontend
+```
+
+#### 步骤2 · 冻结与分层验收
+
+```powershell
+& artifacts/stage9-ops-agent/venv/Scripts/python.exe -X utf8 stages/10-security-agent/scripts/accept-m4.py --run artifacts/stage10-security-agent/<新SEC-M4批次> --output artifacts/stage10-security-agent/<新SEC-M4批次>/import-r1 --phase import
+& artifacts/stage9-ops-agent/venv/Scripts/python.exe -X utf8 stages/10-security-agent/scripts/quality-m4.py --run artifacts/stage10-security-agent/<新SEC-M4批次> --output artifacts/stage10-security-agent/<新SEC-M4批次>/quality-r1
+& artifacts/stage9-ops-agent/venv/Scripts/python.exe -X utf8 stages/10-security-agent/scripts/freeze-m4.py --run artifacts/stage10-security-agent/<新SEC-M4批次> --candidate <明确的新MA候选> --output-name runtime-manifest-<独立候选名>.json
+& artifacts/stage9-ops-agent/venv/Scripts/python.exe -X utf8 stages/10-security-agent/scripts/accept-m4.py --run artifacts/stage10-security-agent/<新SEC-M4批次> --output artifacts/stage10-security-agent/<新SEC-M4批次>/diagnose-r1 --phase diagnose
+& artifacts/stage9-ops-agent/venv/Scripts/python.exe -X utf8 stages/10-security-agent/scripts/accept-m4.py --run artifacts/stage10-security-agent/<新SEC-M4批次> --output artifacts/stage10-security-agent/<新SEC-M4批次>/inspection-r1 --phase target
+& artifacts/stage9-ops-agent/venv/Scripts/python.exe -X utf8 stages/10-security-agent/scripts/accept-m4.py --run artifacts/stage10-security-agent/<新SEC-M4批次> --output artifacts/stage10-security-agent/<新SEC-M4批次>/explain-r1 --phase explain --task <本人任务ID>
+& artifacts/stage9-ops-agent/venv/Scripts/python.exe -X utf8 stages/10-security-agent/scripts/restore-local-m4.py --run artifacts/stage10-security-agent/<新SEC-M4批次> --output artifacts/stage10-security-agent/<新SEC-M4批次>/restore-r1
+```
+
+数据库回归和恢复串行，完整SEC/MA/RAG/BND/阶段7/Go/前端测试及类型/构建按前文各层入口记录，不相加重叠选测。实际页面事实、诊断、巡检缺项、失败、刷新与取消单独截图。固定主动核验须实际接口并证明模型0调用。
+
+#### 步骤3 · 本人批准、守护及关闭
+
+> 只在全部演练前置检查通过并保存preflight-ready.json后开窗，最多1800秒；先启动守护并取得任务卡，最后由本人点击一次批准。本批已执行一次并关闭，不可重开。
+
+```powershell
+& artifacts/stage9-ops-agent/venv/Scripts/python.exe -X utf8 stages/10-security-agent/scripts/prepare-m4.py --run artifacts/stage10-security-agent/<新SEC-M4批次> --phase open
+pwsh -NoProfile -File stages/10-security-agent/scripts/start-m4.ps1 -ConfigFile artifacts/stage10-security-agent/<新SEC-M4批次>/private/local.env -Frontend
+& artifacts/stage9-ops-agent/venv/Scripts/python.exe -X utf8 stages/10-security-agent/scripts/accept-m4.py --run artifacts/stage10-security-agent/<新SEC-M4批次> --output artifacts/stage10-security-agent/<新SEC-M4批次>/pending-write-r1 --phase write
+$m4Pending = Get-Content artifacts/stage10-security-agent/<新SEC-M4批次>/pending-write-r1/summary.json -Raw -Encoding utf8 | ConvertFrom-Json
+@{task_id=$m4Pending.result.task_id} | ConvertTo-Json | Set-Content artifacts/stage10-security-agent/<新SEC-M4批次>/write-pending.json -Encoding utf8
+& artifacts/stage9-ops-agent/venv/Scripts/python.exe -X utf8 stages/10-security-agent/scripts/watch-window-m4.py --run artifacts/stage10-security-agent/<新SEC-M4批次> --shell-executable <PowerShell7绝对路径>
+& artifacts/stage9-ops-agent/venv/Scripts/python.exe -X utf8 stages/10-security-agent/scripts/verify-m4.py --run artifacts/stage10-security-agent/<新SEC-M4批次> --output artifacts/stage10-security-agent/<新SEC-M4批次>/closed-r1 --phase closed --task <本人任务ID>
+& artifacts/stage9-ops-agent/venv/Scripts/python.exe -X utf8 stages/10-security-agent/scripts/prove-write-m4.py --run artifacts/stage10-security-agent/<新SEC-M4批次> --output artifacts/stage10-security-agent/<新SEC-M4批次>/one-shot-r1
+```
+
+如权威窗口已关闭但所属服务reload失败，仅使用watch-window-m4.py的--closed-reload及显式PowerShell7恢复关闭档；独立stdout/stderr与失败证据保留。verify-m4.py的before-recovery/after-recovery串行比较实际专库重启前后记录，禁止重新消费审批。模型或写动作不自动重试。
+
+### M4当前运行档与历史范围
+
+2026-10-14：本机许可/策略保持v2；服务器只读策略sec-m4-policy/v5、许可sec-m4-project-readonly/v5；旧v2/v3/v4服务器任务保留原绑定且不自动提升，配置/资产变化使旧审查或审批失效。公共ma/v1与ma-review/v1及四字段意见/六字段服务响应不变。r6核心174项905f62d2209ec6d9f0f6d56abb9c321f6a81ef90e0a4bdbb547bcdfed565a1e8；备份恢复脚本维护修订独立留档，不改运行核心/镜像。
+
+上方M1/M2/M3许可、命令和“当次未签收”描述均为对应历史批次，不代表M4当前权限。实际本人批准前须确认守护已经轮询write-pending.json对应任务；守护单独终端保持运行，命令不替本人批准。本轮已消费一次且关闭，禁止复用。
+
+## v3.0.0仓库发行
+
+安全审查服务与运维模型一起纳入v3.0.0公开源码版本；原运行策略/许可及SEC-M4签收不重写。发行记录见[[部署/部署与运维/v3.0.0-GitHub发布记录]]，运行/复验仍按本页入口与已授权范围进行。
 
 ## 相关笔记
 
