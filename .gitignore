@@ -9,6 +9,13 @@ __pycache__/
 *.test
 *.out
 artifacts/
+# Preserve the deployment artifact layout and its public documentation only.
+!deploy/artifacts/
+deploy/artifacts/*
+!deploy/artifacts/README.md
+!deploy/artifacts/frp-source-tests/
+deploy/artifacts/frp-source-tests/*
+!deploy/artifacts/frp-source-tests/.gitkeep
 private/
 pytest-cache-files-*/
 runtime/
