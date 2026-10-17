@@ -27,7 +27,7 @@ export function downsample(points: [number, number][], limit = 1800): [number, n
   return result
 }
 
-export async function loadHistory(id: number, metric: Metric, start: Date, end: Date): Promise<[number, number][]> {
+export async function loadHistory(id: number, metric: Metric, start: Date, end: Date, limit = 1800): Promise<[number, number][]> {
   const span = end.getTime() - start.getTime()
   if (span <= 0 || span > MAX_SPAN) throw new Error('时间范围必须大于 0 且不超过 24 小时')
   const ranges: [Date, Date][] = []
@@ -37,5 +37,5 @@ export async function loadHistory(id: number, metric: Metric, start: Date, end: 
   const chunks = await Promise.all(ranges.map(([from, to]) => api.history(id, metric, from, to)))
   const merged = normalizePoints(chunks.flatMap((item) => item.points))
   const unique = merged.filter((point, index) => index === 0 || point[0] !== merged[index - 1][0])
-  return downsample(unique)
+  return downsample(unique, limit)
 }

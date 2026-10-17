@@ -30,5 +30,5 @@ function alarmStatus(value: unknown): string { return value === 'unhandled' ? 'æ
   </section>
 </template>
 <style scoped>
-.verification-report{margin:14px 0;padding:12px;border:1px solid var(--line);border-radius:8px;font-size:13px}.verification-report p{margin:8px 0;overflow-wrap:anywhere}.verification-report dl{display:grid;grid-template-columns:140px 1fr;gap:8px}.verification-report dd{margin:0;overflow-wrap:anywhere}.verification-report summary{cursor:pointer;color:var(--ink-3)}.verification-report pre{max-height:320px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px}
+.verification-report{margin:14px 0;padding:12px;border:1px solid var(--line);border-radius:4px;font-size:13px}.verification-report p{margin:8px 0;overflow-wrap:anywhere}.verification-report dl{display:grid;grid-template-columns:140px 1fr;gap:8px}.verification-report dd{margin:0;overflow-wrap:anywhere}.verification-report summary{cursor:pointer;color:var(--ink-3)}.verification-report pre{max-height:320px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px}
 </style>

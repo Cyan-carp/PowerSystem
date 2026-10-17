@@ -1,0 +1,26 @@
+[Unit]
+Description=PowerSystem R730XD authenticated FRP source reconciliation
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+ExecStart=/usr/bin/python3 -B /opt/powersystem-edge/source-refresh/frp-source-refresh.py client
+TimeoutStartSec=220
+UMask=0077
+StateDirectory=powersystem-source-client
+StateDirectoryMode=0700
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+CapabilityBoundingSet=
+MemoryMax=96M
+TasksMax=8

@@ -24,5 +24,5 @@ defineProps<{ evidence: RAGEvidence; historical?: boolean }>()
   </section>
 </template>
 <style scoped>
-.business-evidence{border:1px solid var(--line);border-radius:8px;padding:12px;margin:14px 0;color:var(--ink-2);font-size:13px}.business-evidence p{margin:7px 0}.business-evidence summary{cursor:pointer}.business-evidence dl{padding:8px 0;border-top:1px solid var(--line)}.business-evidence dt{font-weight:600}.business-evidence dd{margin:6px 0;overflow-wrap:anywhere}.business-evidence small{display:block;color:var(--ink-3)}
+.business-evidence{border:1px solid var(--line);border-radius:4px;padding:12px;margin:14px 0;color:var(--ink-2);font-size:13px}.business-evidence p{margin:7px 0}.business-evidence summary{cursor:pointer}.business-evidence dl{padding:8px 0;border-top:1px solid var(--line)}.business-evidence dt{font-weight:600}.business-evidence dd{margin:6px 0;overflow-wrap:anywhere}.business-evidence small{display:block;color:var(--ink-3)}
 </style>

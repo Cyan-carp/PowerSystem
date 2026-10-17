@@ -1,10 +1,13 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import type { OpsTask } from '../types'
 import { api, ApiError } from '../lib/api'
 import { terminalTask, taskLabels, pollDelay, canDecideApproval, approvalLabels, attemptLabels, taskErrorText } from '../lib/ops-task'
 import { currentUser } from '../lib/auth'
-import { renderAnswer } from '../lib/rag-chat'
+import { hasBusinessEvidence } from '../lib/task-presentation'
+import TaskReadableText from './TaskReadableText.vue'
+import TaskProgramFacts from './TaskProgramFacts.vue'
+import { dateTime } from '../lib/format'
 import InspectionReport from './InspectionReport.vue'
 import BusinessEvidence from './BusinessEvidence.vue'
 import InfrastructureEvidence from './InfrastructureEvidence.vue'
@@ -13,6 +16,8 @@ const props = defineProps<{ initial: OpsTask; historical?: boolean }>()
 const emit = defineEmits<{ explain: [id: string]; source: [id: string] }>()
 const task = ref(props.initial), error = ref(''), cancelling = ref(false)
 const deciding = ref(false), decisionError = ref('')
+const isHistorical = computed(() => props.historical || props.initial.historical || task.value.historical)
+const reviewAttention = computed(() => (task.value.security_reviews ?? []).some(review => review.state !== 'completed' || review.decision !== 'allow'))
 let timer: ReturnType<typeof setTimeout> | undefined, controller: AbortController | undefined, stopped = false
 let retryAt = 0
 async function update(): Promise<void> {
@@ -48,7 +53,9 @@ onUnmounted(() => { stopped = true; clearTimeout(timer); controller?.abort(); do
 <template>
   <section class="ops-task" :data-task-id="task.task_id">
     <header><strong>{{ task.task_kind === 'security_inspection' ? '项目只读巡检' : '运维任务' }}</strong><span>{{ taskLabels[task.status] }}</span></header>
-    <p class="ops-muted">{{ task.intent }}</p>
+    <p v-if="isHistorical" class="ops-history">历史任务记录 · 结论按原采集时点阅读，打开会话不会重新取证。</p>
+    <p v-if="reviewAttention" class="ops-error" role="alert">独立安全审查存在否决、待澄清或未完成项，请查看下方安全意见；不能据此继续执行。</p>
+    <details class="ops-scope"><summary>任务范围与执行约束</summary><TaskReadableText :text="task.intent" /></details>
     <p v-if="error" class="ops-error" role="alert">{{ error }}</p>
     <p v-if="task.error" :class="task.status === 'cancelled' ? 'ops-muted' : 'ops-error'">{{ taskErrorText(task.error) }}</p>
     <p v-if="decisionError" class="ops-error" role="alert">{{ decisionError }}</p>
@@ -56,7 +63,7 @@ onUnmounted(() => { stopped = true; clearTimeout(timer); controller?.abort(); do
       <strong>演练容器重启审批 · R2 · {{ approvalLabels[approval.status] }}</strong>
       <p>目标：{{ approval.plan.target }} · 资产版本 {{ approval.plan.snapshot.asset_version }}</p>
       <p>{{ approval.plan.impact }}</p><p class="ops-muted">{{ approval.plan.rollback_limit }}</p>
-      <p>审批有效期至 {{ new Date(approval.expires_at).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' }) }}</p>
+      <p>审批有效期至 {{ dateTime(approval.expires_at) }}</p>
       <details><summary>审批绑定详情</summary><p>容器 ID：{{ approval.plan.snapshot.container_id }}</p><p>镜像：{{ approval.plan.snapshot.image_digest }}</p><p>参数摘要：{{ approval.plan.args_hash }}</p><p>策略：{{ approval.plan.snapshot.policy_version }}</p><p>工具：{{ approval.plan.tool }} · {{ approval.plan.tool_version }}</p></details>
       <div v-if="approval.can_decide === true && canDecideApproval(currentUser?.role, task.status, approval.status, approval.expires_at)">
         <el-button type="primary" size="small" :disabled="deciding" :loading="deciding" @click="decide(approval.approval_id, 'approve')">批准并重启演练容器</el-button>
@@ -65,27 +72,42 @@ onUnmounted(() => { stopped = true; clearTimeout(timer); controller?.abort(); do
       <p v-if="approval.consumed_at" class="ops-muted">审批已消费，不能重放。</p>
     </section>
     <InspectionReport v-if="task.inspection_report" :report="task.inspection_report" :historical="historical || initial.historical || task.historical" />
-    <SecurityReviews :reviews="task.security_reviews || []" :historical="historical || initial.historical || task.historical" />
     <section v-if="task.execution_attempts?.length" class="ops-approval"><strong>程序操作记录</strong>
       <p v-for="attempt in task.execution_attempts" :key="attempt.attempt_id">{{ attemptLabels[attempt.status] }} · {{ attempt.call_id }}</p>
       <p v-if="task.execution_attempts.some(a => a.status === 'execution_uncertain')" class="ops-error">动作结果不确定，禁止自动重试。请另建只读任务核对目标状态。</p>
       <p class="ops-muted">取消不代表已回滚；原审批和已发生操作保留。</p>
     </section>
     <details v-if="task.operation_evidence?.length"><summary>操作前后程序证据</summary><pre>{{ JSON.stringify(task.operation_evidence, null, 2) }}</pre></details>
-    <div v-if="task.diagnosis?.summary" class="ops-analysis" v-html="renderAnswer(task.diagnosis.summary)" />
-    <p v-if="task.diagnosis?.clarification">{{ task.diagnosis.clarification }}</p>
-    <p v-for="(item, index) in task.diagnosis?.hypotheses || []" :key="`h${index}`" class="ops-muted">模型研判 · {{ item }}</p>
-    <p v-for="(item, index) in task.diagnosis?.recommendations || []" :key="`r${index}`" class="ops-muted">建议 · {{ item }}</p>
-    <BusinessEvidence v-if="task.evidence" :evidence="task.evidence" :historical="historical || initial.historical || task.historical" />
+    <TaskProgramFacts :task="task" :historical="isHistorical" />
+    <section v-if="task.diagnosis" class="ops-diagnosis" aria-label="Operation 模型诊断">
+      <h3>Operation 模型诊断 <span>解释与推测，独立于程序事实</span></h3>
+      <p class="ops-muted">如模型文字与上方工具字段不一致，以程序返回为准；缺失字段、连续健康和长期稳定性均不能由单次读数补推。</p>
+      <section v-if="task.diagnosis.summary" class="ops-conclusion"><h4>诊断结论</h4><TaskReadableText :text="task.diagnosis.summary" /></section>
+      <section v-if="task.diagnosis.clarification" class="ops-clarification"><h4>需要澄清</h4><TaskReadableText :text="task.diagnosis.clarification" /></section>
+      <div class="ops-opinions">
+        <section v-if="task.diagnosis.hypotheses?.length"><h4>模型研判 <span>尚未等同证实</span></h4><ol><li v-for="(item, index) in task.diagnosis.hypotheses" :key="index"><TaskReadableText :text="item" /></li></ol></section>
+        <section v-if="task.diagnosis.recommendations?.length"><h4>建议与下一步</h4><ol><li v-for="(item, index) in task.diagnosis.recommendations" :key="index"><TaskReadableText :text="item" /></li></ol><p class="ops-muted">建议不代表已执行，也不产生新的操作授权。</p></section>
+      </div>
+      <details class="ops-original"><summary>原始模型输出 · 保留未格式化文本</summary><pre>{{ JSON.stringify(task.diagnosis, null, 2) }}</pre></details>
+    </section>
+    <SecurityReviews :reviews="task.security_reviews || []" :historical="isHistorical" />
+    <BusinessEvidence v-if="hasBusinessEvidence(task.evidence) && task.evidence" :evidence="task.evidence" :historical="isHistorical" />
     <InfrastructureEvidence v-if="task.infrastructure_evidence?.length" :evidence="task.infrastructure_evidence" :historical="historical || initial.historical || task.historical" />
     <details v-if="task.steps?.length"><summary>程序执行步骤 · {{ task.steps.length }}</summary><div v-for="step in task.steps" :key="step.step_no"><p>{{ step.step_no }} · {{ step.tool }} · {{ step.status }}</p><pre v-if="step.result">{{ JSON.stringify(step.result, null, 2) }}</pre></div></details>
-    <details v-if="task.sources?.length"><summary>任务来源 · {{ task.sources.length }}</summary><p v-for="item in task.sources" :key="item.id">{{ item.title }} · {{ item.collected_at }}<el-button v-if="item.kind === 'document'" text @click="emit('source', item.id)">阅读章节</el-button></p></details>
+    <details v-if="task.sources?.length"><summary>任务来源 · {{ task.sources.length }}</summary><p v-for="item in task.sources" :key="item.id">{{ item.title }} · {{ dateTime(item.collected_at) }}<el-button v-if="item.kind === 'document'" text @click="emit('source', item.id)">阅读章节</el-button></p></details>
     <p v-for="warning in task.warnings || []" :key="warning" class="ops-muted">{{ warning }}</p>
     <footer><small>{{ task.task_id }}</small><el-button v-if="!terminalTask(task.status)" size="small" :loading="cancelling" @click="cancel">取消任务</el-button><el-button v-else size="small" @click="emit('explain', task.task_id)">解释此结果</el-button></footer>
   </section>
 </template>
 
 <style scoped>
-.ops-task{border:1px solid var(--brand-line);background:var(--card);border-radius:14px;padding:16px;margin-top:16px}.ops-task header,.ops-task footer{display:flex;justify-content:space-between;gap:12px;align-items:center}.ops-task header span{font-size:12px;color:var(--brand)}.ops-muted,.ops-task small{font-size:12px;color:var(--ink-3);overflow-wrap:anywhere}.ops-error{color:var(--danger);font-size:13px}.ops-task pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:320px;overflow:auto;background:var(--bg);padding:12px;border-radius:8px}.ops-task footer{margin-top:14px;flex-wrap:wrap}.ops-analysis{line-height:1.8;overflow-wrap:anywhere}
-.ops-approval{border:1px solid var(--brand-line);border-radius:10px;padding:12px;margin:12px 0;background:var(--brand-soft);overflow-wrap:anywhere}.ops-approval p{font-size:13px;line-height:1.6}
+.ops-task{border:1px solid var(--brand-line);background:var(--card);border-radius:var(--r-lg);padding:16px;margin-top:16px}.ops-task header,.ops-task footer{display:flex;justify-content:space-between;gap:12px;align-items:center}.ops-task header span{font-size:12px;color:var(--brand)}.ops-muted,.ops-task small{font-size:12px;color:var(--ink-3);overflow-wrap:anywhere}.ops-error{color:var(--danger);font-size:13px}.ops-task pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:320px;overflow:auto;background:var(--bg);padding:12px;border-radius:4px}.ops-task footer{margin-top:14px;flex-wrap:wrap}.ops-analysis{line-height:1.8;overflow-wrap:anywhere}
+.ops-approval{border:1px solid var(--brand-line);border-radius:4px;padding:12px;margin:12px 0;background:var(--brand-soft);overflow-wrap:anywhere}.ops-approval p{font-size:13px;line-height:1.6}
+</style>
+
+<style scoped>
+.ops-task{padding:20px}.ops-task>header{padding-bottom:12px;border-bottom:1px solid var(--line);font-size:16px}.ops-history{font-size:12px;color:var(--warning-dot);line-height:1.7;margin:12px 0}
+.ops-scope{margin:14px 0;color:var(--ink-3);font-size:12px}.ops-scope :deep(.task-prose){margin-top:12px}.ops-diagnosis{margin:24px 0}.ops-diagnosis h3{font-size:16px;margin:0 0 8px}.ops-diagnosis h3 span,.ops-diagnosis h4 span{font-size:12px;font-weight:400;color:var(--ink-3);margin-left:8px}
+.ops-diagnosis h4{font-size:14px;margin:0 0 12px;color:var(--ink)}.ops-conclusion{background:var(--card-2);border-left:3px solid var(--brand);padding:18px;margin:16px 0}.ops-clarification{border:1px solid var(--warning-dot);padding:16px;margin:16px 0}.ops-opinions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:24px;margin:22px 0}.ops-opinions>section{min-width:0}.ops-opinions ol{padding-left:24px;margin:0}.ops-opinions li{padding:0 0 16px 4px}.ops-opinions li::marker{color:var(--brand);font-variant-numeric:tabular-nums}.ops-original{font-size:12px;color:var(--ink-3);margin:12px 0}.ops-task>details:not(.ops-scope){margin-top:14px;font-size:12px;color:var(--ink-3)}.ops-task summary{cursor:pointer;line-height:1.8}.ops-task footer{padding-top:14px;border-top:1px solid var(--line)}
+@media(max-width:1100px){.ops-opinions{grid-template-columns:1fr;gap:10px}}@media(max-width:640px){.ops-task{padding:14px}.ops-conclusion{padding:14px}.ops-diagnosis h3 span{display:block;margin:6px 0}}
 </style>

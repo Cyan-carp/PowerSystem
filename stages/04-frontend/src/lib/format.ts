@@ -5,10 +5,19 @@ export const metricUnits: Record<Metric, string> = { voltage: 'V', current: 'A',
 export const levelLabels: Record<AlarmLevel, string> = { urgent: '紧急', major: '重要', minor: '一般' }
 export const statusLabels: Record<AlarmStatus, string> = { unhandled: '待确认', acked: '已确认', recovered: '已恢复' }
 
+const beijingTime = new Intl.DateTimeFormat('en-GB', {
+  timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit',
+  hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23',
+})
+
 export function dateTime(value: number | string | null | undefined): string {
   if (value == null || value === '') return '—'
   const date = new Date(value)
-  return Number.isNaN(date.getTime()) ? '—' : date.toLocaleString('zh-CN', { hour12: false })
+  if (Number.isNaN(date.getTime())) return '—'
+  const parts = Object.fromEntries(beijingTime.formatToParts(date).map(({ type, value }) => [type, value]))
+  const day = `${parts.year}.${Number(parts.month)}.${Number(parts.day)}`
+  if (typeof value === 'string' && /^\d{4}[-/.]\d{1,2}[-/.]\d{1,2}$/.test(value)) return day
+  return `${day} ${parts.hour}:${parts.minute}:${parts.second}`
 }
 
 export function toMilliseconds(value: number | string): number {

@@ -1,0 +1,15 @@
+{
+  "Version": "1",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": ["swas-open:ModifyFirewallRule"],
+      "Resource": ["acs:swas-open:cn-guangzhou:REPLACE_ACCOUNT_ID:firewallrule/REPLACE_TARGET_RULE_ID"]
+    },
+    {
+      "Effect": "Allow",
+      "Action": ["swas-open:ListFirewallRules"],
+      "Resource": ["acs:swas-open:cn-guangzhou:REPLACE_ACCOUNT_ID:firewallrule/*"]
+    }
+  ]
+}

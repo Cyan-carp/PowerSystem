@@ -1,3 +1,5 @@
+# Base installation only. Existing production requires the active stage7/8/9
+# overlays and fixed images; see deploy/README.md before recreating api.
 name: powersystem-stage4
 
 services:
@@ -137,6 +139,8 @@ services:
       - --broker
       - emqx
       - --continuous
+      - --daylight-loop-minutes
+      - "60"
       - --interval-seconds
       - "5"
       - --run-id
