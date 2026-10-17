@@ -50,8 +50,8 @@ with tarfile.open(release/'approved.tar.gz') as package:
     if len({m.name for m in members}) != len(members): raise ValueError('duplicate release members')
     for member in members:
         path=pathlib.PurePosixPath(member.name); target=(root/member.name).resolve()
-        allowed=(member.name.startswith(('stages/07-agent/','stages/02-backend/internal/api/','stages/02-backend/scripts/','stages/04-frontend/src/','第二版-智能体升级/','第一版-平台主体/','内容/第二版-智能体升级/','内容/第一版-平台主体/'))
-                 or path.suffix=='.md' and (len(path.parts)==1 or member.name.startswith(('规范/','手册/','部署/'))))
+        allowed=(member.name.startswith(('stages/07-agent/','stages/02-backend/internal/api/','stages/02-backend/scripts/','stages/04-frontend/src/','notes/01-项目调研规划与开发建设记录/第二版-智能体升级/','notes/01-项目调研规划与开发建设记录/第一版-平台主体/'))
+                 or path.suffix=='.md' and (len(path.parts)==1 or member.name.startswith(('notes/02-工程规范边界与验收治理/','notes/03-平台使用运维与二次开发手册/','notes/04-系统部署发布备份与变更记录/'))))
         if not allowed or path.is_absolute() or '..' in path.parts or not member.isfile() or not target.is_relative_to(root.resolve()) or any(part in ('.env','.git','.venv','private','runtime','artifacts','node_modules','__pycache__') for part in path.parts):
             raise ValueError('invalid release member')
     with tarfile.open(release/'source-baseline.tar.gz','w:gz') as baseline:

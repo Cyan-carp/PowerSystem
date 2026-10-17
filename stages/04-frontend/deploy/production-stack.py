@@ -296,7 +296,7 @@ def freeze(name, args_path, parent, services, overrides):
     write(path / 'private/compose.json', escaped(config))
     write(path / 'private/origin-args.json', args)
     for source, target in [
-        (ROOT / '部署/独立云服务器部署/scripts/check-auth-wss.py', path / 'gate.py'),
+        (ROOT / 'deploy/edge-server/独立云服务器部署/scripts/check-auth-wss.py', path / 'gate.py'),
         (ROOT / 'stages/09-ops-agent/deploy/ma-release.py', path / 'registry-helper.py'),
     ]:
         shutil.copyfile(source, target)

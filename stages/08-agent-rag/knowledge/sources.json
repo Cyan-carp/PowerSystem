@@ -1,7 +1,7 @@
 [
-  {"path": "手册/平台使用手册.md", "title": "平台使用手册.md"},
-  {"path": "手册/平台运维与二次开发手册.md", "title": "平台运维与二次开发手册.md"},
-  {"path": "资产/设备知识/SUN2000-100KTL-M2-仿真参考.md", "title": "设备知识/SUN2000-100KTL-M2-仿真参考.md"},
+  {"path": "notes/03-平台使用运维与二次开发手册/平台使用手册.md", "title": "平台使用手册.md"},
+  {"path": "notes/03-平台使用运维与二次开发手册/平台运维与二次开发手册.md", "title": "平台运维与二次开发手册.md"},
+  {"path": "notes/05-设备知识设计素材与历史归档资产/设备知识/SUN2000-100KTL-M2-仿真参考.md", "title": "设备知识/SUN2000-100KTL-M2-仿真参考.md"},
   {"path": "stages/02-backend/README.md"},
   {"path": "stages/03-ai-prediction/README.md"},
   {"path": "stages/08-agent-rag/README.md"}

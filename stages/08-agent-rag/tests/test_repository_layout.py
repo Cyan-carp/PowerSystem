@@ -43,9 +43,9 @@ class RepositoryLayoutTest(unittest.TestCase):
             entries=json.loads((ROOT/'stages'/stage/'knowledge/sources.json').read_text(encoding='utf-8'))
             for entry in entries:
                 self.assertTrue((ROOT/entry['path']).is_file(), entry['path'])
-                if entry['path'].startswith(('手册/', '资产/设备知识/', '内容/')):
+                if entry['path'].startswith(('notes/03-平台使用运维与二次开发手册/', 'notes/05-设备知识设计素材与历史归档资产/设备知识/', 'notes/01-项目调研规划与开发建设记录/')):
                     self.assertIn('title', entry)
-            guide=next(entry for entry in entries if entry['path']=='手册/平台使用手册.md')
+            guide=next(entry for entry in entries if entry['path']=='notes/03-平台使用运维与二次开发手册/平台使用手册.md')
             self.assertEqual(guide['title'], '平台使用手册.md')
 
     def test_production_document_mounts_match_the_complete_manifest(self):
@@ -71,39 +71,35 @@ class RepositoryLayoutTest(unittest.TestCase):
             entry={'path':'guide.md','authority':'current','kind':'project_guide'}
             manifest.write_text(json.dumps([entry]),encoding='utf-8')
             before=build(root)
-            new=root/'手册/guide.md';new.parent.mkdir();old.rename(new)
-            entry.update(path='手册/guide.md',title='guide.md')
+            new=root/'notes/03-平台使用运维与二次开发手册/guide.md';new.parent.mkdir(parents=True);old.rename(new)
+            entry.update(path='notes/03-平台使用运维与二次开发手册/guide.md',title='guide.md')
             manifest.write_text(json.dumps([entry],ensure_ascii=False),encoding='utf-8')
             self.assertEqual(build(root),before)
 
     def make_server(self, root, modern):
         (root/'README.md').write_text('navigation',encoding='utf-8')
-        notes=root/'规范' if modern else root
-        notes.mkdir(exist_ok=True)
+        notes=root/'notes/02-工程规范边界与验收治理' if modern else root
+        notes.mkdir(parents=True,exist_ok=True)
         for name in ('项目工程规范.md','项目边界与协作红线.md','项目验收与收尾清单.md','运行产物说明.md'):
             (notes/name).write_text('approved document',encoding='utf-8')
-        version=root/('内容/第二版-智能体升级' if modern else '第二版-智能体升级')
+        version=root/('notes/01-项目调研规划与开发建设记录/第二版-智能体升级' if modern else '第二版-智能体升级')
         version.mkdir(parents=True)
         (version/'index.md').write_text('approved version notes',encoding='utf-8')
         private=version/'private';private.mkdir();(private/'secret.md').write_text('fixture',encoding='utf-8')
 
-    def test_boundary_baseline_accepts_both_server_layouts(self):
-        collect=script('stages/08-agent-rag/deploy/boundary-release.py')['baseline_sources']
-        for modern in (False,True):
-            with self.subTest(modern=modern), test_directory() as temporary:
-                root=Path(temporary);self.make_server(root,modern)
-                rows=collect(root)
-                self.assertIn(('规范/' if modern else '')+'项目工程规范.md',rows)
-                self.assertIn(('内容/' if modern else '')+'第二版-智能体升级/index.md',rows)
-                self.assertFalse(any('/private/' in row for row in rows))
-
-    def test_boundary_baseline_prefers_new_paths_and_rejects_missing_documents(self):
+    def test_boundary_baseline_accepts_isolated_notes_layout(self):
         collect=script('stages/08-agent-rag/deploy/boundary-release.py')['baseline_sources']
         with test_directory() as temporary:
-            root=Path(temporary);self.make_server(root,False);self.make_server(root,True)
+            root=Path(temporary);self.make_server(root,True)
             rows=collect(root)
-            self.assertNotIn('项目工程规范.md',rows)
-            self.assertNotIn('第二版-智能体升级/index.md',rows)
+            self.assertIn('notes/02-工程规范边界与验收治理/项目工程规范.md',rows)
+            self.assertIn('notes/01-项目调研规划与开发建设记录/第二版-智能体升级/index.md',rows)
+            self.assertFalse(any('/private/' in row for row in rows))
+
+    def test_boundary_baseline_rejects_missing_documents(self):
+        collect=script('stages/08-agent-rag/deploy/boundary-release.py')['baseline_sources']
+        with test_directory() as temporary:
+            root=Path(temporary);self.make_server(root,True)
             (root/'README.md').unlink()
             with self.assertRaises(FileNotFoundError):collect(root)
 
@@ -139,26 +135,26 @@ class RepositoryLayoutTest(unittest.TestCase):
 
     def test_source_sync_accepts_new_notes_but_not_runtime_or_private_files(self):
         administrative=script('stages/07-agent/deploy/sync-v2m4-source.py')['administrative']
-        for name in ('规范/项目工程规范.md','手册/平台使用手册.md','部署/部署与运维/本地服务器部署笔记.md','内容/第二版-智能体升级/index.md'):
+        for name in ('notes/02-工程规范边界与验收治理/项目工程规范.md','notes/03-平台使用运维与二次开发手册/平台使用手册.md','notes/04-系统部署发布备份与变更记录/部署与运维/本地服务器部署笔记.md','notes/01-项目调研规划与开发建设记录/第二版-智能体升级/index.md'):
             self.assertTrue(administrative(PurePosixPath(name)),name)
-        for name in ('规范/private/secret.md','资产/runtime/release.md','手册/../.env','部署/独立云服务器部署/config/new.sh'):
+        for name in ('notes/02-工程规范边界与验收治理/private/secret.md','artifacts/asset-archive/release.md','notes/03-平台使用运维与二次开发手册/../.env','deploy/edge-server/独立云服务器部署/config/new.sh'):
             self.assertFalse(administrative(PurePosixPath(name)),name)
 
     def test_packager_allowed_paths_retain_narrow_private_boundaries(self):
         general=script('stages/07-agent/scripts/v2m4-package.py')['allowed_source']
         manual=script('stages/07-agent/scripts/reference-manual-package.py')['allowed_source']
-        for name in ('规范/项目工程规范.md','手册/平台使用手册.md','内容/第一版-平台主体/index.md','内容/第二版-智能体升级/index.md'):
+        for name in ('notes/02-工程规范边界与验收治理/项目工程规范.md','notes/03-平台使用运维与二次开发手册/平台使用手册.md','notes/01-项目调研规划与开发建设记录/第一版-平台主体/index.md','notes/01-项目调研规划与开发建设记录/第二版-智能体升级/index.md'):
             self.assertTrue(general(Path(name)),name)
-        for name in ('设备知识/source.md','资产/设备知识/source.md','资产/设备知识/手册来源清单.json'):
+        for name in ('notes/05-设备知识设计素材与历史归档资产/设备知识/source.md','notes/05-设备知识设计素材与历史归档资产/设备知识/手册来源清单.json'):
             self.assertTrue(manual(Path(name)),name)
         for allowed in (general,manual):
-            for name in ('资产/runtime/archive.tar.gz','规范/private/secret.md','资产/设备知识/private/secret.json','手册/../.env'):
+            for name in ('artifacts/asset-archive/archive.tar.gz','notes/02-工程规范边界与验收治理/private/secret.md','notes/05-设备知识设计素材与历史归档资产/设备知识/private/secret.json','notes/03-平台使用运维与二次开发手册/../.env'):
                 self.assertFalse(allowed(Path(name)),name)
-        self.assertFalse(manual(Path('资产/设备知识/original.pdf')))
+        self.assertFalse(manual(Path('notes/05-设备知识设计素材与历史归档资产/设备知识/original.pdf')))
 
     def test_new_note_package_is_archiveable_without_using_the_repo_index(self):
         main=script('stages/07-agent/scripts/v2m4-package.py')['main']
-        names=['规范/项目工程规范.md','手册/平台使用手册.md','内容/第二版-智能体升级/index.md']
+        names=['notes/02-工程规范边界与验收治理/项目工程规范.md','notes/03-平台使用运维与二次开发手册/平台使用手册.md','notes/01-项目调研规划与开发建设记录/第二版-智能体升级/index.md']
         raw=b'approved fixture';commit='a'*40;base='b'*40
         def git(command,**kwargs):
             self.assertEqual(command[0],'git')
@@ -175,9 +171,9 @@ class RepositoryLayoutTest(unittest.TestCase):
 
     def test_release_embedded_python_allows_new_layout_and_compiles(self):
         cases={
-            'v2m4-release.sh':'规范/项目工程规范.md',
-            'manual-advice-release.sh':'手册/平台使用手册.md',
-            'reference-manual-release.sh':'资产/设备知识/手册来源清单.json',
+            'v2m4-release.sh':'notes/02-工程规范边界与验收治理/项目工程规范.md',
+            'manual-advice-release.sh':'notes/03-平台使用运维与二次开发手册/平台使用手册.md',
+            'reference-manual-release.sh':'notes/05-设备知识设计素材与历史归档资产/设备知识/手册来源清单.json',
         }
         for filename,name in cases.items():
             raw=(ROOT/'stages/07-agent/deploy'/filename).read_text(encoding='utf-8')
@@ -192,28 +188,27 @@ class RepositoryLayoutTest(unittest.TestCase):
             self.assertEqual(decisions,[True],filename)
             self.assertIn("'private'",raw)
 
-    def test_manual_manifest_selection_prefers_new_and_supports_old_layout(self):
-        bash=Path('C:/Program Files/Git/bin/bash.exe') if os.name=='nt' else Path(shutil.which('bash') or '/missing/bash')
-        if not bash.is_file():self.skipTest('Bash is unavailable')
-        cases=[('stages/07-agent/deploy/install-reference-manual.sh','manifest',r'(?m)^manifest=.*?\nfi\n'),
-               ('stages/04-frontend/deploy/backup.sh','manuals_manifest',r'(?m)^    manuals_manifest=.*?\n    fi\n')]
-        for name,variable,pattern in cases:
-            raw=(ROOT/name).read_text(encoding='utf-8');snippet=re.search(pattern,raw,re.S)[0]
+    def test_manual_manifest_selection_uses_isolated_notes_layout(self):
+        expected=PurePosixPath('notes/05-设备知识设计素材与历史归档资产/设备知识/手册来源清单.json')
+        cases=[('stages/07-agent/deploy/install-reference-manual.sh','manifest'),
+               ('stages/04-frontend/deploy/backup.sh','manuals_manifest')]
+        for name,variable in cases:
+            raw=(ROOT/name).read_text(encoding='utf-8')
+            match=re.search(rf'(?m)^\s*{variable}="\$project_dir/([^\n"]+)"$',raw)
+            self.assertIsNotNone(match,name)
+            self.assertEqual(PurePosixPath(match.group(1)),expected,name)
             with test_directory() as temporary:
-                root=Path(temporary);old=root/'设备知识/手册来源清单.json';old.parent.mkdir();old.write_text('{}')
-                env={**os.environ,'project_dir':root.as_posix()}
-                command=snippet+'\ntest -s "$'+variable+'"\nprintf "%s" "$'+variable+'"'
-                selected=subprocess.run([str(bash),'-c',command],env=env,text=True,capture_output=True,check=True).stdout
-                self.assertEqual(Path(selected),old)
-                new=root/'资产/设备知识/手册来源清单.json';new.parent.mkdir(parents=True);new.write_text('{}')
-                selected=subprocess.run([str(bash),'-c',command],env=env,text=True,capture_output=True,check=True).stdout
-                self.assertEqual(Path(selected),new)
+                root=Path(temporary)
+                selected=root/Path(*expected.parts)
+                selected.parent.mkdir(parents=True)
+                selected.write_text('{}',encoding='utf-8')
+                self.assertTrue(selected.is_file())
 
     def test_server_runtime_paths_are_not_redirected_to_asset_archives(self):
         for name in ('stages/04-frontend/deploy/backup.sh','stages/07-agent/deploy/install-reference-manual.sh'):
             raw=(ROOT/name).read_text(encoding='utf-8')
             self.assertIn('$project_dir/runtime/',raw)
-            self.assertNotIn('$project_dir/资产/runtime/',raw)
+            self.assertNotIn('$project_dir/artifacts/asset-archive/',raw)
         source=(ROOT/'stages/08-agent-rag/deploy/boundary-release.py').read_text(encoding='utf-8')
         self.assertIn("r.is_relative_to(ROOT/'runtime')",source)
 

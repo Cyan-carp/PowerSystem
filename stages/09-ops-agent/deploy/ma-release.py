@@ -7,7 +7,7 @@ NEW_SERVICES=('ops-agent','security-agent','ops-executor')
 BASE_FILES=('stages/04-frontend/deploy/compose.yaml','stages/07-agent/deploy/agent.compose.yaml','stages/07-agent/deploy/search.compose.yaml','stages/08-agent-rag/deploy/production.compose.yaml')
 OVERLAY='stages/09-ops-agent/deploy/production.compose.yaml'
 COLLECTOR_AUTH=Path('/var/lib/powersystem-ops-read/.ssh/authorized_keys')
-ALLOWED=('stages/02-backend/','stages/04-frontend/','stages/08-agent-rag/','stages/09-ops-agent/','stages/10-security-agent/','规范/','手册/','内容/第二版-智能体升级/')
+ALLOWED=('stages/02-backend/','stages/04-frontend/','stages/08-agent-rag/','stages/09-ops-agent/','stages/10-security-agent/','notes/02-工程规范边界与验收治理/','notes/03-平台使用运维与二次开发手册/','notes/01-项目调研规划与开发建设记录/第二版-智能体升级/')
 
 def command(argv,**kw):
     r=subprocess.run(argv,capture_output=True,**kw)
@@ -25,7 +25,7 @@ def archive_members(path):
     with tarfile.open(path) as ar:
         for m in ar.getmembers():
             if not m.isfile() or m.name.startswith('/') or '..' in Path(m.name).parts or any(x in Path(m.name).parts for x in ('.git','.env','private','artifacts','node_modules','__pycache__')):raise ValueError('invalid_release_member')
-            if not (m.name in ('api-server','README.md','.env.example','资产/设备知识/SUN2000-100KTL-M2-仿真参考.md') or m.name.startswith(('dist/',*ALLOWED))):raise ValueError('unreviewed_release_member')
+            if not (m.name in ('api-server','README.md','.env.example','notes/05-设备知识设计素材与历史归档资产/设备知识/SUN2000-100KTL-M2-仿真参考.md') or m.name.startswith(('dist/',*ALLOWED))):raise ValueError('unreviewed_release_member')
             yield m,ar.extractfile(m).read()
 def compose(release,baseline=False):
     env=release/'private/compose-before.env' if baseline else release/'private/compose.env'
@@ -126,7 +126,7 @@ def restore_source(r):
     quarantine=r/'private/new-source-on-rollback'
     if quarantine.exists():quarantine=r/('private/new-source-on-rollback-'+str(time.time_ns()))
     for name in baseline['new_paths']:
-        if not name.startswith(ALLOWED) and name not in ('README.md','.env.example','资产/设备知识/SUN2000-100KTL-M2-仿真参考.md'):raise ValueError('invalid_new_source_path')
+        if not name.startswith(ALLOWED) and name not in ('README.md','.env.example','notes/05-设备知识设计素材与历史归档资产/设备知识/SUN2000-100KTL-M2-仿真参考.md'):raise ValueError('invalid_new_source_path')
         target=source_target(name)
         if target.is_file():
             saved=quarantine/name

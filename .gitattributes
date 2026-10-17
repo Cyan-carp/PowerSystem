@@ -2,8 +2,8 @@
 *.sql text eol=lf
 *.yaml text eol=lf
 *.yml text eol=lf
-部署/独立云服务器部署/config/* text eol=lf
-部署/独立云服务器部署/scripts/*.py text eol=lf
-部署/独立云服务器部署/scripts/**/*.py text eol=lf
-部署/独立云服务器部署/*.md text eol=lf
-部署/独立云服务器部署/SHA256SUMS text eol=lf
+deploy/edge-server/独立云服务器部署/config/* text eol=lf
+deploy/edge-server/独立云服务器部署/scripts/*.py text eol=lf
+deploy/edge-server/独立云服务器部署/scripts/**/*.py text eol=lf
+deploy/edge-server/独立云服务器部署/SHA256SUMS text eol=lf
+notes/04-系统部署发布备份与变更记录/独立云服务器部署/*.md text eol=lf

@@ -9,6 +9,15 @@ summary: "Obsidian笔记库即磁盘文件夹,直接管理"
 
 Obsidian vault = a normal folder on disk.
 
+## 本项目的现行 Vault 边界
+
+- 唯一 Vault：`PowerSystem/notes/`。在 Obsidian 中只打开这个目录，不打开仓库根目录。
+- `stages/`、`deploy/`、`tools/` 和 `artifacts/` 均在 Vault 外；笔记不得复制这些目录的源码或大型产物。
+- 从笔记进入代码、部署脚本或私有证据时，只链接 `notes/06-代码工作区导航与链接映射/` 下的代理页。
+- 工作区结构变化后运行 `python tools/note-governance/build_workspace_links.py`，重新计算代理页相对路径；不得写入本机绝对路径。
+- 修改笔记结构后依次运行 `python tools/note-governance/check_notes.py` 和 `python tools/note-graph/build_graph.py`。
+- 目录、生命周期元数据、唯一命名与移动同步的强制规则，以 `notes/02-工程规范边界与验收治理/项目工程规范.md` 为准。
+
 Vault structure (typical)
 
 * Notes: `*.md` (plain text Markdown; edit with any editor)

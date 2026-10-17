@@ -19,9 +19,9 @@ services:
     volumes:
       - ${RAG_MODEL_DIR:?set local E5 model directory}:/models/multilingual-e5-small:ro
       - ${RAG_AUDIT_HOST_DIR:?set writable audit directory}:/audit
-      - ../../../手册/平台使用手册.md:/documents/手册/平台使用手册.md:ro
-      - ../../../手册/平台运维与二次开发手册.md:/documents/手册/平台运维与二次开发手册.md:ro
-      - ../../../资产/设备知识/SUN2000-100KTL-M2-仿真参考.md:/documents/资产/设备知识/SUN2000-100KTL-M2-仿真参考.md:ro
+      - ../../../notes/03-平台使用运维与二次开发手册/平台使用手册.md:/documents/notes/03-平台使用运维与二次开发手册/平台使用手册.md:ro
+      - ../../../notes/03-平台使用运维与二次开发手册/平台运维与二次开发手册.md:/documents/notes/03-平台使用运维与二次开发手册/平台运维与二次开发手册.md:ro
+      - ../../../notes/05-设备知识设计素材与历史归档资产/设备知识/SUN2000-100KTL-M2-仿真参考.md:/documents/notes/05-设备知识设计素材与历史归档资产/设备知识/SUN2000-100KTL-M2-仿真参考.md:ro
       - ../../02-backend/README.md:/documents/stages/02-backend/README.md:ro
       - ../../03-ai-prediction/README.md:/documents/stages/03-ai-prediction/README.md:ro
       - ../../08-agent-rag/README.md:/documents/stages/08-agent-rag/README.md:ro

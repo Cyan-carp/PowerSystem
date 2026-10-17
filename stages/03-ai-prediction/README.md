@@ -2,7 +2,7 @@
 
 本阶段用离线合成数据训练可解释的 XGBoost 模型，经 FastAPI 服务供阶段二 Go 后端调用。训练数据和模型来自合成逆变器；评估结果只说明该合成场景。阶段二的 M2 代码、验收库及记录保持独立。
 
-对应笔记：[00-索引·开发阶段3-AI预测模块](../../内容/第一版-平台主体/开发阶段3-AI预测模块/00-索引·开发阶段3-AI预测模块.md)。
+对应笔记：[00-索引·开发阶段3-AI预测模块](../../notes/01-项目调研规划与开发建设记录/第一版-平台主体/05-功能开发与阶段交付/03-AI预测模块/00-索引·开发阶段3-AI预测模块.md)。
 
 ## 一、准备与快速训练
 
@@ -92,7 +92,7 @@ $env:PYTHONPATH = "$(Resolve-Path .\artifacts\stage3\pydeps);$(Resolve-Path .\st
 python -m prediction.report_model --data .\artifacts\stage3\synthetic --model .\artifacts\stage3\model --out .\artifacts\stage3\model\importance.json
 ```
 
-结果采用测试窗平均绝对 TreeSHAP 贡献，详细解释见 [阶段三总结](../../内容/第一版-平台主体/开发阶段3-AI预测模块/07-阶段三总结.md)。它是全局解释，不等于 `/predict` 响应中单个窗口的 `top_factors`。
+结果采用测试窗平均绝对 TreeSHAP 贡献，详细解释见 [阶段三总结](../../notes/01-项目调研规划与开发建设记录/第一版-平台主体/05-功能开发与阶段交付/03-AI预测模块/07-阶段三总结.md)。它是全局解释，不等于 `/predict` 响应中单个窗口的 `top_factors`。
 
 下载公开光伏数据后先做字段盘点：
 
@@ -110,7 +110,7 @@ python -m prediction.inspect_external .\artifacts\stage3\external\pv_fault_datas
 python -m prediction.audit_pv_fault .\artifacts\stage3\external\pv_fault_dataset --out .\artifacts\stage3\external\pv_fault_dataset\audit.json
 ```
 
-数据来源、许可、字段映射和无法验证提前一小时预测的原因见 [公开数据审计](../../内容/第一版-平台主体/开发阶段3-AI预测模块/08-公开数据审计.md)。原始数据留在被忽略的 `artifacts/`，按原作者许可证和引用要求自行获取。
+数据来源、许可、字段映射和无法验证提前一小时预测的原因见 [公开数据审计](../../notes/01-项目调研规划与开发建设记录/第一版-平台主体/05-功能开发与阶段交付/03-AI预测模块/08-公开数据审计.md)。原始数据留在被忽略的 `artifacts/`，按原作者许可证和引用要求自行获取。
 
 同一审计还取得 [OpenCEM](https://github.com/OpenCEM-platform/opencem-dataset) 的两个 CSV 分片。取得对应分片后可核对列数、时间间隔、部分关键字段缺失及故障标签列：
 
@@ -137,4 +137,4 @@ Pop-Location
 - AI 告警确认与恢复、WebSocket 推送
 - 服务重启去重
 
-当前合成测试成绩不应表述为真实场站准确率。智能体只规划只读诊断工具，见 [05-智能体接口设计](../../内容/第一版-平台主体/开发阶段3-AI预测模块/05-智能体接口设计.md)。
+当前合成测试成绩不应表述为真实场站准确率。智能体只规划只读诊断工具，见 [05-智能体接口设计](../../notes/01-项目调研规划与开发建设记录/第一版-平台主体/05-功能开发与阶段交付/03-AI预测模块/05-智能体接口设计.md)。

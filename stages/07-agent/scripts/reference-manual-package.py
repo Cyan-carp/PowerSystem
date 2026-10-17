@@ -21,7 +21,7 @@ def allowed_source(path):
                         'stages/02-backend/internal/store/store.go',
                         'stages/04-frontend/deploy/backup.sh',
                         'stages/04-frontend/deploy/restore-verify.sh')
-            or name.startswith(('设备知识/', '资产/设备知识/')) and path.suffix in ('.md', '.json'))
+            or name.startswith('notes/05-设备知识设计素材与历史归档资产/设备知识/') and path.suffix in ('.md', '.json'))
 
 
 def main(args):

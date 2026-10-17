@@ -20,16 +20,15 @@ def inspect(service):
 
 
 def baseline_sources(root):
-    """Preflight both repository layouts without moving server runtime data."""
+    """Preflight the isolated notes layout without moving server runtime data."""
     saved = set()
-    version_notes = '内容/第二版-智能体升级' if (root/'内容/第二版-智能体升级').is_dir() else '第二版-智能体升级'
+    version_notes = 'notes/01-项目调研规划与开发建设记录/第二版-智能体升级'
     for folder in ('stages/02-backend', 'stages/04-frontend', 'stages/08-agent-rag', version_notes):
         for path in (root/folder).rglob('*'):
             if path.is_file() and not any(part in ('node_modules', 'dist', '__pycache__', '.venv', '.git', 'private', 'runtime', 'artifacts', '.env') for part in path.relative_to(root).parts):
                 saved.add(path.relative_to(root).as_posix())
     for name in ('README.md', '项目工程规范.md', '项目边界与协作红线.md', '项目验收与收尾清单.md', '运行产物说明.md'):
-        preferred = root/name if name == 'README.md' else root/'规范'/name
-        path = preferred if preferred.exists() else root/name
+        path = root/name if name == 'README.md' else root/'notes/02-工程规范边界与验收治理'/name
         if not path.is_file():
             raise FileNotFoundError('missing baseline document: '+name)
         saved.add(path.relative_to(root).as_posix())

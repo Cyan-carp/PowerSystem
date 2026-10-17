@@ -89,11 +89,7 @@ if [ -s /etc/powersystem/agent-service-token ]; then
   # Manufacturer originals are private runtime assets, never release files.
   manuals_dir=${POWERSYSTEM_MANUALS_DIR:-$project_dir/runtime/manuals}
   if [ -d "$manuals_dir" ]; then
-    manuals_manifest="$project_dir/资产/设备知识/手册来源清单.json"
-    # Prefer the reviewed new layout; retain compatibility with existing servers.
-    if [ ! -e "$manuals_manifest" ]; then
-      manuals_manifest="$project_dir/设备知识/手册来源清单.json"
-    fi
+    manuals_manifest="$project_dir/notes/05-设备知识设计素材与历史归档资产/设备知识/手册来源清单.json"
     test -s "$manuals_manifest"
     cp -a "$manuals_dir" "$staging/manuals"
     cp "$manuals_manifest" "$staging/manuals-manifest.json"
