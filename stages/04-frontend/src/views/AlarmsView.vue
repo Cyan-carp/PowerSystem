@@ -3,6 +3,7 @@ import { onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { api } from '../lib/api'
+import AlarmValueComparison from '../components/AlarmValueComparison.vue'
 import { realtime } from '../lib/realtime'
 import { dateTime, errorMessage, levelLabels, statusLabels } from '../lib/format'
 import type { Alarm, AlarmLevel, AlarmStatus } from '../types'
@@ -66,14 +67,18 @@ onUnmounted(() => { unsubscribe?.(); if (periodic) clearInterval(periodic) })
 </script>
 
 <template>
-  <section class="page-head"><div><span class="section-kicker">ALARM MANAGEMENT</span><h1>告警中心</h1><p>按级别、状态查找告警，并完成确认闭环。</p></div><div class="head-stat">筛选结果 <strong>{{ total }}</strong></div></section>
+  <div class="page-narrow">
+  <section class="page-head"><div><h1>告警中心</h1><p>按级别、状态查找告警，并完成确认闭环。</p></div><div class="head-stat">筛选结果 <strong>{{ total }}</strong></div></section>
   <section class="surface"><div class="toolbar"><div class="toolbar-title">告警记录 <span>新事件会实时同步</span></div><div class="toolbar-actions"><el-select v-model="level" placeholder="全部级别" style="width: 135px" @change="filter"><el-option label="全部级别" value="" /><el-option v-for="(label, value) in levelLabels" :key="value" :label="label" :value="value" /></el-select><el-select v-model="status" placeholder="全部状态" style="width: 135px" @change="filter"><el-option label="全部状态" value="" /><el-option v-for="(label, value) in statusLabels" :key="value" :label="label" :value="value" /></el-select></div></div>
     <el-alert v-if="error" :title="error" type="error" show-icon :closable="false" class="content-alert" />
     <el-table v-loading="loading" :data="rows" stripe empty-text="暂无符合条件的告警" class="data-table" @row-click="(row: Alarm) => openAlarm(row.id)"><el-table-column label="级别" width="95"><template #default="{ row }"><span class="severity-label" :class="row.level"><span class="severity-dot" :class="row.level" />{{ levelLabels[row.level as AlarmLevel] }}</span></template></el-table-column><el-table-column label="告警内容" min-width="200"><template #default="{ row }"><strong>{{ row.metric === 'ai_failure_risk' ? 'AI 故障风险' : row.metric + ' 越限' }}</strong></template></el-table-column><el-table-column label="设备 ID" prop="device_id" width="110" /><el-table-column label="触发时间" min-width="175"><template #default="{ row }">{{ dateTime(row.triggered_at) }}</template></el-table-column><el-table-column label="状态" width="115"><template #default="{ row }"><el-tag :type="row.status === 'unhandled' ? 'danger' : row.status === 'acked' ? 'warning' : 'success'" effect="plain">{{ statusLabels[row.status as AlarmStatus] }}</el-tag></template></el-table-column><el-table-column label="操作" width="110"><template #default="{ row }"><el-button link type="primary" @click.stop="openAlarm(row.id)">查看详情 →</el-button></template></el-table-column></el-table>
     <div class="table-footer"><span>共 {{ total }} 条记录</span><el-pagination v-model:current-page="page" :page-size="20" :total="total" layout="prev, pager, next" @current-change="load" /></div>
   </section>
-  <el-drawer v-model="drawer" title="告警详情" size="min(440px, 100vw)" @closed="router.replace({ query: {} })">
+  </div>
+  <el-drawer v-model="drawer" title="告警详情" size="min(520px, 100vw)" @closed="router.replace({ query: {} })">
     <el-alert v-if="detailError" :title="detailError" type="error" show-icon :closable="false" />
-    <div v-if="selected" class="drawer-content"><div class="drawer-severity"><span class="severity-dot" :class="selected.level" />{{ levelLabels[selected.level] }}告警 <el-tag :type="selected.status === 'unhandled' ? 'danger' : selected.status === 'acked' ? 'warning' : 'success'">{{ statusLabels[selected.status] }}</el-tag></div><h2>{{ selected.metric === 'ai_failure_risk' ? 'AI 故障风险升高' : selected.metric + ' 指标越限' }}</h2><dl><dt>告警编号</dt><dd>#{{ selected.id }}</dd><dt>设备 ID</dt><dd>{{ selected.device_id }}</dd><dt>实测值</dt><dd>{{ selected.value }}</dd><dt>阈值</dt><dd>{{ selected.threshold }}</dd><dt>触发时间</dt><dd>{{ dateTime(selected.triggered_at) }}</dd><dt>确认时间</dt><dd>{{ dateTime(selected.acked_at) }}</dd><dt>恢复时间</dt><dd>{{ dateTime(selected.recovered_at) }}</dd></dl><div class="drawer-actions"><el-button v-if="selected.status === 'unhandled'" type="primary" :loading="acting" @click="acknowledge(selected)">确认告警</el-button><el-button @click="router.push(`/devices/${selected?.device_id}`)">查看关联设备曲线 →</el-button></div><p class="drawer-note">确认会记录操作人和时间；指标恢复后，本次告警才结束。</p></div>
+    <div v-if="selected" class="drawer-content"><div class="drawer-severity"><span class="severity-dot" :class="selected.level" />{{ levelLabels[selected.level] }}告警 <el-tag :type="selected.status === 'unhandled' ? 'danger' : selected.status === 'acked' ? 'warning' : 'success'">{{ statusLabels[selected.status] }}</el-tag></div><h2>{{ selected.metric === 'ai_failure_risk' ? 'AI 故障风险升高' : selected.metric + ' 指标越限' }}</h2><AlarmValueComparison :value="selected.value" :threshold="selected.threshold" :metric="selected.metric" />
+      <h3 class="detail-section-heading">记录信息</h3>
+      <dl class="alarm-record-meta"><dt>告警编号</dt><dd class="record-identity">#{{ selected.id }}</dd><dt>设备 ID</dt><dd class="record-identity">{{ selected.device_id }}</dd><dt>触发时间</dt><dd>{{ dateTime(selected.triggered_at) }}</dd><dt>确认时间</dt><dd>{{ dateTime(selected.acked_at) }}</dd><dt>恢复时间</dt><dd>{{ dateTime(selected.recovered_at) }}</dd></dl><div class="drawer-actions"><el-button v-if="selected.status === 'unhandled'" type="primary" :loading="acting" @click="acknowledge(selected)">确认告警</el-button><el-button @click="router.push(`/devices/${selected?.device_id}`)">查看关联设备曲线 →</el-button></div><p class="drawer-note">确认会记录操作人和时间；指标恢复后，本次告警才结束。</p></div>
   </el-drawer>
 </template>

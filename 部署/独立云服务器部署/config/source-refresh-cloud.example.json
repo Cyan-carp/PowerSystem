@@ -1,0 +1,8 @@
+{
+  "enabled": false,
+  "provider": "swas",
+  "client_id": "powersystem-r730xd",
+  "region_id": "cn-guangzhou",
+  "instance_id": "REPLACE_SAS_INSTANCE_ID",
+  "target_rule_id": "REPLACE_SAS_FIREWALL_RULE_ID"
+}

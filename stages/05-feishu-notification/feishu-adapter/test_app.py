@@ -42,11 +42,22 @@ class AdapterTests(unittest.TestCase):
                  "alarm_id": 42, "device_code": "INV-1001", "station_code": "ST-01",
                  "metric": "temperature", "level": "major", "value": 81.5,
                  "threshold": 80.0, "occurred_at": "2026-09-29T12:00:00Z"}
-        self.assertIn("设备越限 触发", business_message(event))
+        text = json.dumps(business_message(event), ensure_ascii=False)
+        self.assertIn("设备越限", text)
+        self.assertIn("触发告警", text)
+        self.assertIn("温度", text)
+        self.assertIn("重要", text)
+        self.assertIn("触发时记录值 **81.500** ／ 触发阈值 80.000", text)
         event.update(event_id="alarm:42:acknowledged", state="acknowledged")
-        self.assertIn("已确认", business_message(event))
+        self.assertIn("已确认", json.dumps(business_message(event), ensure_ascii=False))
         event.update(event_id="alarm:42:recovered", state="recovered", category="prediction_risk", metric="ai_failure_risk")
-        self.assertIn("AI 故障风险 恢复", business_message(event))
+        recovered = json.dumps(business_message(event), ensure_ascii=False)
+        self.assertIn("AI 故障风险", recovered)
+        self.assertIn("已恢复", recovered)
+        self.assertIn("2026-09-29 20:00:00", recovered)
+        self.assertIn("触发时记录值 81.500 ／ 触发阈值 80.000", recovered)
+        event.update(event_id="alarm:42:closed", state="closed")
+        self.assertIn("触发时记录值 81.500", json.dumps(business_message(event), ensure_ascii=False))
         event["event_id"] = "alarm:41:recovered"
         with self.assertRaises(ValueError):
             business_message(event)
@@ -78,7 +89,7 @@ class AdapterTests(unittest.TestCase):
             self.assertEqual(request("wrong"), [403])
             fake_send.assert_not_called()
             self.assertEqual(request("private-business-token"), [200])
-            self.assertIn("设备越限 触发", fake_send.call_args.args[2])
+            self.assertIn("设备越限", json.dumps(fake_send.call_args.args[2], ensure_ascii=False))
 
 
 if __name__ == "__main__":

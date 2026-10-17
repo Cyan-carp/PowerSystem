@@ -2,7 +2,6 @@
 import { reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { Lightning } from '@element-plus/icons-vue'
 import { api } from '../lib/api'
 import { saveSession } from '../lib/auth'
 import { errorMessage } from '../lib/format'
@@ -33,16 +32,13 @@ async function submit(): Promise<void> {
       <div class="mesh" aria-hidden="true" />
       <div class="grid-dots" aria-hidden="true" />
       <div class="inner">
-        <div class="login-logo"><el-icon><Lightning /></el-icon></div>
-        <span class="eyebrow">POWER SYSTEM OPERATIONS</span>
-        <h1>每一台设备的状态，<br />都值得被<b>及时看见</b>。</h1>
-        <p>源网智联新能源设备智能运维平台</p>
+        <h1>源网智联<br />新能源设备<b>智能运维平台</b></h1>
+        <p>每一台设备的状态，都值得被及时看见。</p>
         <div class="login-line"><span />遥测接入 · 实时告警 · 故障预测 · 值班问答</div>
       </div>
     </div>
     <div class="login-panel">
       <div class="login-form-wrap">
-        <span class="section-kicker">DUTY CONSOLE</span>
         <h2>登录平台</h2>
         <p>使用已注册的运维账号进入系统。</p>
         <form @submit.prevent="submit">

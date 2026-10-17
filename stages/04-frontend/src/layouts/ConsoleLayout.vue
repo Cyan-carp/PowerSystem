@@ -2,7 +2,7 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElNotification } from 'element-plus'
-import { Bell, ChatDotSquare, DataAnalysis, DataBoard, Lightning, Monitor, Mute, Search, SwitchButton } from '@element-plus/icons-vue'
+import { Bell, ChatDotSquare, DataAnalysis, DataBoard, Monitor } from '@element-plus/icons-vue'
 import { clearSession, currentUser } from '../lib/auth'
 import { realtime } from '../lib/realtime'
 import { api } from '../lib/api'
@@ -26,7 +26,7 @@ const navItems = [
   { to: '/agent', match: (path: string) => path === '/agent', icon: ChatDotSquare, label: '智能助手' },
 ]
 
-const userInitial = computed(() => (currentUser.value?.real_name || currentUser.value?.username || '值').slice(0, 1))
+const userName = computed(() => currentUser.value?.real_name || currentUser.value?.username || '值班员')
 
 function toggleSound(): void {
   soundOn.value = !soundOn.value
@@ -56,8 +56,6 @@ function logout(): void {
   clearSession()
   void router.replace('/login')
 }
-
-function goSearch(): void { void router.push({ name: 'agent-chat' }) }
 
 async function refreshAlarmBadge(): Promise<void> {
   try {
@@ -94,33 +92,36 @@ onUnmounted(() => {
 
 <template>
   <div class="app-shell">
-    <nav class="rail" aria-label="主导航">
-      <router-link class="rail-logo" to="/dashboard" aria-label="源网智联 · 运行总览"><el-icon><Lightning /></el-icon></router-link>
-      <router-link
-        v-for="item in navItems" :key="item.to"
-        class="rail-btn" :class="{ active: item.match(route.path) }"
-        :to="item.to" :title="item.label" :aria-label="item.label" :aria-current="item.match(route.path) ? 'page' : undefined"
-      >
-        <el-icon><component :is="item.icon" /></el-icon>
-        <span v-if="item.to === '/alarms' && activeAlarms" class="rail-badge">{{ activeAlarms > 99 ? '99+' : activeAlarms }}</span>
+    <nav class="sidebar" aria-label="主导航">
+      <router-link class="brand-mark" to="/dashboard" aria-label="返回运行总览">
+        <strong>源网智联</strong>
+        <small>新能源设备智能运维</small>
       </router-link>
-      <span class="rail-foot" title="合成数据演示"><i class="signal-dot" /></span>
-      <span class="rail-avatar" :title="currentUser?.real_name || currentUser?.username || '值班员'" @click="logout">{{ userInitial }}</span>
+      <div class="nav-list">
+        <router-link
+          v-for="item in navItems" :key="item.to"
+          class="nav-item" :class="{ active: item.match(route.path) }"
+          :to="item.to" :title="item.label" :aria-label="item.label" :aria-current="item.match(route.path) ? 'page' : undefined"
+        >
+          <el-icon><component :is="item.icon" /></el-icon>
+          <span>{{ item.label }}</span>
+          <span v-if="item.to === '/alarms' && activeAlarms" class="nav-badge">{{ activeAlarms > 99 ? '99+' : activeAlarms }}</span>
+        </router-link>
+      </div>
+      <div class="sidebar-foot">
+        <span class="foot-user" :title="userName">{{ userName }}</span>
+        <button class="foot-logout" type="button" @click="logout">退出登录</button>
+      </div>
     </nav>
     <div class="app-col">
       <header class="topbar">
-        <div class="topbar-context"><span>运行工作台</span><span class="slash">/</span><strong>{{ route.meta.title || '运行工作台' }}</strong></div>
-        <button class="gsearch" type="button" aria-label="前往智能助手进行检索" @click="goSearch">
-          <el-icon><Search /></el-icon><span>搜索问题，去智能助手…</span><kbd>QA</kbd>
-        </button>
+        <strong class="topbar-title">{{ route.meta.title || '运行工作台' }}</strong>
         <div class="topbar-actions">
           <PageHelp />
           <InterpretationPanel />
           <span class="connection" :class="realtime.connected.value ? 'online' : 'offline'"><span class="signal-dot" />{{ realtime.connected.value ? '实时连接正常' : '实时连接中断' }}</span>
           <span class="clock">{{ dateTime(now) }}</span>
-          <el-button class="icon-btn" text :aria-label="soundOn ? '静音提示音' : '启用提示音'" @click="toggleSound"><el-icon><Bell v-if="soundOn" /><Mute v-else /></el-icon></el-button>
-          <span class="user-name">{{ currentUser?.real_name || currentUser?.username || '值班员' }}</span>
-          <el-button class="icon-btn" text title="退出登录" aria-label="退出登录" @click="logout"><el-icon><SwitchButton /></el-icon></el-button>
+          <button class="sound-btn" type="button" @click="toggleSound">告警提示音：{{ soundOn ? '开' : '关' }}</button>
         </div>
       </header>
       <main class="main-content"><router-view /></main>

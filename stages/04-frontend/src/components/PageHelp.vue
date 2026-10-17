@@ -27,7 +27,7 @@ function ask(): void {
 </template>
 <style scoped>
 .page-help { position: relative; }
-.help-box { position: absolute; top: 42px; right: 0; width: min(440px, calc(100vw - 32px)); z-index: 2100; padding: 18px; background: white; color: var(--ink); border: 1px solid var(--line); border-top: 3px solid var(--brand); box-shadow: 0 6px 24px rgba(0, 0, 0, 0.12); }
+.help-box { position: absolute; top: 42px; right: 0; width: min(440px, calc(100vw - 32px)); z-index: 2100; padding: 18px; background: var(--card); color: var(--ink); border: 1px solid var(--line); border-top: 3px solid var(--brand); box-shadow: var(--shadow-md); border-radius: var(--r-lg); }
 header, footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 header { border-bottom: 1px solid var(--line-soft); padding-bottom: 10px; }
 header strong { font-size: 14px; }

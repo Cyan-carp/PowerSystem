@@ -125,6 +125,10 @@ docker exec powersystem-stage4-frontend-1 nginx -s reload
 
 配置校验失败时停止，不以reload退出码判定恢复。核对API/前端容器ID、镜像与静态资产版本保持，使用既有可信HTTPS入口验证ping200，并在本人已登录页面检查WSS实时连接正常；模型请求502另按模型链故障取证。维护修订3补单/双/三参数恢复入口计数校验，隔离恢复十项结果及失败保留见[[内容/第二版-智能体升级/多智能体协作建设/03-联合发布验收/02-服务器发布与恢复验收/03-MA-M4测试与交付]]。
 
+## 2026-10-16 · 回答可读性增量发布
+
+[[内容/第二版-智能体升级/问答及调度业务主智能体/当前方案-Agent与RAG重建/补充阶段1-回答可读性与任务结果展示/03-测试与交付]]记录本批实际结果。该批生产指针assistant-readability-20261016-r1，通过本页唯一入口及双HTTPS/WSS门禁；直接上一版本interpretation-layout-20261016-r1保留，仅frontend重建。既有Executor同ID、同镜像登记重载，API及其他镜像保持。免重复测试不跳过必要构建和发布门禁，实际rollback未触发。
+
 ## 相关笔记
 
 第三阶段发布使用[阶段七发布脚本与命令](../../07-agent/README.md)，统一备份同时保存受控知识索引、未命中问题持久目录与可选搜索密钥；恢复核对索引哈希与 JSONL 格式。实际镜像、回退和观察结果见[第三阶段交付](../../../内容/第二版-智能体升级/问答及调度业务主智能体/废案-旧智能体方案/开发阶段3-使用引导与值班问答/05-V2-M3测试与交付.md)。
@@ -136,3 +140,92 @@ docker exec powersystem-stage4-frontend-1 nginx -s reload
 - M4 测试与交付：[07-M4测试与交付](../../../内容/第一版-平台主体/开发阶段4-前端、上线与沉淀/07-M4测试与交付.md)
 - 飞书通知：[阶段五运行说明](../../05-feishu-notification/README.md) · [阶段五测试与交付](../../../内容/第一版-平台主体/开发阶段5-飞书告警通知/03-阶段五测试与交付.md)
 - 安全恢复：[阶段六运行说明](../../06-security-recovery/README.md) · [阶段六测试与交付](../../../内容/第一版-平台主体/开发阶段6-公网安全与恢复能力/03-阶段六测试与交付.md)
+
+## 2026-10-15 前端 UI 增量发布
+
+深空值班台UI及四项校对修正已在指定HTTPS入口发布。前端固定镜像、真实旧版回退/同候选恢复、HTTPS/WSS、备份隔离恢复及300.7秒观察通过；其他18个原业务服务保持基线，已有Executor仅为资产登记读取受控重启、镜像与容器ID未变。后台r6/v5、生产R0与关闭写窗口不变。原阶段签收和模型质量边界保留，不据本次UI发布重新声明全版本验收。详见[[部署/部署与运维/前端UI深空值班台上线记录-2026-10-15]]。
+
+本批只使用当前完整编排最后叠加前端镜像固定文件，不用初装命令覆盖现有运行配置。已留存的本批操作如下；仅适用于该批次，回退前确认任务已排空，并在操作后同步实际状态文档：
+
+```bash
+python3 /opt/powersystem/runtime/ui-20261015-r1/controller-r3.py baseline
+python3 /opt/powersystem/runtime/ui-20261015-r1/controller-r3.py accept-rollback
+python3 /opt/powersystem/runtime/ui-20261015-r1/controller-r3.py candidate
+python3 /opt/powersystem/runtime/ui-20261015-r1/controller-r3.py accept-final
+```
+
+脚本只重建前端并维护已有前端资产身份；既有资产加载函数会受控重启同一Executor容器。文档与备份证据独立保留，不删除业务卷，不变更其他智能体镜像。后续发布应先从运行容器标签获取实际编排路径，不能遗漏本批前端固定镜像叠加文件。
+
+## 2026-10-15 API恢复后的生产维护入口
+
+> 以下是API恢复当时的历史操作定位。当前应用发布和回退统一使用本页下一节的`production-stack.py`；不得直接重放历史切换命令覆盖现网。
+
+已部署环境不得使用本页初装的单份基础compose重建API。生产必须包含阶段4、阶段7 Agent/search、阶段8和阶段9叠加，以及当前各服务固定镜像；实际环境文件从健康agent-rag标签读取。先核对[[部署/部署与运维/API版本回退恢复记录-2026-10-15]]。
+
+本次已执行的完整参数快照为`/opt/powersystem/runtime/api-recovery-20261015-r1/compose-args.json`，其中末层镜像锁定保留r7前端/通知、r8模拟器及r6智能体。只读检查编排服务：
+
+```bash
+python3 - <<'PY'
+import json, subprocess
+from pathlib import Path
+args = json.loads(Path('/opt/powersystem/runtime/api-recovery-20261015-r1/compose-args.json').read_text())
+subprocess.run(args + ['config', '--services'], check=True)
+PY
+```
+
+该快照只适用本批，不能直接覆盖未来发布。API维护前做本地加密备份、固定镜像/配置和排空核对；限定`up -d --no-deps --no-build --pull never --force-recreate --wait api`后还需现有Nginx语法检查/reload、已有API资产身份刷新与同ID Executor登记重载。不得清卷或把故障旧镜像当正常回退目标。
+
+发布后的回归入口已增加历史会话、运维任务及非空列表详情，不会输出账号密码/JWT/ticket：
+
+```bash
+python3 /opt/powersystem/runtime/api-recovery-20261015-r1/verify-auth-wss.py /etc/powersystem/demo-password
+```
+
+脚本源码为`部署/独立云服务器部署/scripts/check-auth-wss.py`，执行前同步已审查的同版脚本。该检查不调用模型；真实模型连接需独立验收并明确范围。
+
+## 生产发布唯一入口（2026-10-15）
+
+设计原理、逐条要求与审查边界见[[规范/生产发布防回退与自动验收门禁规范]]；本页只维护具体操作命令和参数。
+
+长期约束统一见[[规范/项目工程规范#生产发布防回退与自动验收门禁（2026-10-15，强制）]]。入口为`/opt/powersystem/stages/04-frontend/deploy/production-stack.py`，状态目录为`/opt/powersystem/runtime/production-stack/`，仅在指定R730XD以root运行。
+
+### 当前基线与只读查看
+
+2026-10-15首次登记沿用既有验收。其后全天图表、告警解读、助手可读性及10月17日告警重点/证据分组均通过统一入口发布；当前指针为 `interpretation-focus-20261017-r1`，直接上一版本 `assistant-readability-20261016-r1` 保留，实际rollback未触发。本次未重复测试套件，必要构建与发布器自带门禁通过。最新事实见[[部署/部署与运维/告警解读重点与证据分组发布记录-2026-10-17]]。当前指针及是否存在待恢复事务由下列命令读取：
+
+```bash
+python3 /opt/powersystem/stages/04-frontend/deploy/production-stack.py status
+```
+
+### 后续发布
+
+先独立构建并审查新镜像。`prepare`只解析配置、读取Docker元数据和冻结候选；可传递已构建镜像标签，工具会解析为实际镜像ID。以下新运行编号与镜像标签须替换，不能原样当成现成版本：
+
+```bash
+python3 /opt/powersystem/stages/04-frontend/deploy/production-stack.py prepare \
+  --id release-YYYYMMDD-rN --image api=reviewed-api:release-YYYYMMDD-rN
+```
+
+同批其他镜像使用重复`--image frontend=...`等参数；仅配置变更使用`--service api`等显式指定应用。需要新的集成环境文件时，传入受审完整Compose参数JSON的`--from-args`，仍须包含原顺序的五份基础编排。已接受版本引用的私有文件不可原位修改，应使用新路径准备候选；数据库迁移、公开端口、持久卷变化不在此入口范围。
+
+候选准备完成后新建并核对更新前加密备份再发布，`--backup`必须是业务机既有备份目录内、候选准备后且24小时内生成、附有匹配SHA256的密文。发布会自动执行门禁，成功才移动当前指针：
+
+```bash
+python3 /opt/powersystem/stages/04-frontend/deploy/production-stack.py publish \
+  --id release-YYYYMMDD-rN \
+  --backup /var/backups/powersystem/powersystem-YYYYMMDDTHHMMSSZ.tar.gz.gpg
+```
+
+该入口只重建指定应用，使用冻结JSON及全部固定镜像；自动检查Nginx并更新已登记容器身份，通过同ID Executor重载刷新登记。真实操作员凭据仅从`/etc/powersystem/demo-password`读取，不输出密码、JWT或ticket。无`--skip-test`、`--force`或跳过门禁选项。
+
+### 回退及中断恢复
+
+发布门禁失败会自动回退并重新验收。进程中断或自动回退失败时，`pending.json`保留，后续发布被拒绝；不要删除该标记。下列命令优先完成未结束事务；没有未结束事务时回到当前版本的直接上一份已验收版本：
+
+```bash
+python3 /opt/powersystem/stages/04-frontend/deploy/production-stack.py rollback
+```
+
+回退保留所有业务数据和失败证据，不降级数据库。旧私有引用缺失或被改写时停止，由维护者先恢复相应材料，不用新凭据或新配置假冒旧版。未来门禁覆盖HTTPS/WSS与配置一致性，不主动调用模型；模型、容量、固定版本观察等专项按变更范围另行执行。
+
+> 发布防回退的业务背景与流程见 [[内容/补充业务/05-生产发布防回退/01-设计与发布流程]]。具体运行命令继续在源码 README 维护，原阶段签收范围不变。

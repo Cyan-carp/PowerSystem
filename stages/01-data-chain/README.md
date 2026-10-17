@@ -76,6 +76,12 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\stages\01-data-chain\s
 
 ## 六、短时开发验证
 
+### 线上演示的白天循环
+
+阶段四演示部署启用 `--continuous --daylight-loop-minutes 60`：每 60 分钟循环一次模拟的 08:00–16:00 发电过程，夜间也能观察发电曲线。遥测使用真实当前时间，每台设备的持久化序号继续递增，原有历史和待发队列保留。此模式仅用于仿真演示。
+
+不传 `--daylight-loop-minutes`（或设为 `0`）时，连续模式仍按北京时间自然日模拟，夜间功率为零。阶段一有限样本测试不启用此选项。
+
 下面命令只供开发验证，**不代表一小时 M1 验收**：
 
 ```powershell
@@ -102,3 +108,5 @@ docker compose --project-name powersystem --env-file .env --file .\stages\01-dat
 ```
 
 > 再次运行预检会启动容器。删除 Docker 卷会删除 EMQX 会话和 TDengine 数据，迁移前先按清单备份。
+
+> 白天循环是特定环境演示扩展，设计及运行边界见 [[内容/补充业务/02-白天循环模拟模式/01-需求与实现]]。具体运行命令继续在源码 README 维护，原阶段签收范围不变。

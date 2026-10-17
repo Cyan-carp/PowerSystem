@@ -59,12 +59,23 @@ def main():
     if not password:
         raise RuntimeError("demo credential file is empty")
     for host in ("8.138.42.212", "8.138.10.222"):
+        for path in ("/api/v1/devices", "/api/v1/agent/sessions", "/api/v1/agent/tasks"):
+            try:
+                request(host, path)
+            except urllib.error.HTTPError as error:
+                if error.code != 401:
+                    raise RuntimeError(f"{host} anonymous endpoint not protected") from None
+            else:
+                raise RuntimeError(f"{host} anonymous endpoint not protected")
+        print(f"{host} anonymous-access=401", flush=True)
         status, login = request(
             host,
             "/api/v1/auth/login",
             method="POST",
             body={"username": "demo-operator", "password": password},
         )
+        if status != 200 or login.get("code") != 0 or login["data"]["user"]["role"] != "operator":
+            raise RuntimeError(f"{host} operator login failed")
         token = login["data"]["token"]
         print(f"{host} login={status}", flush=True)
         for label, path in (
@@ -73,11 +84,26 @@ def main():
             ("alarms", "/api/v1/alarms?page=1&page_size=20"),
             ("predictions", "/api/v1/predictions?page=1&page_size=20"),
             ("agent-interpretations", "/api/v1/agent/interpretations?page=1&page_size=20"),
+            ("agent-sessions", "/api/v1/agent/sessions"),
+            ("agent-tasks", "/api/v1/agent/tasks"),
         ):
             status, envelope = request(host, path, token=token)
             if status != 200 or envelope.get("code") != 0:
                 raise RuntimeError(f"{host} {label} failed")
             print(f"{host} {label}={status}", flush=True)
+            if label in ("agent-sessions", "agent-tasks"):
+                items = envelope["data"].get("list") or []
+                if items:
+                    key = "id" if label == "agent-sessions" else "task_id"
+                    identifier = items[0].get(key)
+                    if not isinstance(identifier, str) or not identifier:
+                        raise RuntimeError(f"{host} {label} invalid identifier")
+                    detail_status, detail = request(
+                        host, path + "/" + urllib.parse.quote(identifier, safe=""), token=token
+                    )
+                    if detail_status != 200 or detail.get("code") != 0:
+                        raise RuntimeError(f"{host} {label} detail failed")
+                    print(f"{host} {label}-detail={detail_status}", flush=True)
         status, ticket_response = request(
             host, "/api/v1/ws-ticket", method="POST", token=token
         )

@@ -7,6 +7,7 @@ import json
 import math
 import os
 import re
+from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from time import time
@@ -47,7 +48,31 @@ def message(payload: dict) -> str:
     return "\n".join(lines)
 
 
-def business_message(payload: dict) -> str:
+LEVEL_LABELS = {"urgent": "🔴 紧急", "major": "🟠 重要", "minor": "🟡 一般"}
+METRIC_LABELS = {"ai_failure_risk": "AI 故障风险", "temperature": "温度", "power": "功率",
+                 "voltage": "电压", "current": "电流"}
+STATE_STYLES = {
+    "triggered": ("red", "🔴 触发告警"),
+    "acknowledged": ("orange", "🟠 已确认"),
+    "recovered": ("green", "✅ 已恢复"),
+    "closed": ("grey", "⚪ 因配置变更关闭"),
+}
+
+
+def beijing_time(iso_text: str) -> str:
+    """ISO 时间转北京时间可读格式；解析失败时回退原文。"""
+    try:
+        moment = datetime.fromisoformat(iso_text.replace("Z", "+00:00"))
+        return moment.astimezone(timezone(timedelta(hours=8))).strftime("%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        return iso_text
+
+
+def field(label: str, value: str) -> dict:
+    return {"is_short": True, "text": {"tag": "lark_md", "content": f"**{label}**\n{value}"}}
+
+
+def business_message(payload: dict) -> dict:
     if not isinstance(payload, dict):
         raise ValueError("invalid business event")
     event_id = payload.get("event_id")
@@ -69,17 +94,38 @@ def business_message(payload: dict) -> str:
     if any(isinstance(item, bool) or not isinstance(item, (float, int)) or not math.isfinite(item) for item in (value, threshold)):
         raise ValueError("invalid metric values")
     name = "AI 故障风险" if category == "prediction_risk" else "设备越限"
-    action = {"triggered": "触发", "acknowledged": "已确认", "recovered": "恢复", "closed": "因配置变更关闭"}[state]
-    return (f"PowerSystem 业务告警｜{name} {action}\n"
-            f"设备 {payload['device_code']}｜场站 {payload['station_code']}｜级别 {payload['level']}\n"
-            f"指标 {payload['metric']}：触发记录值 {value:.3f}，阈值 {threshold:.3f}\n"
-            f"时间 {payload['occurred_at']}｜事件 {event_id}")
+    metric = METRIC_LABELS.get(payload["metric"], payload["metric"])
+    level = LEVEL_LABELS.get(payload["level"], payload["level"])
+    style, action = STATE_STYLES[state]
+    highlight = f"**{value:.3f}**" if state == "triggered" else f"{value:.3f}"
+    card = {
+        "config": {"wide_screen_mode": True},
+        "header": {"template": style, "title": {"tag": "plain_text", "content": f"PowerSystem · {name} {action}"}},
+        "elements": [
+            {"tag": "div", "fields": [
+                field("设备", payload["device_code"]),
+                field("场站", payload["station_code"]),
+                field("级别", level),
+                field("指标", metric),
+            ]},
+            {"tag": "div", "text": {"tag": "lark_md",
+                                    "content": f"触发时记录值 {highlight} ／ 触发阈值 {threshold:.3f}"}},
+            {"tag": "hr"},
+            {"tag": "note", "elements": [{"tag": "plain_text",
+                                          "content": f"事件 {event_id} · {beijing_time(payload['occurred_at'])}（北京时间）"}]},
+        ],
+    }
+    return card
 
 
-def send(url: str, signing_secret: str, text: str) -> None:
+def send(url: str, signing_secret: str, text: str | dict) -> None:
     timestamp = int(time())
+    if isinstance(text, str):
+        payload_content = {"msg_type": "text", "content": {"text": text}}
+    else:
+        payload_content = {"msg_type": "interactive", "card": text}
     body = json.dumps({"timestamp": timestamp, "sign": sign(timestamp, signing_secret),
-                       "msg_type": "text", "content": {"text": text}}, ensure_ascii=False).encode()
+                       **payload_content}, ensure_ascii=False).encode()
     request = Request(url, data=body, headers={"Content-Type": "application/json; charset=utf-8"}, method="POST")
     with urlopen(request, timeout=8) as response:
         result = json.load(response)

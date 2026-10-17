@@ -2,6 +2,12 @@
 set -euo pipefail
 
 project_dir=${POWERSYSTEM_DIR:-/opt/powersystem}
+# A backup and an application deployment must not snapshot different releases.
+production_state="$project_dir/runtime/production-stack"
+if [ -d "$production_state" ]; then
+  exec 9>"$production_state/deployment.lock"
+  flock -sn 9 || { echo 'Production deployment in progress; backup stopped' >&2; exit 2; }
+fi
 env_file="$project_dir/.env"
 compose_file="$project_dir/stages/04-frontend/deploy/compose.yaml"
 backup_dir=${POWERSYSTEM_BACKUP_DIR:-/var/backups/powersystem}
@@ -118,6 +124,11 @@ fi
 # M4 is optional for old releases; detected active service requires complete backup.
 if docker inspect powersystem-stage4-ops-agent-1 >/dev/null 2>&1; then
   python3 "$project_dir/stages/09-ops-agent/deploy/backup-ma.py" --output "$staging"
+fi
+if [ -d "$production_state" ]; then
+  # These files can contain resolved secrets. They enter the AES256 archive only.
+  cp -a "$production_state" "$staging/production-stack"
+  cp "$project_dir/stages/04-frontend/deploy/production-stack.py" "$staging/production-stack/controller.py"
 fi
 find "$staging/config" -type f -exec chmod 600 {} +
 find "$staging/config" -type d -exec chmod 700 {} +

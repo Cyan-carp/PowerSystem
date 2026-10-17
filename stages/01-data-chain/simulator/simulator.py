@@ -99,8 +99,17 @@ def fault_ramp(device_id: str, instant: datetime, seed: int) -> tuple[float, boo
     return 0.0, False
 
 
-def make_sample(device_id: str, seq: int, ts_ms: int, seed: int, run_id: str) -> tuple[str, bool]:
-    instant = datetime.fromtimestamp(ts_ms / 1000, CHINA_TZ)
+def daylight_profile_ms(ts_ms: int, elapsed_seconds: float, cycle_minutes: float) -> int:
+    """Repeat synthetic 08:00–16:00 daylight while telemetry keeps its real timestamp."""
+    if not math.isfinite(cycle_minutes) or cycle_minutes <= 0:
+        raise ValueError("daylight cycle must be positive and finite")
+    morning = datetime.fromtimestamp(ts_ms / 1000, CHINA_TZ).replace(hour=8, minute=0, second=0, microsecond=0)
+    phase = max(0.0, elapsed_seconds) % (cycle_minutes * 60) / (cycle_minutes * 60)
+    return round((morning + timedelta(hours=8 * phase)).timestamp() * 1000)
+
+
+def make_sample(device_id: str, seq: int, ts_ms: int, seed: int, run_id: str, *, profile_ts_ms: int | None = None) -> tuple[str, bool]:
+    instant = datetime.fromtimestamp((ts_ms if profile_ts_ms is None else profile_ts_ms) / 1000, CHINA_TZ)
     hour = instant.hour + instant.minute / 60 + instant.second / 3600
     sun = max(0.0, math.sin(math.pi * (hour - 6.0) / 12.0))
     rng = random.Random(seed * 1_000_003 + DEVICES.index(device_id) * 1_000_000 + seq)
@@ -179,6 +188,8 @@ def main() -> int:
     parser.add_argument("--interval-seconds", type=float, default=5.0)
     parser.add_argument("--samples", type=int, default=720, help="total samples per device, including samples from a resumed run")
     parser.add_argument("--continuous", action="store_true", help="keep producing current-time samples until stopped")
+    parser.add_argument("--daylight-loop-minutes", type=float, default=0.0,
+                        help="continuous demo only: repeat synthetic 08:00–16:00 daylight in this many real minutes; 0 keeps the real day/night cycle")
     parser.add_argument("--time-scale", type=float, default=1.0)
     parser.add_argument("--seed", type=int, default=2026)
     parser.add_argument("--run-id", default="manual")
@@ -189,13 +200,19 @@ def main() -> int:
     args = parser.parse_args()
     if args.samples < 1 or args.interval_seconds <= 0 or args.time_scale <= 0:
         parser.error("samples, interval-seconds, and time-scale must be positive")
+    if not math.isfinite(args.daylight_loop_minutes) or args.daylight_loop_minutes < 0:
+        parser.error("daylight-loop-minutes must be nonnegative and finite")
+    if args.daylight_loop_minutes and not args.continuous:
+        parser.error("daylight-loop-minutes requires continuous mode")
     signal.signal(signal.SIGINT, lambda *_: STOP.set())
     signal.signal(signal.SIGTERM, lambda *_: STOP.set())
     ledger = Ledger(args.outbox)
     start_ms = ledger.start_ms()
     publishers = [Publisher(device, ledger, args.broker, args.port, args.mqtt_user, args.mqtt_password) for device in DEVICES]
-    log("simulator_started", run_id=args.run_id, continuous=args.continuous, samples_per_device=args.samples, interval_seconds=args.interval_seconds, time_scale=args.time_scale)
-    next_tick = time.monotonic()
+    log("simulator_started", run_id=args.run_id, continuous=args.continuous, samples_per_device=args.samples, interval_seconds=args.interval_seconds, time_scale=args.time_scale,
+        daylight_loop_minutes=args.daylight_loop_minutes)
+    loop_started = time.monotonic()
+    next_tick = loop_started
     interrupted = False
     try:
         while not STOP.is_set() and (args.continuous or any(ledger.next_seq(device) < args.samples for device in DEVICES)):
@@ -205,7 +222,8 @@ def main() -> int:
                 if not args.continuous and seq >= args.samples:
                     continue
                 ts_ms = int(time.time() * 1000) if args.continuous else start_ms + round(seq * args.interval_seconds * 1000 * args.time_scale)
-                payload, active = make_sample(device, seq, ts_ms, args.seed, args.run_id)
+                profile_ts_ms = daylight_profile_ms(ts_ms, time.monotonic() - loop_started, args.daylight_loop_minutes) if args.daylight_loop_minutes else None
+                payload, active = make_sample(device, seq, ts_ms, args.seed, args.run_id, profile_ts_ms=profile_ts_ms)
                 ledger.add(device, seq, ts_ms, payload, active)
                 publisher.publish(seq, payload)
             generated, pending = ledger.counts()

@@ -4,3 +4,6 @@
 *.yml text eol=lf
 部署/独立云服务器部署/config/* text eol=lf
 部署/独立云服务器部署/scripts/*.py text eol=lf
+部署/独立云服务器部署/scripts/**/*.py text eol=lf
+部署/独立云服务器部署/*.md text eol=lf
+部署/独立云服务器部署/SHA256SUMS text eol=lf

@@ -4,6 +4,7 @@ import { dataTime, evidenceLabel, freshnessLabel } from './boundary'
 describe('business evidence presentation', () => {
   it('formats tool time in Beijing without changing raw values', () => {
     expect(dataTime('2026-10-11T03:01:22.037589Z')).toContain('11:01:22')
+    expect(dataTime('2026-10-11T03:01:22.037589Z')).toContain('2026.10.11')
     expect(dataTime('2026-10-11T03:01:22.037589Z')).toContain('北京时间')
     expect(dataTime(undefined)).toBe('缺失或无法解析')
     expect(dataTime('invalid')).toBe('缺失或无法解析')

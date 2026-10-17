@@ -1,0 +1,32 @@
+[Unit]
+Description=PowerSystem HTTPS source refresh receiver on Unix socket
+After=powersystem-source-executor.service
+Requires=powersystem-source-executor.service
+
+[Service]
+Type=simple
+User=powersystem-source
+Group=www-data
+SupplementaryGroups=powersystem-source
+ExecStart=/usr/bin/python3 -B /opt/powersystem-edge/source-refresh/frp-source-refresh.py serve-web
+Restart=on-failure
+RestartSec=10
+UMask=0077
+RuntimeDirectory=powersystem-source-web
+RuntimeDirectoryMode=0750
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictAddressFamilies=AF_UNIX
+CapabilityBoundingSet=
+MemoryMax=64M
+TasksMax=8
+
+[Install]
+WantedBy=multi-user.target
