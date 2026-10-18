@@ -191,7 +191,7 @@ python3 /opt/powersystem/runtime/api-recovery-20261015-r1/verify-auth-wss.py /et
 
 ### 当前基线与只读查看
 
-2026-10-18历史会话独立滚动已通过统一入口发布；当前指针为 `assistant-history-scroll-20261018-r1`，直接上一版本 `assistant-task-records-20261018-r1` 保留，实际rollback未触发。仅指定 frontend，单文件增量与本地摘要一致；必要构建、更新前双云密文备份和发布器自带门禁通过。未重复业务与界面测试套件，效果由所有者查看。最新事实见[[notes/04-系统部署发布备份与变更记录/部署与运维日志/17-智能助手历史会话独立滚动]]。当前指针及是否存在待恢复事务由下列命令读取：
+2026-10-18告警解读兼容修复已通过统一入口发布；当前指针为 `interpretation-role-20261018-r1`，直接上一版 `console-scroll-shell-20261018-r1` 保留，未触发rollback。仅指定 agent 与 frontend，既有页面布局、API及完整配置保持；必要构建、13项相关隔离检查、更新前双云密文备份、强制发布门禁及线上合成解读通过。事实见[[notes/04-系统部署发布备份与变更记录/部署与运维日志/18-告警智能解读模型返回兼容修复]]。当前指针及待恢复事务由下列命令读取：
 
 ```bash
 python3 /opt/powersystem/stages/04-frontend/deploy/production-stack.py status

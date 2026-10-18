@@ -22,6 +22,9 @@ MESSAGES = {
     "quota_exhausted": "供应商报告额度不足，请管理员处理后检测恢复。",
     "rate_limited": "模型请求受到限流，正在有限重试。",
     "unavailable": "模型服务暂不可用。",
+    "model_invalid_response": "模型返回格式无法解析，请管理员检查模型接口兼容性。",
+    "model_timeout": "模型响应超时，请稍后重试。",
+    "model_unreachable": "无法连接模型服务，请管理员检查上游连接。",
     "answer_validation_failed": "模型回答未通过证据校验。",
 }
 SYSTEM = """你是源网智联只读告警解读助手。只使用本次事件证据，不执行工具。

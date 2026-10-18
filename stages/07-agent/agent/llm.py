@@ -74,7 +74,10 @@ class Provider:
                         raise ProviderError("model_response_too_large")
                 data = json.loads(raw)
             message = data["choices"][0]["message"]
-            if not isinstance(message, dict) or message.get("role", "assistant") != "assistant":
+            # Some compatible gateways emit an empty role for an otherwise
+            # valid completion. Normalize only this omission; explicit user,
+            # system or tool roles remain invalid and answer checks still run.
+            if not isinstance(message, dict) or message.get("role", "assistant") not in ("assistant", ""):
                 raise ValueError()
             calls = message.get("tool_calls", [])
             if not isinstance(calls, list) or len(calls) > 10:

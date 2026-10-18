@@ -379,6 +379,17 @@ python3 stages/07-agent/deploy/sync-v2m4-source.py --root /opt/powersystem --arc
 记录：[[notes/04-系统部署发布备份与变更记录/部署与运维日志/02-目录重构兼容修复]]。
 
 
+## 2026-10-18 · 告警解读响应兼容修复
+
+上游完成响应的 `message.role` 出现空字符串，原解析器以 `model_invalid_response` 拒绝。只兼容这个空值，保留异常角色、工具及证据/数字校验；同时补充格式、超时和不可连接提示。新增 `tests/test_provider_response.py` 六项本地检查通过，候选内13项相关隔离检查通过；正式发布及合成端到端结果见 [[notes/04-系统部署发布备份与变更记录/部署与运维日志/18-告警智能解读模型返回兼容修复]]。历史失败不批量重试或覆盖，未进行真实设备或模型质量验收。
+
+仅复现新增响应解析检查（仓库根目录，需安装 `httpx`；不访问真实模型）：
+
+```powershell
+$env:PYTHONPATH = "stages/07-agent"
+python -m unittest discover -s stages/07-agent/tests -p test_provider_response.py -v
+```
+
 ## 相关笔记
 
 - [[notes/02-工程规范边界与验收治理/项目工程规范]]
