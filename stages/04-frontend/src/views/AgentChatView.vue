@@ -237,6 +237,7 @@ onUnmounted(() => {
     <div class="rag-layout">
       <aside class="surface rag-sidebar">
         <div class="rag-sidebar-head"><strong>历史会话</strong><el-button text @click="refreshAll()">刷新</el-button></div>
+        <div class="rag-session-list" role="region" aria-label="历史会话列表" tabindex="0" @wheel.stop>
         <p v-if="listError" class="chat-error">{{ listError }}</p><p v-if="!sessions.length && !listError" class="rag-muted">开始聊天后，会话会自动保存。</p>
         <div v-for="item in sessions" :key="item.id" class="rag-session" :class="{ active: item.id === sessionID }">
           <button type="button" class="rag-session-title" :title="item.title" :aria-current="item.id === sessionID ? 'true' : undefined" @click="openSession(item.id)">{{ item.title }}</button>
@@ -246,6 +247,7 @@ onUnmounted(() => {
           </div>
         </div>
         <el-button v-if="moreSessions" text @click="refreshSessions(true)">加载更多</el-button>
+        </div>
       </aside>
       <main ref="conversation" class="rag-conversation" v-loading="loading">
         <div v-if="!sessionID && !turns.length && hasActiveTasks" class="rag-task-notice" role="status"><span>有尚未完成的运维任务</span><el-button text size="small" @click="openTaskRecords('active')">查看任务</el-button></div>
@@ -307,8 +309,10 @@ onUnmounted(() => {
 .chat-page{display:flex;flex-direction:column;gap:20px}.chat-turn{padding:24px;margin-bottom:18px}.chat-turn-head{display:flex;justify-content:space-between;gap:12px}.chat-q-label{font-size:12px;font-weight:700;color:var(--brand)}.chat-question{font-size:17px;font-weight:600;white-space:pre-wrap;overflow-wrap:anywhere;margin:10px 0 20px}.chat-turn-foot{font-size:11px;color:var(--ink-3);overflow-wrap:anywhere;margin-top:16px}.chat-error{color:var(--danger);font-size:13px}.chat-limit,.chat-waiting{color:var(--ink-3);font-size:13px}.chat-examples{display:flex;flex-wrap:wrap;justify-content:center;gap:10px;max-width:640px;margin:24px auto 0}.chat-example{border:1px solid var(--line);border-radius:4px;background:var(--card);color:var(--ink-2);padding:10px 14px;cursor:pointer;font:inherit;font-size:13px;transition:background .15s}.chat-example:hover{background:var(--brand-soft);border-color:var(--brand-line);color:var(--brand)}
 .rag-receipt{font-size:12px;color:var(--ink-3);margin:12px 0}.rag-receipt summary{cursor:pointer}.chat-turn:has(.ops-task)>.chat-question{font-size:14px;font-weight:500;line-height:1.8;color:var(--ink-2)}
 .rag-layout{display:grid;grid-template-columns:300px minmax(0,1fr);gap:20px;align-items:start}
-.rag-sidebar{padding:10px;position:sticky;top:80px}
-.rag-sidebar-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;padding:0 6px}
+.rag-sidebar{display:flex;flex-direction:column;min-height:0;max-height:calc(100dvh - 180px);padding:10px;position:sticky;top:80px;overflow:hidden}
+.rag-sidebar-head{display:flex;flex-shrink:0;justify-content:space-between;align-items:center;margin-bottom:8px;padding:0 6px}
+.rag-session-list{flex:1 1 auto;min-height:0;overflow-y:auto;overflow-x:hidden;overscroll-behavior-y:contain;scrollbar-gutter:stable;scrollbar-width:thin;scrollbar-color:var(--line-strong) transparent;padding:0 2px}
+.rag-session-list:focus-visible{outline:1px solid var(--brand-line);outline-offset:-1px}
 .rag-sidebar-head strong{font-size:13px;font-weight:600}
 .rag-session{display:flex;align-items:center;gap:8px;position:relative;min-height:36px;padding:0 8px;border-radius:4px;margin-bottom:2px;color:var(--ink-2);transition:background .15s}
 .rag-session:hover{background:var(--hover)}
@@ -325,5 +329,5 @@ onUnmounted(() => {
 .rag-session-title:focus-visible,.rag-session-delete:focus-visible{outline:2px solid var(--brand);outline-offset:2px}
 @media(hover:none){.rag-session-delete{opacity:1;visibility:visible;pointer-events:auto}.rag-session-time{margin-right:30px}.rag-session-meta{flex-basis:88px}.rag-session:focus-within .rag-session-time{opacity:1}}
 .rag-conversation{min-width:0}.rag-muted{color:var(--ink-3);font-size:12px}.rag-compose{padding:18px;margin-top:18px}.rag-compose-actions{display:flex;gap:12px;justify-content:flex-end;align-items:center;margin-top:12px}.rag-compose-actions>span{margin-right:auto}.rag-markdown{line-height:1.8;overflow-wrap:anywhere}.rag-markdown :deep(pre),.rag-details pre,.rag-source-content{overflow:auto;white-space:pre-wrap;background:var(--bg);padding:14px;border-radius:4px;font-size:12px}.rag-markdown :deep(table){border-collapse:collapse;width:100%}.rag-markdown :deep(th),.rag-markdown :deep(td){border:1px solid var(--line);padding:8px;text-align:left}.rag-markdown :deep(a){color:var(--brand)}.rag-details{border-top:1px solid var(--line);padding:12px 0;margin-top:10px}.rag-details summary{cursor:pointer;color:var(--ink-2)}.rag-source{padding:10px 0;display:flex;flex-wrap:wrap;gap:12px;align-items:center}.rag-source small{flex-basis:100%;color:var(--ink-3)}@media(max-width:900px){.rag-receipt{font-size:12px;color:var(--ink-3);margin:12px 0}.rag-receipt summary{cursor:pointer}.chat-turn:has(.ops-task)>.chat-question{font-size:14px;font-weight:500;line-height:1.8;color:var(--ink-2)}
-.rag-layout{grid-template-columns:1fr}.rag-sidebar{position:static;max-height:220px;overflow:auto}}@media(max-width:640px){.rag-compose-actions{flex-wrap:wrap}.rag-compose-actions>span{flex-basis:100%}}
+.rag-layout{grid-template-columns:1fr}.rag-sidebar{position:static;max-height:min(220px,calc(100dvh - 180px))}}@media(max-width:640px){.rag-compose-actions{flex-wrap:wrap}.rag-compose-actions>span{flex-basis:100%}}
 </style>
