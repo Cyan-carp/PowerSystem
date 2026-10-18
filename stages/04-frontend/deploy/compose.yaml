@@ -141,6 +141,8 @@ services:
       - --continuous
       - --daylight-loop-minutes
       - "60"
+      - --fault-mode
+      - "off"
       - --interval-seconds
       - "5"
       - --run-id

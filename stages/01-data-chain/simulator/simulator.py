@@ -108,7 +108,10 @@ def daylight_profile_ms(ts_ms: int, elapsed_seconds: float, cycle_minutes: float
     return round((morning + timedelta(hours=8 * phase)).timestamp() * 1000)
 
 
-def make_sample(device_id: str, seq: int, ts_ms: int, seed: int, run_id: str, *, profile_ts_ms: int | None = None) -> tuple[str, bool]:
+def make_sample(device_id: str, seq: int, ts_ms: int, seed: int, run_id: str, *, profile_ts_ms: int | None = None,
+                fault_mode: str = "scheduled") -> tuple[str, bool]:
+    if fault_mode not in ("scheduled", "off"):
+        raise ValueError("fault-mode must be scheduled or off")
     instant = datetime.fromtimestamp((ts_ms if profile_ts_ms is None else profile_ts_ms) / 1000, CHINA_TZ)
     hour = instant.hour + instant.minute / 60 + instant.second / 3600
     sun = max(0.0, math.sin(math.pi * (hour - 6.0) / 12.0))
@@ -117,7 +120,10 @@ def make_sample(device_id: str, seq: int, ts_ms: int, seed: int, run_id: str, *,
     power = min(100.0, max(0.0, 100.0 * sun**1.6 * cloud))
     voltage = 400.0 + 1.5 * math.sin(seq / 71 + DEVICES.index(device_id)) + rng.uniform(-0.8, 0.8)
     current = power * 1000.0 / (math.sqrt(3) * voltage * 0.99)
-    ramp, active = fault_ramp(device_id, instant, seed)
+    # The daylight profile only controls generation/weather shape. Faults use
+    # the actual sample clock, never the compressed or restarting daylight loop.
+    fault_instant = datetime.fromtimestamp(ts_ms / 1000, CHINA_TZ)
+    ramp, active = fault_ramp(device_id, fault_instant, seed) if fault_mode == "scheduled" else (0.0, False)
     temperature = 25.0 + 0.25 * power + 3.0 * max(0.0, math.sin(math.pi * (hour - 7.0) / 12.0)) + ramp + rng.uniform(-0.35, 0.35)
     payload = {
         "schema_version": 1,
@@ -190,6 +196,8 @@ def main() -> int:
     parser.add_argument("--continuous", action="store_true", help="keep producing current-time samples until stopped")
     parser.add_argument("--daylight-loop-minutes", type=float, default=0.0,
                         help="continuous demo only: repeat synthetic 08:00–16:00 daylight in this many real minutes; 0 keeps the real day/night cycle")
+    parser.add_argument("--fault-mode", choices=("scheduled", "off"), default="scheduled",
+                        help="scheduled: inject deterministic faults on the actual sample day; off: disable injected faults without changing daylight or alarms")
     parser.add_argument("--time-scale", type=float, default=1.0)
     parser.add_argument("--seed", type=int, default=2026)
     parser.add_argument("--run-id", default="manual")
@@ -210,7 +218,7 @@ def main() -> int:
     start_ms = ledger.start_ms()
     publishers = [Publisher(device, ledger, args.broker, args.port, args.mqtt_user, args.mqtt_password) for device in DEVICES]
     log("simulator_started", run_id=args.run_id, continuous=args.continuous, samples_per_device=args.samples, interval_seconds=args.interval_seconds, time_scale=args.time_scale,
-        daylight_loop_minutes=args.daylight_loop_minutes)
+        daylight_loop_minutes=args.daylight_loop_minutes, fault_mode=args.fault_mode, fault_clock="sample_timestamp")
     loop_started = time.monotonic()
     next_tick = loop_started
     interrupted = False
@@ -223,7 +231,8 @@ def main() -> int:
                     continue
                 ts_ms = int(time.time() * 1000) if args.continuous else start_ms + round(seq * args.interval_seconds * 1000 * args.time_scale)
                 profile_ts_ms = daylight_profile_ms(ts_ms, time.monotonic() - loop_started, args.daylight_loop_minutes) if args.daylight_loop_minutes else None
-                payload, active = make_sample(device, seq, ts_ms, args.seed, args.run_id, profile_ts_ms=profile_ts_ms)
+                payload, active = make_sample(device, seq, ts_ms, args.seed, args.run_id,
+                                              profile_ts_ms=profile_ts_ms, fault_mode=args.fault_mode)
                 ledger.add(device, seq, ts_ms, payload, active)
                 publisher.publish(seq, payload)
             generated, pending = ledger.counts()

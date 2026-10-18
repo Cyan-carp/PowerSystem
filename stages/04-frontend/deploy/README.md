@@ -191,7 +191,7 @@ python3 /opt/powersystem/runtime/api-recovery-20261015-r1/verify-auth-wss.py /et
 
 ### 当前基线与只读查看
 
-2026-10-18告警解读兼容修复已通过统一入口发布；当前指针为 `interpretation-role-20261018-r1`，直接上一版 `console-scroll-shell-20261018-r1` 保留，未触发rollback。仅指定 agent 与 frontend，既有页面布局、API及完整配置保持；必要构建、13项相关隔离检查、更新前双云密文备份、强制发布门禁及线上合成解读通过。事实见[[notes/04-系统部署发布备份与变更记录/部署与运维日志/18-告警智能解读模型返回兼容修复]]。当前指针及待恢复事务由下列命令读取：
+2026-10-18白天循环与故障注入解耦已通过统一入口发布；当前指针 `daylight-fault-decouple-20261018-r1`，上一版 `interpretation-role-20261018-r1` 保留，未触发rollback。仅指定 simulator，私有完整编排参数追加仅含模拟器命令的覆盖层，显式 `--fault-mode off` 并保留60分钟白天循环；不改已验收冻结文件和其他服务配置。原卷、账本、历史及模型阈值保持，必要构建、10项隔离检查、75个合成窗口、更新前双云密文备份、正式门禁及发布后一轮正常预测通过。事实统一见[[notes/01-项目调研规划与开发建设记录/补充业务/02-白天循环模拟模式/01-需求与实现·02-白天循环模拟模式]]，不另建笔记。当前指针及待恢复事务由下列命令读取：
 
 ```bash
 python3 /opt/powersystem/stages/04-frontend/deploy/production-stack.py status
