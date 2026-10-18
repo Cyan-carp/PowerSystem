@@ -1,5 +1,7 @@
 import type { OpsStatus } from '../types'
 
+export const activeTaskStatuses: readonly OpsStatus[] = ['queued', 'planning', 'executing', 'awaiting_approval']
+
 export const terminalTask = (status: OpsStatus): boolean => ['succeeded', 'failed', 'cancelled', 'timeout'].includes(status)
 export const taskLabels: Record<OpsStatus, string> = { queued: '已受理 · 排队中', planning: '正在规划', executing: '正在执行', awaiting_approval: '等待管理员审批', succeeded: '任务完成', failed: '任务失败', cancelled: '已取消后续步骤', timeout: '任务超时' }
 

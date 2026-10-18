@@ -1,6 +1,6 @@
 import { clearSession, token } from './auth'
 import { retryAfterSeconds } from './retry-after'
-import type { OpsTask } from '../types'
+import type { OpsStatus, OpsTask } from '../types'
 import type { Alarm, ApiEnvelope, Device, History, LoginResult, Metric, Page, Prediction, PredictionListItem, Summary, Telemetry, Interpretation, AgentModelStatus, KnowledgeSource, RAGChatResponse, RAGSession, RAGTurn, VerificationInput } from '../types'
 
 export class ApiError extends Error {
@@ -41,7 +41,7 @@ export async function request<T>(path: string, init: RequestInit = {}): Promise<
 }
 
 export const api = {
-  opsTasks: (sessionID?: string, offset = 0) => request<{ list: OpsTask[]; offset: number; page_size: number }>(`/api/v1/agent/tasks${query({ session_id: sessionID, offset })}`),
+  opsTasks: (sessionID?: string, offset = 0, options: { status?: OpsStatus; limit?: number; signal?: AbortSignal } = {}) => request<{ list: OpsTask[]; offset: number; page_size: number }>(`/api/v1/agent/tasks${query({ session_id: sessionID, offset, status: options.status, limit: options.limit })}`, { signal: options.signal }),
   opsTask: (id: string, signal?: AbortSignal) => request<OpsTask>(`/api/v1/agent/tasks/${encodeURIComponent(id)}`, { signal }),
   cancelOpsTask: (id: string) => request<OpsTask>(`/api/v1/agent/tasks/${encodeURIComponent(id)}/cancel`, { method: 'POST' }),
   decideOpsApproval: (id: string, approvalID: string, decision: 'approve' | 'reject') => request<OpsTask>(`/api/v1/agent/tasks/${encodeURIComponent(id)}/approvals/${encodeURIComponent(approvalID)}/decision`, { method: 'POST', body: JSON.stringify({ decision }) }),

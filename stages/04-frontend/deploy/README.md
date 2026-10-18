@@ -191,7 +191,7 @@ python3 /opt/powersystem/runtime/api-recovery-20261015-r1/verify-auth-wss.py /et
 
 ### 当前基线与只读查看
 
-2026-10-18会话导航、自动滚动与低亮度阅读优化已通过统一入口发布；当前指针为 `assistant-ui-20261018-r1`，直接上一版本 `interpretation-focus-20261017-r1` 保留，实际rollback未触发。仅指定 frontend，六个源码文件与本地摘要一致；必要构建、更新前双云密文备份和发布器自带门禁通过。未重复业务与界面测试套件，效果由所有者查看。最新事实见[[notes/04-系统部署发布备份与变更记录/部署与运维日志/15-智能助手会话导航与低亮度阅读优化]]。当前指针及是否存在待恢复事务由下列命令读取：
+2026-10-18首页与任务记录分离已通过统一入口发布；当前指针为 `assistant-task-records-20261018-r1`，直接上一版本 `assistant-ui-20261018-r1` 保留，实际rollback未触发。仅指定 frontend，四个增量源码文件与本地摘要一致；必要构建、更新前双云密文备份和发布器自带门禁通过。未重复业务与界面测试套件，效果由所有者查看。最新事实见[[notes/04-系统部署发布备份与变更记录/部署与运维日志/16-智能助手首页与任务记录分离]]。当前指针及是否存在待恢复事务由下列命令读取：
 
 ```bash
 python3 /opt/powersystem/stages/04-frontend/deploy/production-stack.py status
