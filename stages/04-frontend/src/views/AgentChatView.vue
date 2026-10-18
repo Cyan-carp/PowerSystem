@@ -84,7 +84,7 @@ const sessions = ref<RAGSession[]>([])
 const sessionClock = ref(Date.now())
 let sessionClockTimer: ReturnType<typeof setInterval> | undefined
 const conversation = ref<HTMLElement>()
-const conversationEnd = ref<HTMLElement>()
+const conversationContent = ref<HTMLElement>()
 const followLatest = ref(true)
 let conversationObserver: ResizeObserver | undefined
 let scrollFrame = 0
@@ -96,17 +96,20 @@ function scrollToLatest(force = false): void {
     cancelAnimationFrame(scrollFrame)
     scrollFrame = requestAnimationFrame(() => {
       if (!followLatest.value || !turns.value.length || tasksOpen.value || verifyTarget.value || source.value || document.hidden) return
-      conversationEnd.value?.scrollIntoView({ block: 'end', behavior: 'auto' })
-      previousScrollTop = window.scrollY
+      const viewport = conversation.value
+      if (!viewport) return
+      viewport.scrollTo({ top: viewport.scrollHeight, behavior: 'auto' })
+      previousScrollTop = viewport.scrollTop
     })
   })
 }
 
 function trackConversationScroll(): void {
-  const bottom = conversationEnd.value?.getBoundingClientRect().bottom
-  if (window.scrollY < previousScrollTop - 2) followLatest.value = false
-  else if (bottom != null && bottom >= 0 && bottom <= window.innerHeight + 80) followLatest.value = true
-  previousScrollTop = window.scrollY
+  const viewport = conversation.value
+  if (!viewport) return
+  if (viewport.scrollTop < previousScrollTop - 2) followLatest.value = false
+  else if (viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight <= 80) followLatest.value = true
+  previousScrollTop = viewport.scrollTop
 }
 
 function pauseFollowing(event: WheelEvent): void {
@@ -141,7 +144,7 @@ async function refreshSessions(append = false): Promise<void> {
   catch (e) { listError.value = e instanceof Error ? e.message : '历史会话读取失败' }
 }
 function cancel(): void { if (pending.value) { const waiting = [...turns.value].reverse().find(turn => !turn.response && !turn.error); if (waiting) waiting.error = '已取消等待；已受理的任务继续运行，可刷新恢复任务状态。' } generation++; controller?.abort(); controller = undefined; pending.value = false }
-function newChat(): void { cancel(); clearSessionTasks(); tasksOpen.value = false; followLatest.value = true; verifyTarget.value = undefined; sessionID.value = undefined; turns.value = []; draft.value = ''; source.value = undefined; loading.value = false; void refreshActiveNotice() }
+function newChat(): void { cancel(); clearSessionTasks(); tasksOpen.value = false; followLatest.value = true; verifyTarget.value = undefined; sessionID.value = undefined; turns.value = []; draft.value = ''; source.value = undefined; loading.value = false; void nextTick(() => { conversation.value?.scrollTo({ top: 0 }); previousScrollTop = 0 }); void refreshActiveNotice() }
 async function openSession(id: string): Promise<void> {
   cancel(); clearSessionTasks(); verifyTarget.value = undefined; const mine = generation; loading.value = true
   try { const data = await api.chatSession(id); if (mine === generation) { sessionID.value = id; turns.value = data.turns.map(turn => ({ ...turn, historical: true })); await refreshTasks(id); scrollToLatest(true) } }
@@ -215,10 +218,9 @@ onMounted(() => {
   void refreshSessions(); void refreshActiveNotice()
   document.addEventListener('visibilitychange', noticeVisibility)
   sessionClockTimer = setInterval(() => { sessionClock.value = Date.now() }, 60_000)
-  previousScrollTop = window.scrollY
-  window.addEventListener('scroll', trackConversationScroll, { passive: true })
-  window.addEventListener('wheel', pauseFollowing, { passive: true })
+  previousScrollTop = conversation.value?.scrollTop || 0
   conversationObserver = new ResizeObserver(() => scrollToLatest())
+  if (conversationContent.value) conversationObserver.observe(conversationContent.value)
   if (conversation.value) conversationObserver.observe(conversation.value)
 })
 onUnmounted(() => {
@@ -226,8 +228,6 @@ onUnmounted(() => {
   document.removeEventListener('visibilitychange', noticeVisibility)
   clearInterval(sessionClockTimer); cancelAnimationFrame(scrollFrame)
   conversationObserver?.disconnect()
-  window.removeEventListener('scroll', trackConversationScroll)
-  window.removeEventListener('wheel', pauseFollowing)
 })
 </script>
 
@@ -249,7 +249,9 @@ onUnmounted(() => {
         <el-button v-if="moreSessions" text @click="refreshSessions(true)">加载更多</el-button>
         </div>
       </aside>
-      <main ref="conversation" class="rag-conversation" v-loading="loading">
+      <main class="rag-conversation" v-loading="loading">
+        <div ref="conversation" class="rag-message-list" role="region" aria-label="对话内容" tabindex="0" @scroll.passive="trackConversationScroll" @wheel.passive="pauseFollowing">
+        <div ref="conversationContent">
         <div v-if="!sessionID && !turns.length && hasActiveTasks" class="rag-task-notice" role="status"><span>有尚未完成的运维任务</span><el-button text size="small" @click="openTaskRecords('active')">查看任务</el-button></div>
         <p v-if="!sessionID && !turns.length && noticeError" class="rag-muted">{{ noticeError }}</p>
         <section v-if="!turns.length" class="chat-empty surface"><div class="empty-box tall"><h2>有什么想了解的？</h2><p>可以询问技术、新能源设备和平台问题，也可以查项目资料与最新技术信息。生活与闲聊问题暂不提供内容回答。</p><div class="chat-examples"><button v-for="item in examples" :key="item" type="button" class="chat-example" @click="draft = item">{{ item }}</button></div></div></section>
@@ -277,9 +279,10 @@ onUnmounted(() => {
           <p v-if="sessionTasksError" class="chat-error" role="alert">{{ sessionTasksError }}</p>
           <el-button v-if="sessionTasksMore" text :loading="sessionTasksLoading" @click="refreshTasks(sessionID, true)">加载此会话的更多任务</el-button>
         </template>
-        <button v-if="!followLatest && turns.length" type="button" class="rag-jump-latest" @click="scrollToLatest(true)">回到最新对话 ↓</button>
-        <section class="surface rag-compose"><el-input v-model="draft" type="textarea" :autosize="{ minRows: 3, maxRows: 10 }" placeholder="输入问题，Ctrl / ⌘ + Enter 发送" @keydown.ctrl.enter.prevent="send" @keydown.meta.enter.prevent="send" /><div class="rag-compose-actions"><span class="rag-muted">{{ chars }} / 32000 · 设备数据来自合成演示环境</span><el-button v-if="pending" @click="cancel">取消等待</el-button><el-button type="primary" :disabled="pending || !draft.trim() || chars > 32000" @click="send">发送</el-button></div></section>
-        <div ref="conversationEnd" class="rag-conversation-end" aria-hidden="true" />
+        <div class="rag-conversation-end" aria-hidden="true" />
+        </div>
+        </div>
+        <section class="surface rag-compose"><el-input v-model="draft" type="textarea" :autosize="{ minRows: 3, maxRows: 10 }" placeholder="输入问题，Ctrl / ⌘ + Enter 发送" @keydown.ctrl.enter.prevent="send" @keydown.meta.enter.prevent="send" /><div class="rag-compose-actions"><span class="rag-muted">{{ chars }} / 32000 · 设备数据来自合成演示环境</span><button v-if="!followLatest && turns.length" type="button" class="rag-jump-latest" @click="scrollToLatest(true)">回到最新对话 ↓</button><el-button v-if="pending" @click="cancel">取消等待</el-button><el-button type="primary" :disabled="pending || !draft.trim() || chars > 32000" @click="send">发送</el-button></div></section>
       </main>
     </div>
     <p v-if="sourceError" class="chat-error">{{ sourceError }}</p>
@@ -298,7 +301,7 @@ onUnmounted(() => {
 
 <style scoped>
 .rag-page-actions{display:flex;flex-wrap:wrap;gap:8px}.rag-page-actions .el-button+.el-button{margin-left:0}.rag-task-notice{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:6px 12px;margin-bottom:12px;border:1px solid var(--brand-line);border-radius:4px;background:var(--brand-soft);color:var(--ink-2);font-size:12px}
-.rag-jump-latest{position:fixed;right:32px;bottom:24px;z-index:80;padding:8px 12px;border:1px solid var(--line-strong);border-radius:4px;background:var(--card-2);color:var(--ink);font:inherit;font-size:12px;box-shadow:var(--shadow-md)}
+.rag-jump-latest{padding:6px 10px;border:1px solid var(--line-strong);border-radius:4px;background:var(--card-2);color:var(--ink);font:inherit;font-size:12px}
 .rag-jump-latest:hover{border-color:var(--brand);color:var(--brand)}
 .rag-jump-latest:focus-visible{outline:2px solid var(--brand);outline-offset:2px}
 .rag-conversation-end{height:1px;scroll-margin-bottom:20px}
@@ -327,6 +330,15 @@ onUnmounted(() => {
 .rag-session-delete:hover:not(:disabled){color:var(--danger);background:var(--danger-soft)}
 .rag-session-delete:disabled{cursor:not-allowed;color:var(--ink-3)}
 .rag-session-title:focus-visible,.rag-session-delete:focus-visible{outline:2px solid var(--brand);outline-offset:2px}
+.rag-page{flex:1;min-height:0;gap:14px;overflow:hidden}
+.rag-page>.page-head{flex-shrink:0;margin-bottom:0}
+.rag-layout{flex:1;min-height:0;grid-template-rows:minmax(0,1fr);align-items:stretch}
+.rag-sidebar{position:static;max-height:none}
+.rag-conversation{display:flex;flex-direction:column;min-height:0;overflow:hidden}
+.rag-message-list{flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;overscroll-behavior-y:contain;scrollbar-gutter:stable;padding-right:4px}
+.rag-message-list:focus-visible{outline:1px solid var(--brand-line);outline-offset:-1px}
+.rag-conversation>.rag-compose{flex-shrink:0;margin-top:12px}
+@media(max-width:900px){.rag-page>.rag-layout{grid-template-rows:minmax(90px,28%) minmax(0,1fr)}.rag-page .rag-sidebar{max-height:none}}
 @media(hover:none){.rag-session-delete{opacity:1;visibility:visible;pointer-events:auto}.rag-session-time{margin-right:30px}.rag-session-meta{flex-basis:88px}.rag-session:focus-within .rag-session-time{opacity:1}}
 .rag-conversation{min-width:0}.rag-muted{color:var(--ink-3);font-size:12px}.rag-compose{padding:18px;margin-top:18px}.rag-compose-actions{display:flex;gap:12px;justify-content:flex-end;align-items:center;margin-top:12px}.rag-compose-actions>span{margin-right:auto}.rag-markdown{line-height:1.8;overflow-wrap:anywhere}.rag-markdown :deep(pre),.rag-details pre,.rag-source-content{overflow:auto;white-space:pre-wrap;background:var(--bg);padding:14px;border-radius:4px;font-size:12px}.rag-markdown :deep(table){border-collapse:collapse;width:100%}.rag-markdown :deep(th),.rag-markdown :deep(td){border:1px solid var(--line);padding:8px;text-align:left}.rag-markdown :deep(a){color:var(--brand)}.rag-details{border-top:1px solid var(--line);padding:12px 0;margin-top:10px}.rag-details summary{cursor:pointer;color:var(--ink-2)}.rag-source{padding:10px 0;display:flex;flex-wrap:wrap;gap:12px;align-items:center}.rag-source small{flex-basis:100%;color:var(--ink-3)}@media(max-width:900px){.rag-receipt{font-size:12px;color:var(--ink-3);margin:12px 0}.rag-receipt summary{cursor:pointer}.chat-turn:has(.ops-task)>.chat-question{font-size:14px;font-weight:500;line-height:1.8;color:var(--ink-2)}
 .rag-layout{grid-template-columns:1fr}.rag-sidebar{position:static;max-height:min(220px,calc(100dvh - 180px))}}@media(max-width:640px){.rag-compose-actions{flex-wrap:wrap}.rag-compose-actions>span{flex-basis:100%}}

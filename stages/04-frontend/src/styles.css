@@ -113,13 +113,21 @@ h1, h2, h3, p { margin-top: 0; }
 /* ==========================================================================
    一、控制台骨架：文字直述侧栏 + 顶栏 + 深色内容区
    ========================================================================== */
-.app-shell { display: flex; min-height: 100vh; }
+body:has(.icp-footer) { --site-footer-height: 28px; }
+.icp-footer {
+  position: fixed; inset: auto 0 0; z-index: 110;
+  display: flex; align-items: center; justify-content: center;
+  height: 28px; padding: 0 12px !important; margin: 0;
+  font-size: 11px !important; line-height: 28px;
+  background: var(--bg); border-top: 1px solid var(--line-soft);
+}
+.app-shell { display: flex; height: calc(100dvh - var(--site-footer-height, 0px)); min-height: 0; overflow: hidden; }
 
 /* 侧栏（文字标签导航，无表意不明的裸图标） */
 .sidebar {
   position: sticky; top: 0; z-index: 100;
   display: flex; flex-direction: column; flex: none;
-  width: 188px; height: 100vh; padding: 0 12px 14px;
+  width: 188px; height: 100%; padding: 0 12px 14px;
   background: var(--card); border-right: 1px solid var(--line);
 }
 .brand-mark {
@@ -158,13 +166,13 @@ h1, h2, h3, p { margin-top: 0; }
 .foot-logout:hover { border-color: var(--danger); color: var(--danger); background: var(--danger-soft); }
 
 /* 内容列 */
-.app-col { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.app-col { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
 
 /* 顶栏 */
 .topbar {
   position: sticky; top: 0; z-index: 90;
   display: flex; align-items: center; gap: 16px;
-  height: 54px; padding: 0 22px;
+  height: 54px; flex-shrink: 0; padding: 0 22px;
   background: rgba(12, 17, 24, .88); backdrop-filter: blur(10px);
   border-bottom: 1px solid var(--line);
 }
@@ -188,7 +196,9 @@ h1, h2, h3, p { margin-top: 0; }
 .topbar .el-button:hover { color: var(--brand); background: var(--brand-soft); }
 
 /* 内容区 */
-.main-content { flex: 1; min-width: 0; padding: 22px 26px 40px; max-width: 1480px; margin: 0 auto; width: 100%; }
+.main-content { flex: 1; min-width: 0; min-height: 0; overflow-y: auto; overscroll-behavior-y: contain; padding: 22px 26px 40px; max-width: 1480px; margin: 0 auto; width: 100%; }
+.main-content:has(.rag-page) { display: flex; flex-direction: column; overflow: hidden; padding-bottom: 18px; }
+.login-screen { padding-bottom: var(--site-footer-height, 0px); }
 
 /* 表格类页面收窄：信息量少时不铺满屏幕，便于扫读与对比 */
 .page-narrow { max-width: 1080px; margin: 0 auto; width: 100%; }
