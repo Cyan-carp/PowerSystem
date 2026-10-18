@@ -23,7 +23,7 @@ function draw(): void {
   chart.setOption({
     animationDurationUpdate: 250,
     grid: { left: 54, right: 24, top: 24, bottom: crossDay ? 48 : 32 },
-    tooltip: { trigger: 'axis', confine: true, backgroundColor: '#18212d', borderColor: '#32435a', textStyle: { color: '#e6ecf4' }, axisPointer: { type: 'line' }, formatter: (params: unknown) => {
+    tooltip: { trigger: 'axis', confine: true, backgroundColor: '#18212d', borderColor: '#32435a', textStyle: { color: '#c8d2df' }, axisPointer: { type: 'line' }, formatter: (params: unknown) => {
       const item = (Array.isArray(params) ? params[0] : params) as { data?: unknown }
       const point = item?.data
       if (!Array.isArray(point) || point.length < 2) return ''

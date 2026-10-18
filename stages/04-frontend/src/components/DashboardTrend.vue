@@ -26,7 +26,7 @@ function draw(): void {
     grid: { left: 52, right: 18, top: 22, bottom: 32 },
     tooltip: {
       trigger: 'axis', axisPointer: { type: power ? 'line' : 'shadow' },
-      backgroundColor: '#18212d', borderColor: '#32435a', textStyle: { color: '#e6ecf4' },
+      backgroundColor: '#18212d', borderColor: '#32435a', textStyle: { color: '#c8d2df' },
       formatter: (params: unknown) => {
         const item = (Array.isArray(params) ? params[0] : params) as { data?: DailyPoint }
         const point = item?.data

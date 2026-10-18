@@ -8,13 +8,13 @@
 
 :root {
   font-family: "Noto Sans SC", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
-  color: #e6ecf4;
+  color: var(--ink);
   background: #0c1118;
   font-synthesis: none;
   color-scheme: dark;
 
   /* 中性色板（深空灰蓝，三档分层：页面最暗，卡片次之，悬浮更浅） */
-  --ink: #e6ecf4;
+  --ink: #c8d2df;
   --ink-2: #9fb0c3;
   --ink-3: #8a9bb0;
   --line: #24303f;
@@ -79,7 +79,7 @@ html.dark {
   --el-border-color-light: #24303f;
   --el-border-color-lighter: #1e2936;
   --el-border-color-extra-light: #1a2430;
-  --el-text-color-primary: #e6ecf4;
+  --el-text-color-primary: var(--ink);
   --el-text-color-regular: #9fb0c3;
   --el-text-color-secondary: #8a9bb0;
   --el-text-color-placeholder: #8293a8;

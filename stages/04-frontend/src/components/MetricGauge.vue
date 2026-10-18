@@ -53,7 +53,7 @@ function draw(): void {
       detail: {
         valueAnimation: true,
         offsetCenter: [0, '-16%'],
-        color: '#e6ecf4',
+        color: '#c8d2df',
         fontSize: 26,
         fontWeight: 800,
         fontFamily: '"Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif',

@@ -27,6 +27,21 @@ export function toMilliseconds(value: number | string): number {
   return Number.isFinite(parsed) ? parsed : NaN
 }
 
+/** Compact session activity time; full Beijing time stays available in the tooltip. */
+export function sessionRecency(value: string | null | undefined, now = Date.now()): string {
+  if (!value) return '—'
+  const timestamp = Date.parse(value)
+  if (!Number.isFinite(timestamp)) return '—'
+  const age = now - timestamp
+  if (age >= -60_000 && age < 60_000) return '刚刚'
+  if (age >= 60_000 && age < 3_600_000) return `${Math.floor(age / 60_000)}分钟前`
+  if (age >= 3_600_000 && age < 86_400_000) return `${Math.floor(age / 3_600_000)}小时前`
+  if (age >= 86_400_000 && age < 7 * 86_400_000) return `${Math.floor(age / 86_400_000)}天前`
+  const parts = Object.fromEntries(beijingTime.formatToParts(new Date(timestamp)).map(({ type, value }) => [type, value]))
+  const thisYear = beijingTime.formatToParts(new Date(now)).find(part => part.type === 'year')?.value
+  return `${parts.year === thisYear ? '' : `${parts.year}-`}${parts.month}-${parts.day}`
+}
+
 export function normalizePoints(raw: [number | string, number][]): [number, number][] {
   return raw.map(([time, value]) => [toMilliseconds(time), Number(value)] as [number, number])
     .filter(([time, value]) => Number.isFinite(time) && Number.isFinite(value))

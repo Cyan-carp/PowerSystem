@@ -135,7 +135,7 @@ class RepositoryLayoutTest(unittest.TestCase):
 
     def test_source_sync_accepts_new_notes_but_not_runtime_or_private_files(self):
         administrative=script('stages/07-agent/deploy/sync-v2m4-source.py')['administrative']
-        for name in ('notes/02-工程规范边界与验收治理/项目工程规范.md','notes/03-平台使用运维与二次开发手册/平台使用手册.md','notes/04-系统部署发布备份与变更记录/部署与运维/本地服务器部署笔记.md','notes/01-项目调研规划与开发建设记录/第二版-智能体升级/index.md'):
+        for name in ('notes/02-工程规范边界与验收治理/项目工程规范.md','notes/03-平台使用运维与二次开发手册/平台使用手册.md','notes/04-系统部署发布备份与变更记录/部署与运维日志/14-本地服务器部署笔记.md','notes/01-项目调研规划与开发建设记录/第二版-智能体升级/index.md'):
             self.assertTrue(administrative(PurePosixPath(name)),name)
         for name in ('notes/02-工程规范边界与验收治理/private/secret.md','artifacts/asset-archive/release.md','notes/03-平台使用运维与二次开发手册/../.env','deploy/edge-server/独立云服务器部署/config/new.sh'):
             self.assertFalse(administrative(PurePosixPath(name)),name)

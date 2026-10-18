@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { Delete } from '@element-plus/icons-vue'
 import { api } from '../lib/api'
 import { renderAnswer, sourceLink, programReplyLabel, canVerify } from '../lib/rag-chat'
 import { hasBusinessEvidence } from '../lib/task-presentation'
-import { dateTime } from '../lib/format'
+import { dateTime, sessionRecency } from '../lib/format'
 import type { Device, RAGSession, RAGTurn, VerificationCheck } from '../types'
 import BusinessEvidence from '../components/BusinessEvidence.vue'
 import VerificationReport from '../components/VerificationReport.vue'
@@ -16,6 +17,37 @@ async function refreshTasks(sid?: string): Promise<void> { recoveredTasks.value 
 async function refreshAll(): Promise<void> { await refreshSessions(); await refreshTasks(sessionID.value) }
 function explainTask(id: string): void { draft.value = `请解释运维任务 ${id} 的历史结果，不重新查询设备。`; void send() }
 const sessions = ref<RAGSession[]>([])
+const sessionClock = ref(Date.now())
+let sessionClockTimer: ReturnType<typeof setInterval> | undefined
+const conversation = ref<HTMLElement>()
+const conversationEnd = ref<HTMLElement>()
+const followLatest = ref(true)
+let conversationObserver: ResizeObserver | undefined
+let scrollFrame = 0
+let previousScrollTop = 0
+
+function scrollToLatest(force = false): void {
+  if (force) followLatest.value = true
+  void nextTick(() => {
+    cancelAnimationFrame(scrollFrame)
+    scrollFrame = requestAnimationFrame(() => {
+      if (!followLatest.value || !turns.value.length || verifyTarget.value || source.value || document.hidden) return
+      conversationEnd.value?.scrollIntoView({ block: 'end', behavior: 'auto' })
+      previousScrollTop = window.scrollY
+    })
+  })
+}
+
+function trackConversationScroll(): void {
+  const bottom = conversationEnd.value?.getBoundingClientRect().bottom
+  if (window.scrollY < previousScrollTop - 2) followLatest.value = false
+  else if (bottom != null && bottom >= 0 && bottom <= window.innerHeight + 80) followLatest.value = true
+  previousScrollTop = window.scrollY
+}
+
+function pauseFollowing(event: WheelEvent): void {
+  if (event.deltaY < 0) followLatest.value = false
+}
 const turns = ref<(Partial<RAGTurn> & { question: string; error?: string; historical?: boolean })[]>([])
 const sessionID = ref<string>()
 const draft = ref('')
@@ -45,10 +77,10 @@ async function refreshSessions(append = false): Promise<void> {
   catch (e) { listError.value = e instanceof Error ? e.message : '历史会话读取失败' }
 }
 function cancel(): void { if (pending.value) { const waiting = [...turns.value].reverse().find(turn => !turn.response && !turn.error); if (waiting) waiting.error = '已取消等待；已受理的任务继续运行，可刷新恢复任务状态。' } generation++; controller?.abort(); controller = undefined; pending.value = false }
-function newChat(): void { cancel(); verifyTarget.value = undefined; sessionID.value = undefined; turns.value = []; recoveredTasks.value = []; draft.value = ''; source.value = undefined; loading.value = false }
+function newChat(): void { cancel(); followLatest.value = true; verifyTarget.value = undefined; sessionID.value = undefined; turns.value = []; recoveredTasks.value = []; draft.value = ''; source.value = undefined; loading.value = false }
 async function openSession(id: string): Promise<void> {
   cancel(); verifyTarget.value = undefined; const mine = generation; loading.value = true
-  try { const data = await api.chatSession(id); if (mine === generation) { sessionID.value = id; turns.value = data.turns.map(turn => ({ ...turn, historical: true })); await refreshTasks(id) } }
+  try { const data = await api.chatSession(id); if (mine === generation) { sessionID.value = id; turns.value = data.turns.map(turn => ({ ...turn, historical: true })); await refreshTasks(id); scrollToLatest(true) } }
   catch (e) { ElMessage.error(e instanceof Error ? e.message : '会话读取失败') }
   finally { if (mine === generation) loading.value = false }
 }
@@ -61,6 +93,7 @@ async function send(): Promise<void> {
   if (pending.value || !draft.value.trim() || chars.value > 32000) return
   const question = draft.value.trim(); draft.value = ''; pending.value = true
   const index = turns.value.push({ question }) - 1
+  scrollToLatest(true)
   const mine = ++generation; controller = new AbortController()
   try {
     const response = await api.chat(question, sessionID.value, controller.signal)
@@ -113,8 +146,22 @@ async function runVerify(): Promise<void> {
   } catch (e) { if (mine === generation) verifyError.value = (e instanceof Error ? e.message : '核验失败') + '。重试会沿用同一请求编号。' }
   finally { verifying.value = false; if (mine === generation) { pending.value = false; controller = undefined } }
 }
-onMounted(() => { void refreshSessions(); void refreshTasks() })
-onUnmounted(cancel)
+watch([turns, recoveredTasks], () => scrollToLatest(), { deep: true, flush: 'post' })
+onMounted(() => {
+  void refreshSessions(); void refreshTasks()
+  sessionClockTimer = setInterval(() => { sessionClock.value = Date.now() }, 60_000)
+  previousScrollTop = window.scrollY
+  window.addEventListener('scroll', trackConversationScroll, { passive: true })
+  window.addEventListener('wheel', pauseFollowing, { passive: true })
+  conversationObserver = new ResizeObserver(() => scrollToLatest())
+  if (conversation.value) conversationObserver.observe(conversation.value)
+})
+onUnmounted(() => {
+  cancel(); clearInterval(sessionClockTimer); cancelAnimationFrame(scrollFrame)
+  conversationObserver?.disconnect()
+  window.removeEventListener('scroll', trackConversationScroll)
+  window.removeEventListener('wheel', pauseFollowing)
+})
 </script>
 
 <template>
@@ -124,10 +171,16 @@ onUnmounted(cancel)
       <aside class="surface rag-sidebar">
         <div class="rag-sidebar-head"><strong>历史会话</strong><el-button text @click="refreshAll()">刷新</el-button></div>
         <p v-if="listError" class="chat-error">{{ listError }}</p><p v-if="!sessions.length && !listError" class="rag-muted">开始聊天后，会话会自动保存。</p>
-        <div v-for="item in sessions" :key="item.id" class="rag-session" :class="{ active: item.id === sessionID }"><button type="button" class="rag-session-title" @click="openSession(item.id)">{{ item.title }}</button><el-button text size="small" :disabled="pending && item.id === sessionID" @click="removeSession(item.id)">删除</el-button></div>
+        <div v-for="item in sessions" :key="item.id" class="rag-session" :class="{ active: item.id === sessionID }">
+          <button type="button" class="rag-session-title" :title="item.title" :aria-current="item.id === sessionID ? 'true' : undefined" @click="openSession(item.id)">{{ item.title }}</button>
+          <div class="rag-session-meta">
+            <time class="rag-session-time" :datetime="item.updated_at || item.created_at" :title="`最后对话：${dateTime(item.updated_at || item.created_at)}`">{{ sessionRecency(item.updated_at || item.created_at, sessionClock) }}</time>
+            <button type="button" class="rag-session-delete" :aria-label="`删除会话：${item.title}`" title="删除会话" :disabled="pending && item.id === sessionID" @click="removeSession(item.id)"><el-icon><Delete /></el-icon></button>
+          </div>
+        </div>
         <el-button v-if="moreSessions" text @click="refreshSessions(true)">加载更多</el-button>
       </aside>
-      <main class="rag-conversation" v-loading="loading">
+      <main ref="conversation" class="rag-conversation" v-loading="loading">
         <section v-if="!turns.length" class="chat-empty surface"><div class="empty-box tall"><h2>有什么想了解的？</h2><p>可以询问技术、新能源设备和平台问题，也可以查项目资料与最新技术信息。生活与闲聊问题暂不提供内容回答。</p><div class="chat-examples"><button v-for="item in examples" :key="item" type="button" class="chat-example" @click="draft = item">{{ item }}</button></div></div></section>
         <article v-for="(turn, index) in turns" :id="`turn-${turn.id ?? turn.response?.turn_id ?? index}`" :key="index" class="chat-turn surface">
           <header class="chat-turn-head"><span class="chat-q-label">{{ turn.kind === 'verification' ? '主动核验记录' : '你' }}</span><span v-if="turn.response?.status === 'degraded'" class="chat-error">{{ turn.kind === 'verification' ? '核验含错误或缺失' : '服务故障' }}</span></header><p class="chat-question">{{ turn.question }}</p><p v-if="turn.error" class="chat-error" role="alert">{{ turn.error }}</p>
@@ -149,7 +202,9 @@ onUnmounted(cancel)
           <p v-else-if="!turn.error" class="chat-waiting">{{ pending && index === turns.length - 1 ? '正在思考，按需查询资料与工具…' : '等待已取消，可以继续提问。' }}</p>
         </article>
         <OpsTaskCard v-for="task in recoveredTasks" :key="task.task_id" :initial="task" historical @explain="explainTask" @source="showSource" />
+        <button v-if="!followLatest && turns.length" type="button" class="rag-jump-latest" @click="scrollToLatest(true)">回到最新对话 ↓</button>
         <section class="surface rag-compose"><el-input v-model="draft" type="textarea" :autosize="{ minRows: 3, maxRows: 10 }" placeholder="输入问题，Ctrl / ⌘ + Enter 发送" @keydown.ctrl.enter.prevent="send" @keydown.meta.enter.prevent="send" /><div class="rag-compose-actions"><span class="rag-muted">{{ chars }} / 32000 · 设备数据来自合成演示环境</span><el-button v-if="pending" @click="cancel">取消等待</el-button><el-button type="primary" :disabled="pending || !draft.trim() || chars > 32000" @click="send">发送</el-button></div></section>
+        <div ref="conversationEnd" class="rag-conversation-end" aria-hidden="true" />
       </main>
     </div>
     <p v-if="sourceError" class="chat-error">{{ sourceError }}</p>
@@ -166,12 +221,34 @@ onUnmounted(cancel)
 </template>
 
 <style scoped>
+.rag-jump-latest{position:fixed;right:32px;bottom:24px;z-index:80;padding:8px 12px;border:1px solid var(--line-strong);border-radius:4px;background:var(--card-2);color:var(--ink);font:inherit;font-size:12px;box-shadow:var(--shadow-md)}
+.rag-jump-latest:hover{border-color:var(--brand);color:var(--brand)}
+.rag-jump-latest:focus-visible{outline:2px solid var(--brand);outline-offset:2px}
+.rag-conversation-end{height:1px;scroll-margin-bottom:20px}
 .verify-checks{margin-top:16px;border:1px solid var(--line);display:flex;flex-wrap:wrap;gap:16px}.verify-checks label{display:flex;align-items:center;gap:6px}.verification-result{margin-top:12px}.verification-result pre{max-height:360px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px}
 </style>
 
 <style scoped>
 .chat-page{display:flex;flex-direction:column;gap:20px}.chat-turn{padding:24px;margin-bottom:18px}.chat-turn-head{display:flex;justify-content:space-between;gap:12px}.chat-q-label{font-size:12px;font-weight:700;color:var(--brand)}.chat-question{font-size:17px;font-weight:600;white-space:pre-wrap;overflow-wrap:anywhere;margin:10px 0 20px}.chat-turn-foot{font-size:11px;color:var(--ink-3);overflow-wrap:anywhere;margin-top:16px}.chat-error{color:var(--danger);font-size:13px}.chat-limit,.chat-waiting{color:var(--ink-3);font-size:13px}.chat-examples{display:flex;flex-wrap:wrap;justify-content:center;gap:10px;max-width:640px;margin:24px auto 0}.chat-example{border:1px solid var(--line);border-radius:4px;background:var(--card);color:var(--ink-2);padding:10px 14px;cursor:pointer;font:inherit;font-size:13px;transition:background .15s}.chat-example:hover{background:var(--brand-soft);border-color:var(--brand-line);color:var(--brand)}
 .rag-receipt{font-size:12px;color:var(--ink-3);margin:12px 0}.rag-receipt summary{cursor:pointer}.chat-turn:has(.ops-task)>.chat-question{font-size:14px;font-weight:500;line-height:1.8;color:var(--ink-2)}
-.rag-layout{display:grid;grid-template-columns:230px minmax(0,1fr);gap:20px;align-items:start}.rag-sidebar{padding:14px;position:sticky;top:80px}.rag-sidebar-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}.rag-session{display:flex;align-items:center;padding:6px;border-radius:4px;margin-bottom:5px}.rag-session.active{background:var(--brand-soft)}.rag-session-title{background:none;border:0;color:inherit;text-align:left;cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;padding:8px;min-width:0}.rag-conversation{min-width:0}.rag-muted{color:var(--ink-3);font-size:12px}.rag-compose{padding:18px;margin-top:18px}.rag-compose-actions{display:flex;gap:12px;justify-content:flex-end;align-items:center;margin-top:12px}.rag-compose-actions>span{margin-right:auto}.rag-markdown{line-height:1.8;overflow-wrap:anywhere}.rag-markdown :deep(pre),.rag-details pre,.rag-source-content{overflow:auto;white-space:pre-wrap;background:var(--bg);padding:14px;border-radius:4px;font-size:12px}.rag-markdown :deep(table){border-collapse:collapse;width:100%}.rag-markdown :deep(th),.rag-markdown :deep(td){border:1px solid var(--line);padding:8px;text-align:left}.rag-markdown :deep(a){color:var(--brand)}.rag-details{border-top:1px solid var(--line);padding:12px 0;margin-top:10px}.rag-details summary{cursor:pointer;color:var(--ink-2)}.rag-source{padding:10px 0;display:flex;flex-wrap:wrap;gap:12px;align-items:center}.rag-source small{flex-basis:100%;color:var(--ink-3)}@media(max-width:900px){.rag-receipt{font-size:12px;color:var(--ink-3);margin:12px 0}.rag-receipt summary{cursor:pointer}.chat-turn:has(.ops-task)>.chat-question{font-size:14px;font-weight:500;line-height:1.8;color:var(--ink-2)}
+.rag-layout{display:grid;grid-template-columns:300px minmax(0,1fr);gap:20px;align-items:start}
+.rag-sidebar{padding:10px;position:sticky;top:80px}
+.rag-sidebar-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;padding:0 6px}
+.rag-sidebar-head strong{font-size:13px;font-weight:600}
+.rag-session{display:flex;align-items:center;gap:8px;position:relative;min-height:36px;padding:0 8px;border-radius:4px;margin-bottom:2px;color:var(--ink-2);transition:background .15s}
+.rag-session:hover{background:var(--hover)}
+.rag-session.active{background:var(--brand-soft)}
+.rag-session-title{align-self:stretch;background:none;border:0;color:var(--ink);text-align:left;cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;padding:8px 0;min-width:0;font:inherit;font-size:13px;font-weight:400;line-height:20px;letter-spacing:0}
+.rag-session.active .rag-session-title{font-weight:600}
+.rag-session-meta{position:relative;flex:0 0 58px;height:32px;display:flex;align-items:center;justify-content:flex-end}
+.rag-session-time{font-size:11px;line-height:16px;font-variant-numeric:tabular-nums;color:var(--ink-3);white-space:nowrap}
+.rag-session-delete{position:absolute;right:0;top:2px;display:grid;place-items:center;width:28px;height:28px;border:0;border-radius:3px;background:var(--hover);color:var(--ink-2);opacity:0;pointer-events:none;visibility:hidden}
+.rag-session:hover .rag-session-delete,.rag-session:has(:focus-visible) .rag-session-delete{opacity:1;pointer-events:auto;visibility:visible}
+.rag-session:hover .rag-session-time,.rag-session:has(:focus-visible) .rag-session-time{opacity:0}
+.rag-session-delete:hover:not(:disabled){color:var(--danger);background:var(--danger-soft)}
+.rag-session-delete:disabled{cursor:not-allowed;color:var(--ink-3)}
+.rag-session-title:focus-visible,.rag-session-delete:focus-visible{outline:2px solid var(--brand);outline-offset:2px}
+@media(hover:none){.rag-session-delete{opacity:1;visibility:visible;pointer-events:auto}.rag-session-time{margin-right:30px}.rag-session-meta{flex-basis:88px}.rag-session:focus-within .rag-session-time{opacity:1}}
+.rag-conversation{min-width:0}.rag-muted{color:var(--ink-3);font-size:12px}.rag-compose{padding:18px;margin-top:18px}.rag-compose-actions{display:flex;gap:12px;justify-content:flex-end;align-items:center;margin-top:12px}.rag-compose-actions>span{margin-right:auto}.rag-markdown{line-height:1.8;overflow-wrap:anywhere}.rag-markdown :deep(pre),.rag-details pre,.rag-source-content{overflow:auto;white-space:pre-wrap;background:var(--bg);padding:14px;border-radius:4px;font-size:12px}.rag-markdown :deep(table){border-collapse:collapse;width:100%}.rag-markdown :deep(th),.rag-markdown :deep(td){border:1px solid var(--line);padding:8px;text-align:left}.rag-markdown :deep(a){color:var(--brand)}.rag-details{border-top:1px solid var(--line);padding:12px 0;margin-top:10px}.rag-details summary{cursor:pointer;color:var(--ink-2)}.rag-source{padding:10px 0;display:flex;flex-wrap:wrap;gap:12px;align-items:center}.rag-source small{flex-basis:100%;color:var(--ink-3)}@media(max-width:900px){.rag-receipt{font-size:12px;color:var(--ink-3);margin:12px 0}.rag-receipt summary{cursor:pointer}.chat-turn:has(.ops-task)>.chat-question{font-size:14px;font-weight:500;line-height:1.8;color:var(--ink-2)}
 .rag-layout{grid-template-columns:1fr}.rag-sidebar{position:static;max-height:220px;overflow:auto}}@media(max-width:640px){.rag-compose-actions{flex-wrap:wrap}.rag-compose-actions>span{flex-basis:100%}}
 </style>
