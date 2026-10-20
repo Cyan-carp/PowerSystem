@@ -41,7 +41,7 @@ def test_C20_local_and_server_credential_boundaries():
     cfg.runtime_profile='m4-server-readonly';cfg.database_url='postgresql://u:p@postgres:5432/ma_ops'
     cfg.backend_url='http://api:8080';cfg.supervisor_url='http://agent-rag:8093';cfg.executor_url='http://ops-executor:8095';cfg.security_url='http://security-agent:8100'
     with pytest.raises(ValueError,match='server_read_only'):cfg.validate()
-    cfg.write_enabled=False;cfg.executor_write_key='';cfg.validate()
+    cfg.write_enabled=False;cfg.executor_write_key='';cfg.model='deepseek-v4.1-flash';cfg.validate()
     assert environments(cfg)==('production',)
     assert context(cfg)['scope_version']==M4_SERVER_SCOPE
 
@@ -201,9 +201,9 @@ def test_C22_pre_digest_m4_history_not_promoted():
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("old_policy,old_scope",[("sec-m4-policy/v2","sec-m4-project-readonly/v2"),("sec-m4-policy/v3","sec-m4-project-readonly/v3"),("sec-m4-policy/v4","sec-m4-project-readonly/v4")])
+@pytest.mark.parametrize("old_policy,old_scope",[("sec-m4-policy/v2","sec-m4-project-readonly/v2"),("sec-m4-policy/v3","sec-m4-project-readonly/v3"),("sec-m4-policy/v4","sec-m4-project-readonly/v4"),("sec-m4-policy/v5","sec-m4-project-readonly/v5")])
 async def test_C23_previous_server_policy_is_rejected_without_model_or_permission_promotion(old_policy,old_scope):
-    provider=Provider();app=create_app(SecConfig("S"*40,"Q"*40,"R"*40,"K"*40,enabled=True,model="deepseek-v4-flash-0731",runtime_profile="m4-server-readonly"),provider)
+    provider=Provider();app=create_app(SecConfig("S"*40,"Q"*40,"R"*40,"K"*40,enabled=True,model="deepseek-v4.1-flash",runtime_profile="m4-server-readonly"),provider)
     async with app.router.lifespan_context(app),httpx.AsyncClient(transport=httpx.ASGITransport(app=app),base_url="http://security") as client:
         raw=request(M4_SERVER_SCOPE);raw["policy_version"]=old_policy;raw["scope_version"]=old_scope
         r=await client.post("/internal/ma-review/v1/reviews",json=raw,headers=headers(raw))

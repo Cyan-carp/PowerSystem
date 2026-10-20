@@ -111,6 +111,7 @@ class Store(ApprovalStore):
                 "model_calls": row["model_calls"], "link_pending": row["link_pending"], "evidence": build_evidence(result.get("tool_calls", []), self.cfg),
                 "created_at": row["created_at"], "finished_at": row["finished_at"]}
         report['task_kind']=row['envelope'].get('task_kind','ops')
+        report['business_quality'] = result.get('business_quality')
         report['inspection_report']=result.get('inspection_report')
         report['infrastructure_evidence']=result.get('infrastructure_evidence',[])
         approvals=await self.pool.fetch('SELECT * FROM ma_approvals WHERE task_id=$1 ORDER BY created_at',tid)

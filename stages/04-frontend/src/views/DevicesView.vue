@@ -32,7 +32,7 @@ onMounted(() => { void load() })
 
 <template>
   <div class="page-narrow">
-    <section class="page-head"><div><h1>设备管理</h1><p>查看已登记设备和历史遥测记录。</p></div><div class="head-stat">设备总数 <strong>{{ total }}</strong></div></section>
+    <section class="page-head"><div><h1>设备管理</h1><p>查看已登记设备和历史遥测记录。</p></div><div class="head-stat"><router-link to="/health">健康排行 →</router-link> · 设备总数 <strong>{{ total }}</strong></div></section>
     <section class="surface">
       <div class="toolbar"><div class="toolbar-title">设备列表 <span>按设备分组精确筛选</span></div><div class="toolbar-actions"><el-input v-model="groupInput" placeholder="输入完整分组名称" clearable @keyup.enter="search" /><el-button type="primary" @click="search">筛选</el-button><el-button @click="reset">重置</el-button></div></div>
       <el-alert v-if="error" :title="error" type="error" show-icon :closable="false" class="content-alert" />

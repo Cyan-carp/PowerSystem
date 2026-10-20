@@ -52,3 +52,19 @@ async def test_sensitive_legacy_history_is_not_resent(collected):
     result={'warnings':[],'model_called':False,'status':'answered'}
     await engine.run('解释原理',previous,'jwt',result)
     assert 'PRIVATE_REPORT_PROSE' not in json.dumps(seen)
+
+
+async def test_business_quality_changes_invalidate_existing_egress_permit():
+    from rag_agent.business_quality import build_quality,quality_summary
+    ops=Ops();ops.task['business_quality']=build_quality([])
+    original=ops.request
+    async def request(*args):
+        if args[1].endswith('/check'):return {'permitted':True}
+        payload={'task_status':'succeeded','evidence':[],'actions':[], 'business_quality':quality_summary(ops.task['business_quality'])}
+        return {'payload':payload,'payload_hash':digest(payload),'review_id':str(uuid4())}
+    ops.request=request
+    tools=SupervisorTools(None,ops,time.monotonic()+30)
+    await tools.execute('get_ops_task',json.dumps({'task_id':ops.task['task_id']}),'jwt',{'tool_calls':[],'warnings':[],'task_cards':[]})
+    await tools.check_egress()
+    ops.task['business_quality']['state']='queried'
+    with pytest.raises(ValueError,match='business_quality_binding_mismatch'):await tools.check_egress()

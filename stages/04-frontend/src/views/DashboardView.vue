@@ -117,7 +117,7 @@ onUnmounted(() => { disposed = true; unsubscribe?.(); if (periodic) clearInterva
       <div class="stat-cell ok"><span class="stat-label">在线设备</span><strong>{{ summary?.online ?? '—' }}</strong><em>台</em><small>故障 {{ summary?.fault ?? '—' }} 台</small></div>
       <div class="stat-cell warn"><span class="stat-label">活动告警</span><strong>{{ summary?.active_alarms ?? '—' }}</strong><em>条</em><small>未闭环事件实时计入</small></div>
       <div class="stat-cell"><span class="stat-label">运行正常占比</span><strong>{{ summary?.operational_health_percent?.toFixed(0) ?? '—' }}<em>%</em></strong><small>依据当前在线状态</small></div>
-      <div class="stat-cell"><span class="stat-label">设备健康度</span><strong>{{ summary?.health_score_percent?.toFixed(0) ?? '—' }}<em v-if="summary?.health_score_percent != null">分</em></strong><small>依据在线、故障与活动告警</small></div>
+      <div class="stat-cell"><span class="stat-label">设备健康度</span><strong>{{ summary?.health_score_percent?.toFixed(0) ?? '—' }}<em v-if="summary?.health_score_percent != null">分</em></strong><small>{{ summary?.health_provisional ? `暂定 · 未知 ${summary.health_unknown_count} 台` : '依据在线、故障与活动告警' }} <router-link to="/health">评分依据 →</router-link></small></div>
     </section>
     <section class="surface gauge-panel" aria-label="发电监测">
       <div class="surface-head"><h2>发电监测</h2><span>今日 · 北京时间</span></div>

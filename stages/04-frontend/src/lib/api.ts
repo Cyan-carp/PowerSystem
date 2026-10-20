@@ -1,7 +1,7 @@
 import { clearSession, token } from './auth'
 import { retryAfterSeconds } from './retry-after'
 import type { OpsStatus, OpsTask } from '../types'
-import type { Alarm, ApiEnvelope, Device, History, LoginResult, Metric, Page, Prediction, PredictionListItem, Summary, Telemetry, Interpretation, AgentModelStatus, KnowledgeSource, RAGChatResponse, RAGSession, RAGTurn, VerificationInput } from '../types'
+import type { Alarm, ApiEnvelope, Device, History, LoginResult, Metric, Page, Prediction, PredictionListItem, Summary, Telemetry, Interpretation, AgentModelStatus, KnowledgeSource, RAGChatResponse, RAGSession, RAGTurn, VerificationInput, DeviceHealth, StationHealth, AvailabilityItem, StationAvailability, TimelinessResult } from '../types'
 
 export class ApiError extends Error {
   constructor(public status: number, public code: number, message: string, public retryAfter = 0) { super(message) }
@@ -40,6 +40,36 @@ export async function request<T>(path: string, init: RequestInit = {}): Promise<
   return envelope.data
 }
 
+export async function downloadFile(path: string, filename: string): Promise<void> {
+  const headers = new Headers()
+  if (token.value) headers.set('Authorization', `Bearer ${token.value}`)
+  let response: Response
+  try { response = await fetch(path, { headers }) }
+  catch { throw new ApiError(0, 0, '无法连接后端服务，请检查本机服务状态') }
+  if (!response.ok) {
+    let message = `后端服务暂不可用（HTTP ${response.status}）`
+    try {
+      const envelope = await response.json() as ApiEnvelope<unknown>
+      message = envelope.message || message
+    } catch { /* ignore */ }
+    if (response.status === 401 && token.value) {
+      clearSession()
+      window.location.replace('/login')
+    }
+    throw new ApiError(response.status, 0, message)
+  }
+  if (!response.headers.get('Content-Type')?.toLowerCase().includes('text/csv')) throw new ApiError(response.status, 0, '下载未返回 CSV 文件，请重试')
+  const blob = await response.blob()
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = filename
+  document.body.appendChild(link)
+  link.click()
+  document.body.removeChild(link)
+  URL.revokeObjectURL(url)
+}
+
 export const api = {
   opsTasks: (sessionID?: string, offset = 0, options: { status?: OpsStatus; limit?: number; signal?: AbortSignal } = {}) => request<{ list: OpsTask[]; offset: number; page_size: number }>(`/api/v1/agent/tasks${query({ session_id: sessionID, offset, status: options.status, limit: options.limit })}`, { signal: options.signal }),
   opsTask: (id: string, signal?: AbortSignal) => request<OpsTask>(`/api/v1/agent/tasks/${encodeURIComponent(id)}`, { signal }),
@@ -68,7 +98,15 @@ export const api = {
   alarms: (page = 1, pageSize = 20, status = '', level = '') => request<Page<Alarm>>(`/api/v1/alarms${query({ page, page_size: pageSize, status, level })}`),
   alarm: (id: number) => request<Alarm>(`/api/v1/alarms/${id}`),
   ackAlarm: (id: number) => request<Alarm>(`/api/v1/alarms/${id}/ack`, { method: 'POST' }),
+  archiveAlarm: (id: number) => request<Alarm>(`/api/v1/alarms/${id}/archive`, { method: 'POST' }),
+  archiveAlarms: (ids: number[]) => request<{ archived: number; failed: number[] }>('/api/v1/alarm-archive', { method: 'POST', body: JSON.stringify({ ids }) }),
   predictions: (page = 1, pageSize = 20) => request<Page<PredictionListItem>>(`/api/v1/predictions${query({ page, page_size: pageSize })}`),
   prediction: (id: number) => request<Prediction>(`/api/v1/devices/${id}/prediction`),
+  healthDevices: () => request<{ rule_version: string; computed_at: string; devices: DeviceHealth[]; stations: StationHealth[]; complete: boolean }>('/api/v1/health/devices'),
+  healthStations: () => request<{ rule_version: string; computed_at: string; stations: StationHealth[] }>('/api/v1/health/stations'),
+  availability: (params: { start?: string; end?: string; device_id?: number; station_code?: string } = {}, signal?: AbortSignal) => request<{ rule_version: string; computed_at: string; start: string; end: string; devices: AvailabilityItem[]; stations: StationAvailability[] }>(`/api/v1/reports/availability${query(params)}`, { signal }),
+  alarmTimeliness: (params: { start?: string; end?: string; device_id?: number; station_code?: string } = {}, signal?: AbortSignal) => request<{ rule_version: string; computed_at: string; start: string; end: string; scope: string; result: TimelinessResult }>(`/api/v1/reports/alarm-timeliness${query(params)}`, { signal }),
+  exportTelemetry: (id: number, start: Date, end: Date) => downloadFile(`/api/v1/devices/${id}/telemetry/export${query({ start: start.toISOString(), end: end.toISOString() })}`, `device-${id}-telemetry.csv`),
+  exportReport: (kind: 'availability' | 'alarm-timeliness', params: {start: string; end: string; device_id?: number; station_code?: string}) => downloadFile(`/api/v1/reports/${kind}${query({...params, format: 'csv'})}`, `${kind}.csv`),
   ticket: () => request<{ ticket: string; expires_in: number }>('/api/v1/ws-ticket', { method: 'POST' }),
 }

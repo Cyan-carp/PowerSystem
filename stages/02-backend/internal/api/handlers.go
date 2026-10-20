@@ -82,6 +82,11 @@ func (s *Server) findDevice(id int64) (model.Device, error) {
 	err := s.db.Where("id=? AND deleted_at IS NULL", id).First(&device).Error
 	return device, err
 }
+func (s *Server) findDevices() ([]model.Device, error) {
+	var devices []model.Device
+	err := s.db.Where("deleted_at IS NULL").Order("id ASC").Find(&devices).Error
+	return devices, err
+}
 func (s *Server) listDevices(c *gin.Context) {
 	p, size, valid := page(c)
 	if !valid {
@@ -197,7 +202,7 @@ func (s *Server) deleteDevice(c *gin.Context) {
 			return err
 		}
 		for _, metric := range metrics {
-			if err := s.closeRuleAlarms(tx, deviceID, metric, now); err != nil {
+			if err := s.closeRuleAlarms(tx, deviceID, metric, now, "device_deleted"); err != nil {
 				return err
 			}
 		}
@@ -277,29 +282,19 @@ func (s *Server) dashboard(c *gin.Context) {
 		fail(c, 500, 50000, "dashboard failed")
 		return
 	}
-	var levels []struct {
-		DeviceID int64
-		Rank     int
-	}
-	if err := s.db.Raw(`SELECT device_id,MAX(CASE level WHEN 'urgent' THEN 3 WHEN 'major' THEN 2 WHEN 'minor' THEN 1 ELSE 0 END) AS rank
-FROM alarm_records WHERE recovered_at IS NULL GROUP BY device_id`).Scan(&levels).Error; err != nil {
+	healthItems, err := s.scoreDevices(c.Request.Context(), devices)
+	if err != nil {
 		fail(c, 500, 50000, "dashboard failed")
 		return
-	}
-	levelByDevice := make(map[int64]string, len(levels))
-	for _, level := range levels {
-		levelByDevice[level.DeviceID] = map[int]string{1: "minor", 2: "major", 3: "urgent"}[level.Rank]
 	}
 	online := 0
 	fault := 0
 	healthy := 0
-	healthPoints := 0
 	power := 0.0
 	now := time.Now()
 	for _, d := range devices {
 		raw, err := s.redis.Get(c.Request.Context(), "device:"+strconv.FormatInt(d.ID, 10)+":latest").Bytes()
 		if err != nil {
-			healthPoints += energy.DeviceScore(false, 0, "")
 			continue
 		}
 		var v struct {
@@ -308,10 +303,8 @@ FROM alarm_records WHERE recovered_at IS NULL GROUP BY device_id`).Scan(&levels)
 			Status     int       `json:"status"`
 		}
 		if json.Unmarshal(raw, &v) != nil || now.Sub(v.ReceivedAt) > 15*time.Second {
-			healthPoints += energy.DeviceScore(false, 0, "")
 			continue
 		}
-		healthPoints += energy.DeviceScore(true, v.Status, levelByDevice[d.ID])
 		online++
 		power += v.Power
 		if v.Status == 2 {
@@ -324,14 +317,11 @@ FROM alarm_records WHERE recovered_at IS NULL GROUP BY device_id`).Scan(&levels)
 	if len(devices) > 0 {
 		score = 100 * float64(healthy) / float64(len(devices))
 	}
-	var healthScore any
-	if len(devices) > 0 {
-		healthScore = math.Round(float64(healthPoints) / float64(len(devices)))
-	}
+	healthScore, validHealth := healthAverage(healthItems)
 	e, err := energy.ReadSummary(c.Request.Context(), s.db, now)
 	if err != nil {
 		fail(c, 500, 50000, "energy summary failed")
 		return
 	}
-	ok(c, gin.H{"device_total": len(devices), "online": online, "offline": len(devices) - online, "fault": fault, "current_power_kw": math.Round(power*100) / 100, "active_alarms": active, "operational_health_percent": score, "health_score_percent": healthScore, "today_energy_kwh": e.TodayKWh, "retained_energy_kwh": e.RetainedKWh, "energy_start_ms": e.StartMS, "energy_updated_at": e.UpdatedAt})
+	ok(c, gin.H{"device_total": len(devices), "online": online, "offline": len(devices) - online, "fault": fault, "current_power_kw": math.Round(power*100) / 100, "active_alarms": active, "operational_health_percent": score, "health_score_percent": healthScore, "health_valid_count": validHealth, "health_unknown_count": len(devices) - validHealth, "health_provisional": validHealth < len(devices), "health_rule_version": healthRuleVersion, "health_computed_at": time.Now().UTC().Format(time.RFC3339Nano), "today_energy_kwh": e.TodayKWh, "retained_energy_kwh": e.RetainedKWh, "energy_start_ms": e.StartMS, "energy_updated_at": e.UpdatedAt})
 }

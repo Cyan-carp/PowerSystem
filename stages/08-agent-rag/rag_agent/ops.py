@@ -8,6 +8,7 @@ from pydantic import Field
 from fastapi import HTTPException
 from .tools import Tools, Args
 from .ma_security import digest, sign, verify
+from .business_quality import quality_summary
 
 TERMINAL = {"succeeded", "failed", "cancelled", "timeout"}
 
@@ -102,6 +103,7 @@ class SupervisorTools:
         self.original, self.ops, self.deadline, self.dispatched = original, ops, deadline, None
         self.egress_blocked = False
         self.egress_permits=[]
+        self.quality_bindings = {}
         if getattr(getattr(ops,'cfg',None),'acceptance_drill_only',False):
             self.schemas=[s for s in type(self).schemas if s['function']['name'] in ('dispatch_ops_task','get_ops_task')]
 
@@ -142,6 +144,10 @@ class SupervisorTools:
                 reviewed=await self.ops.request('POST','/internal/ma/v1/tasks/'+task['task_id']+'/model-summary',{})
                 if set(reviewed)!={'payload','payload_hash','review_id'} or digest(reviewed['payload'])!=reviewed['payload_hash']:
                     raise ValueError('security_egress_binding_mismatch')
+                if task.get('business_quality') and reviewed['payload'].get('business_quality') != quality_summary(task['business_quality']):
+                    raise ValueError('business_quality_binding_mismatch')
+                if task.get('business_quality'):
+                    self.quality_bindings[task['task_id']] = task
                 self.egress_permits.append((task['task_id'],reviewed))
                 return reviewed['payload']
             return task
@@ -153,6 +159,8 @@ class SupervisorTools:
 
     async def check_egress(self):
         for tid,reviewed in self.egress_permits:
+            if tid in self.quality_bindings and quality_summary(self.quality_bindings[tid].get('business_quality')) != reviewed['payload'].get('business_quality'):
+                raise ValueError('business_quality_binding_mismatch')
             if self.ops.cfg.llm_url!='https://hgapi.dieqiyun.top/v1' or self.ops.cfg.model!='deepseek-v4.1-flash' or digest(reviewed['payload'])!=reviewed['payload_hash']:
                 raise ValueError('security_egress_binding_mismatch')
             value=await self.ops.request('POST','/internal/ma/v1/tasks/'+tid+'/model-summary/check',{'review_id':reviewed['review_id'],'payload_hash':reviewed['payload_hash']})

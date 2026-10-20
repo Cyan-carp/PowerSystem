@@ -385,14 +385,16 @@ def test_history_preserves_platform_24_hour_contract():
 
 
 @pytest.mark.asyncio
-async def test_strict_model_output_failure_retains_safe_diagnostic(env):
+async def test_strict_business_output_degrades_to_facts_without_leaking_prose(env):
     replies=[call("platform__get_device",{"device_id":30}),{"role":"assistant","content":'{"summary":"ok","recommendations":[{"secret":"never-export-fixture-secret"}]}'}]
     async def provider(messages,schemas):return replies.pop(0)
     report,_=await execute(env,provider=provider)
-    assert report["status"]=="failed" and len(report["calls"])==1
-    diagnostic=json.dumps(report["warnings"],ensure_ascii=False)
-    assert "ValidationError" in diagnostic and "recommendations" in diagnostic
-    assert "never-export-fixture-secret" not in diagnostic
+    assert report["status"]=="succeeded" and len(report["calls"])==1
+    assert report['business_quality']['render_state']=='degraded'
+    assert report['business_quality']['facts'] and '回答已降级为程序事实' in report['diagnosis']['summary']
+    from ops_agent.business_quality import valid_quality
+    assert valid_quality(report['business_quality'])
+    assert 'never-export-fixture-secret' not in json.dumps(report,ensure_ascii=False)
 
 
 @pytest.mark.asyncio

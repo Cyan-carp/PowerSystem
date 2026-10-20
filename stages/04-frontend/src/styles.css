@@ -1,29 +1,30 @@
 /* ==========================================================================
    源网智联 · 运维控制台全局样式
-   设计方向（2026-10-15 改版）：「深空值班台」——深色低亮度底 + 青蓝主色 +
-   直角化面板（2–4px 小圆角）+ 细边线分层。面向长时间盯屏的运维场景：
-   降低整体亮度、减少装饰元素、控件文字直述、表格页收窄便于扫读。
+   设计方向（2026-10-19 改版）：「中性黑灰值班台」——近黑灰底 + 蓝色主色 +
+   面板圆角分层（基座 4px，交互元素 8–16px）+ 细边线分层。面向长时间盯屏的
+   运维场景：整体去饱和度、减少装饰元素、控件文字直述、表格页收窄便于扫读。
    主要主题色由 :root / html.dark 变量维护；图表及局部背景仍有硬编码例外。
+   （2026-10-15 的「深空值班台」青蓝体系已由本次配色切换取代。）
    ========================================================================== */
 
 :root {
   font-family: "Noto Sans SC", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
   color: var(--ink);
-  background: #0c1118;
+  background: #0f1012;
   font-synthesis: none;
   color-scheme: dark;
 
   /* 中性色板（深空灰蓝，三档分层：页面最暗，卡片次之，悬浮更浅） */
-  --ink: #c8d2df;
-  --ink-2: #9fb0c3;
-  --ink-3: #8a9bb0;
-  --line: #24303f;
-  --line-strong: #32435a;
-  --line-soft: #1b2633;
-  --bg: #0c1118;
-  --hover: #18212d;
-  --card: #131a24;
-  --card-2: #18212d;
+  --ink: #d9dbe0;
+  --ink-2: #a4a9b1;
+  --ink-3: #787d85;
+  --line: #26282d;
+  --line-strong: #35383e;
+  --line-soft: #1a1b1f;
+  --bg: #0f1012;
+  --hover: #1e2024;
+  --card: #17181b;
+  --card-2: #1e2024;
 
   /* 圆角体系（面板 4px、控件 3px、小元素 2px） */
   --r-lg: 4px;
@@ -36,12 +37,12 @@
   --shadow-md: 0 8px 24px -6px rgba(0, 0, 0, .5);
 
   /* 品牌主色（青蓝，深色底上的科技色） */
-  --brand: #34c9c0;
-  --brand-deep: #23a19a;
-  --on-brand: #06201e;
+  --brand: #5b8def;
+  --brand-deep: #4674d8;
+  --on-brand: #f2f6ff;
   --on-danger: #2b0c0a;
-  --brand-soft: rgba(52, 201, 192, .12);
-  --brand-line: rgba(52, 201, 192, .38);
+  --brand-soft: rgba(91, 141, 239, .14);
+  --brand-line: rgba(91, 141, 239, .42);
 
   /* 状态色（适配深色底，亮度提高保证可读） */
   --danger: #f26d64;
@@ -57,48 +58,48 @@
 
 /* Element Plus 深色变量：在官方 dark 基础上对齐本站色板 */
 html.dark {
-  --el-color-primary: #34c9c0;
-  --el-color-primary-light-3: #5fd4cd;
-  --el-color-primary-light-5: #8be0dc;
-  --el-color-primary-light-7: #2a7f7b;
-  --el-color-primary-light-8: #1f5c59;
-  --el-color-primary-light-9: rgba(52, 201, 192, .14);
-  --el-color-primary-dark-2: #23a19a;
+  --el-color-primary: #5b8def;
+  --el-color-primary-light-3: #7ea4f2;
+  --el-color-primary-light-5: #a3bdf7;
+  --el-color-primary-light-7: #33519a;
+  --el-color-primary-light-8: #2a3f6e;
+  --el-color-primary-light-9: rgba(91, 141, 239, .16);
+  --el-color-primary-dark-2: #4674d8;
   --el-color-danger: #f26d64;
   --el-color-warning: #f0b44d;
   --el-color-success: #3ecf8e;
   --el-color-error: #f26d64;
-  --el-bg-color: #131a24;
-  --el-bg-color-overlay: #1c2531;
-  --el-bg-color-page: #0c1118;
-  --el-fill-color: #1c2531;
-  --el-fill-color-light: #18212d;
-  --el-fill-color-lighter: #151d28;
-  --el-fill-color-blank: #131a24;
-  --el-border-color: #2a3849;
-  --el-border-color-light: #24303f;
-  --el-border-color-lighter: #1e2936;
-  --el-border-color-extra-light: #1a2430;
+  --el-bg-color: #17181b;
+  --el-bg-color-overlay: #1d1f23;
+  --el-bg-color-page: #0f1012;
+  --el-fill-color: #1d1f23;
+  --el-fill-color-light: #1e2024;
+  --el-fill-color-lighter: #1a1c1f;
+  --el-fill-color-blank: #17181b;
+  --el-border-color: #2b2d33;
+  --el-border-color-light: #26282d;
+  --el-border-color-lighter: #222429;
+  --el-border-color-extra-light: #1e2024;
   --el-text-color-primary: var(--ink);
-  --el-text-color-regular: #9fb0c3;
-  --el-text-color-secondary: #8a9bb0;
-  --el-text-color-placeholder: #8293a8;
-  --el-text-color-disabled: #44536a;
+  --el-text-color-regular: #a4a9b1;
+  --el-text-color-secondary: #787d85;
+  --el-text-color-placeholder: #6b7078;
+  --el-text-color-disabled: #4a4d54;
   --el-border-radius-base: 3px;
   --el-border-radius-small: 2px;
   --el-border-radius-round: 999px;
   --el-messagebox-border-radius: 4px;
   --el-notification-radius: 4px;
   --el-popover-border-radius: 4px;
-  --el-table-header-bg-color: #18212d;
+  --el-table-header-bg-color: #1e2024;
   --el-table-row-hover-bg-color: #1b2633;
-  --el-table-tr-bg-color: #131a24;
-  --el-table-header-text-color: #8a9bb0;
-  --el-table-text-color: #9fb0c3;
-  --el-mask-color: rgba(9, 13, 18, .7);
-  --el-disabled-bg-color: #18212d;
-  --el-disabled-text-color: #44536a;
-  --el-disabled-border-color: #24303f;
+  --el-table-tr-bg-color: #17181b;
+  --el-table-header-text-color: #787d85;
+  --el-table-text-color: #a4a9b1;
+  --el-mask-color: rgba(8, 9, 11, .7);
+  --el-disabled-bg-color: #1e2024;
+  --el-disabled-text-color: #4a4d54;
+  --el-disabled-border-color: #26282d;
 }
 
 /* ---------- 基础 ---------- */
@@ -283,7 +284,7 @@ body:has(.icp-footer) { --site-footer-height: 28px; }
    ========================================================================== */
 .data-table { width: 100%; }
 .data-table .el-table { --el-table-border-color: var(--line); }
-.data-table .el-table__header th { background: #18212d !important; color: var(--ink-3); font-size: 12px; font-weight: 600; }
+.data-table .el-table__header th { background: #1e2024 !important; color: var(--ink-3); font-size: 12px; font-weight: 600; }
 .data-table .el-table__row { cursor: pointer; }
 .data-table td { height: 46px; }
 .data-table strong { color: var(--ink); }
@@ -422,7 +423,7 @@ body:has(.icp-footer) { --site-footer-height: 28px; }
 .comparison-threshold strong { color: var(--warning); font-size: 23px; font-weight: 600; }
 .comparison-values strong small { margin-left: 5px; color: var(--ink-3); font-size: 12px; font-weight: 500; letter-spacing: 0; }
 .comparison-plot { position: relative; height: 86px; padding-top: 14px; }
-.comparison-track { position: relative; height: 12px; background: #263344; border-radius: 2px; }
+.comparison-track { position: relative; height: 12px; background: #2a2d33; border-radius: 2px; }
 .comparison-fill, .comparison-excess { position: absolute; top: 0; height: 100%; border-radius: 2px; }
 .comparison-fill { background: var(--brand); }
 .comparison-excess { background: var(--danger); border-left: 1px solid var(--bg-panel, #141d29); border-radius: 0 2px 2px 0; }
@@ -474,17 +475,17 @@ body:has(.icp-footer) { --site-footer-height: 28px; }
 .login-identity {
   position: relative; overflow: hidden;
   display: flex; flex-direction: column; justify-content: center; align-items: flex-start;
-  padding: 8vw; background: #0a0e14;
+  padding: 8vw; background: #0b0c0e;
 }
 .login-identity .mesh {
   position: absolute; inset: 0;
   background:
-    radial-gradient(700px 500px at 85% 15%, rgba(52, 201, 192, .09), transparent 60%),
-    radial-gradient(600px 480px at 10% 90%, rgba(52, 201, 192, .06), transparent 60%);
+    radial-gradient(700px 500px at 85% 15%, rgba(91, 141, 239, .10), transparent 60%),
+    radial-gradient(600px 480px at 10% 90%, rgba(91, 141, 239, .07), transparent 60%);
 }
 .login-identity .grid-dots {
   position: absolute; inset: 0; opacity: .5;
-  background-image: radial-gradient(circle, #22303f 1px, transparent 1px);
+  background-image: radial-gradient(circle, #232529 1px, transparent 1px);
   background-size: 26px 26px;
   -webkit-mask-image: radial-gradient(700px 500px at 80% 20%, #000 0%, transparent 70%);
   mask-image: radial-gradient(700px 500px at 80% 20%, #000 0%, transparent 70%);
@@ -554,8 +555,8 @@ body:has(.icp-footer) { --site-footer-height: 28px; }
 .el-progress-bar__outer, .el-progress-bar__inner { border-radius: var(--r-sm); }
 .el-table { --el-table-border-color: var(--line); }
 .el-table th.el-table__cell { font-weight: 600; }
-.el-table .el-table__row:hover > td.el-table__cell { background: #1b2633 !important; }
-.el-table--striped .el-table__body tr.el-table__row--striped td.el-table__cell { background: #161e29; }
+.el-table .el-table__row:hover > td.el-table__cell { background: #202226 !important; }
+.el-table--striped .el-table__body tr.el-table__row--striped td.el-table__cell { background: #1a1c1f; }
 .el-drawer { box-shadow: -12px 0 40px rgba(0, 0, 0, .5); }
 .el-drawer__header {
   margin-bottom: 0; padding: 16px 22px;

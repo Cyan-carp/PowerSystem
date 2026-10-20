@@ -30,6 +30,7 @@ type Device struct {
 	UpdatedAt       time.Time  `json:"updated_at"`
 }
 type AlarmRule struct {
+	Unit      string    `json:"unit" gorm:"-"`
 	ID        int64     `json:"id"`
 	DeviceID  int64     `json:"device_id"`
 	Metric    string    `json:"metric"`
@@ -37,24 +38,29 @@ type AlarmRule struct {
 	Threshold float64   `json:"threshold"`
 	Level     string    `json:"level"`
 	Enabled   bool      `json:"enabled"`
+	Version   string    `json:"version"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
 type AlarmRecord struct {
-	ID          int64      `json:"id"`
-	DeviceID    int64      `json:"device_id"`
-	RuleID      *int64     `json:"rule_id"`
-	Metric      string     `json:"metric"`
-	Level       string     `json:"level"`
-	Value       float64    `json:"value"`
-	Threshold   float64    `json:"threshold"`
-	Status      string     `json:"status"`
-	AckedBy     *int64     `json:"acked_by"`
-	AckedAt     *time.Time `json:"acked_at"`
-	RecoveredAt *time.Time `json:"recovered_at"`
-	TriggeredAt time.Time  `json:"triggered_at"`
-	CreatedAt   time.Time  `json:"created_at"`
-	UpdatedAt   time.Time  `json:"updated_at"`
+	ID           int64      `json:"id"`
+	DeviceID     int64      `json:"device_id"`
+	RuleID       *int64     `json:"rule_id"`
+	Metric       string     `json:"metric"`
+	Level        string     `json:"level"`
+	Value        float64    `json:"value"`
+	Threshold    float64    `json:"threshold"`
+	Status       string     `json:"status"`
+	Archived     bool       `json:"archived"`
+	CloseReason  *string    `json:"close_reason"`
+	RuleOperator string     `json:"rule_operator"`
+	RuleVersion  string     `json:"rule_version"`
+	AckedBy      *int64     `json:"acked_by"`
+	AckedAt      *time.Time `json:"acked_at"`
+	RecoveredAt  *time.Time `json:"recovered_at"`
+	TriggeredAt  time.Time  `json:"triggered_at"`
+	CreatedAt    time.Time  `json:"created_at"`
+	UpdatedAt    time.Time  `json:"updated_at"`
 }
 type Inbox struct {
 	ID          int64           `json:"id"`

@@ -125,7 +125,81 @@ func (c *Client) History(ctx context.Context, deviceID int64, metric string, sta
 	return result.Data, nil
 }
 
-// Window returns the raw multivariate window used by the prediction service.
+// BoundarySample returns the last sample at or before ts, used to open an
+// availability interval at a statistics window start.
+func (c *Client) BoundarySample(ctx context.Context, deviceID, ts int64) ([][]any, error) {
+	if deviceID < 1 || ts <= 0 {
+		return nil, errors.New("invalid boundary query")
+	}
+	result, err := c.SQL(ctx, fmt.Sprintf("SELECT ts,status FROM %s WHERE ts <= %d ORDER BY ts DESC LIMIT 1", c.Table(deviceID), ts))
+	if err != nil {
+		return nil, err
+	}
+	return result.Data, nil
+}
+
+// StatusAfter reads only the fields needed for availability. Telemetry tables
+// have a single millisecond timestamp primary key, so ts is a complete cursor.
+// Keeping pages bounded also stays within the REST response size limit.
+func (c *Client) StatusAfter(ctx context.Context, deviceID, after, end int64, limit int) ([][]any, error) {
+	if deviceID < 1 || after <= 0 || end <= after || limit < 1 || limit > 5000 {
+		return nil, errors.New("invalid status cursor")
+	}
+	result, err := c.SQL(ctx, fmt.Sprintf("SELECT ts,status FROM %s WHERE ts > %d AND ts < %d ORDER BY ts ASC LIMIT %d", c.Table(deviceID), after, end, limit))
+	if err != nil {
+		return nil, err
+	}
+	return result.Data, nil
+}
+
+// RawExport returns raw multivariate samples in ascending ts/seq order, paged
+// by LIMIT/OFFSET for CSV export. It reads stored samples directly, not the
+// downsampled history curve.
+func (c *Client) RawExport(ctx context.Context, deviceID, start, end int64, offset, limit int) ([][]any, error) {
+	if deviceID < 1 || start <= 0 || end < start || limit < 1 || limit > 5000 || offset < 0 {
+		return nil, errors.New("invalid export query")
+	}
+	result, err := c.SQL(ctx, fmt.Sprintf("SELECT ts,seq,voltage,current,temperature,power,status,fault_code FROM %s WHERE ts >= %d AND ts <= %d ORDER BY ts ASC, seq ASC LIMIT %d OFFSET %d", c.Table(deviceID), start, end, limit, offset))
+	if err != nil {
+		return nil, err
+	}
+	return result.Data, nil
+}
+
+// RawCount returns the number of stored samples in the closed interval.
+func (c *Client) RawCount(ctx context.Context, deviceID, start, end int64) (int, error) {
+	if deviceID < 1 || start <= 0 || end < start {
+		return 0, errors.New("invalid count query")
+	}
+	result, err := c.SQL(ctx, fmt.Sprintf("SELECT COUNT(*) FROM %s WHERE ts >= %d AND ts <= %d", c.Table(deviceID), start, end))
+	if err != nil {
+		return 0, err
+	}
+	if len(result.Data) == 0 || len(result.Data[0]) == 0 {
+		return 0, errors.New("count returned no rows")
+	}
+	switch value := result.Data[0][0].(type) {
+	case float64:
+		return int(value), nil
+	case json.Number:
+		n, err := value.Int64()
+		return int(n), err
+	default:
+		return 0, fmt.Errorf("unexpected count type %T", value)
+	}
+}
+
+// RawExportAfter uses a stable keyset instead of OFFSET while telemetry arrives.
+func (c *Client) RawExportAfter(ctx context.Context, deviceID, start, end, afterTS, afterSeq int64, limit int) ([][]any, error) {
+	if deviceID < 1 || start <= 0 || end < start || afterTS < start || afterTS > end || afterSeq < 0 || limit < 1 || limit > 5000 {
+		return nil, errors.New("invalid export cursor")
+	}
+	result, err := c.SQL(ctx, fmt.Sprintf("SELECT ts,seq,voltage,current,temperature,power,status,fault_code FROM %s WHERE ts >= %d AND ts <= %d AND (ts > %d OR (ts = %d AND seq > %d)) ORDER BY ts ASC, seq ASC LIMIT %d", c.Table(deviceID), start, end, afterTS, afterTS, afterSeq, limit))
+	if err != nil {
+		return nil, err
+	}
+	return result.Data, nil
+}
 func (c *Client) Window(ctx context.Context, deviceID, start, end int64) ([][]any, error) {
 	if deviceID < 1 || start <= 0 || end < start || end-start > 31*60*1000 {
 		return nil, errors.New("invalid prediction window")

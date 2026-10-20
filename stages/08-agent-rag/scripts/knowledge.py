@@ -99,11 +99,14 @@ def main():
         source_rows = list(chunks(extracted, tokenizer))
         if not source_rows:
             skipped.append({"document": document, "reason": "未提取到文本，扫描PDF需要另行OCR"}); continue
-        files.append({"document": document, "sha256": digest, "chunks": len(source_rows)})
+        applicability = entry.get('applicability', {'source_type':'project_summary'})
+        if not isinstance(applicability, dict): raise ValueError('invalid_applicability_metadata')
+        metadata_version = json.dumps(applicability, ensure_ascii=False, sort_keys=True, allow_nan=False)
+        files.append({"document": document, "sha256": digest, "chunks": len(source_rows), 'applicability':applicability})
         for i, (heading, text, page) in enumerate(source_rows):
-            identifier = "K" + hashlib.sha256((document + digest + str(i)).encode()).hexdigest()[:20]
+            identifier = "K" + hashlib.sha256((document + digest + metadata_version + str(i)).encode()).hexdigest()[:20]
             rows.append({"id": identifier, "document": document, "heading": heading,
-                         "content": text, "summary": text[:200], "page": page, "source_hash": digest})
+                         "content": text, "summary": text[:200], "page": page, "source_hash": digest, 'applicability':applicability})
     version = hashlib.sha256(json.dumps(files, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
     for row in rows: row["version"] = version
     collection = "powersystem_rag_" + version[:12] + "_" + uuid4().hex[:8]

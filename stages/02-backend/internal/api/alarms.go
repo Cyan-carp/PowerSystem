@@ -27,6 +27,16 @@ type ruleInput struct {
 func validRule(in ruleInput) bool {
 	return in.DeviceID > 0 && telemetry.Metrics[in.Metric] && (in.Operator == ">" || in.Operator == ">=" || in.Operator == "<" || in.Operator == "<=") && !math.IsNaN(in.Threshold) && !math.IsInf(in.Threshold, 0) && (in.Level == "urgent" || in.Level == "major" || in.Level == "minor")
 }
+
+// nextVersion bumps a rule version like "v1" to "v2"; unknown versions restart at "v1".
+func nextVersion(version string) string {
+	if len(version) > 1 && version[0] == 'v' {
+		if n, err := strconv.Atoi(version[1:]); err == nil && n > 0 {
+			return "v" + strconv.Itoa(n+1)
+		}
+	}
+	return "v1"
+}
 func (s *Server) listRules(c *gin.Context) {
 	p, size, valid := page(c)
 	if !valid {
@@ -46,7 +56,14 @@ func (s *Server) listRules(c *gin.Context) {
 		fail(c, 500, 50000, "rule query failed")
 		return
 	}
+	for i := range rules {
+		rules[i].Unit = metricUnit(rules[i].Metric)
+	}
 	ok(c, list(rules, p, size, total))
+}
+
+func metricUnit(metric string) string {
+	return map[string]string{"voltage": "V", "current": "A", "temperature": "°C", "power": "kW"}[metric]
 }
 func (s *Server) createRule(c *gin.Context) {
 	var in ruleInput
@@ -62,7 +79,7 @@ func (s *Server) createRule(c *gin.Context) {
 	if in.Enabled != nil {
 		enabled = *in.Enabled
 	}
-	rule := model.AlarmRule{DeviceID: in.DeviceID, Metric: in.Metric, Operator: in.Operator, Threshold: in.Threshold, Level: in.Level, Enabled: enabled}
+	rule := model.AlarmRule{DeviceID: in.DeviceID, Metric: in.Metric, Operator: in.Operator, Threshold: in.Threshold, Level: in.Level, Enabled: enabled, Version: "v1"}
 	if s.db.Create(&rule).Error != nil {
 		fail(c, 409, 40001, "rule already exists for device and metric")
 		return
@@ -99,6 +116,7 @@ func (s *Server) updateRule(c *gin.Context) {
 	rule.Operator = in.Operator
 	rule.Threshold = in.Threshold
 	rule.Level = in.Level
+	rule.Version = nextVersion(rule.Version)
 	if in.Enabled != nil {
 		rule.Enabled = *in.Enabled
 	}
@@ -108,7 +126,7 @@ func (s *Server) updateRule(c *gin.Context) {
 		}
 		if !rule.Enabled {
 			now := time.Now().UTC()
-			return s.closeRuleAlarms(tx, rule.DeviceID, rule.Metric, now)
+			return s.closeRuleAlarms(tx, rule.DeviceID, rule.Metric, now, "rule_disabled")
 		}
 		return nil
 	}); err != nil {
@@ -132,14 +150,14 @@ func (s *Server) deleteRule(c *gin.Context) {
 			return err
 		}
 		now := time.Now().UTC()
-		return s.closeRuleAlarms(tx, rule.DeviceID, rule.Metric, now)
+		return s.closeRuleAlarms(tx, rule.DeviceID, rule.Metric, now, "rule_deleted")
 	}); err != nil {
 		fail(c, 500, 50000, "rule delete failed")
 		return
 	}
 	ok(c, gin.H{"id": ruleID, "deleted": true})
 }
-func (s *Server) closeRuleAlarms(tx *gorm.DB, deviceID int64, metric string, now time.Time) error {
+func (s *Server) closeRuleAlarms(tx *gorm.DB, deviceID int64, metric string, now time.Time, reason string) error {
 	var records []model.AlarmRecord
 	if err := tx.Where("device_id=? AND metric=? AND recovered_at IS NULL", deviceID, metric).Find(&records).Error; err != nil {
 		return err
@@ -152,10 +170,11 @@ func (s *Server) closeRuleAlarms(tx *gorm.DB, deviceID int64, metric string, now
 		return err
 	}
 	for _, record := range records {
-		if err := tx.Model(&record).Updates(map[string]any{"status": "recovered", "recovered_at": now, "updated_at": now}).Error; err != nil {
+		if err := tx.Model(&record).Updates(map[string]any{"status": "recovered", "recovered_at": now, "close_reason": reason, "updated_at": now}).Error; err != nil {
 			return err
 		}
 		record.RecoveredAt = &now
+		record.CloseReason = &reason
 		if err := service.QueueAlarmNotification(tx, device, record, "closed"); err != nil {
 			return err
 		}
@@ -167,7 +186,7 @@ func (s *Server) listAlarms(c *gin.Context) {
 	if !valid {
 		return
 	}
-	query := s.db.Model(&model.AlarmRecord{})
+	query := s.db.Model(&model.AlarmRecord{}).Where("archived = FALSE")
 	if device := c.Query("device_id"); device != "" {
 		deviceID, err := strconv.ParseInt(device, 10, 64)
 		if err != nil || deviceID < 1 {
@@ -272,4 +291,86 @@ func (s *Server) ackAlarm(c *gin.Context) {
 	}
 	s.broadcast(gin.H{"type": "alarm_acked", "data": alarm})
 	ok(c, alarm)
+}
+
+func (s *Server) archiveAlarm(c *gin.Context) {
+	alarmID, valid := id(c)
+	if !valid {
+		return
+	}
+	result := s.db.Model(&model.AlarmRecord{}).Where("id=?", alarmID).
+		Updates(map[string]any{"archived": true, "updated_at": time.Now().UTC()})
+	if result.Error != nil {
+		fail(c, 500, 50000, "archive failed")
+		return
+	}
+	if result.RowsAffected == 0 {
+		fail(c, 404, 40401, "alarm not found")
+		return
+	}
+	var alarm model.AlarmRecord
+	if s.db.First(&alarm, alarmID).Error != nil {
+		fail(c, 500, 50000, "archive failed")
+		return
+	}
+	s.broadcast(gin.H{"type": "alarm_archived", "data": alarm})
+	ok(c, alarm)
+}
+
+// archiveBatchInput 是批量归档的请求体；只接受正整数告警编号。
+type archiveBatchInput struct {
+	IDs []int64 `json:"ids"`
+}
+
+// archiveAlarms 批量更新归档标记，只更新标记，不删除告警事实、时间或规则快照。
+// 已归档的编号保持已归档，不重复计数；不存在的编号在 failed 中返回，不中断其余编号。
+func (s *Server) archiveAlarms(c *gin.Context) {
+	var in archiveBatchInput
+	if err := c.ShouldBindJSON(&in); err != nil {
+		fail(c, http.StatusBadRequest, 40000, "请求格式不正确")
+		return
+	}
+	ids := make([]int64, 0, len(in.IDs))
+	seen := make(map[int64]bool, len(in.IDs))
+	for _, alarmID := range in.IDs {
+		if alarmID <= 0 || seen[alarmID] {
+			continue
+		}
+		seen[alarmID] = true
+		ids = append(ids, alarmID)
+	}
+	if len(ids) == 0 {
+		fail(c, http.StatusBadRequest, 40000, "未提供告警编号")
+		return
+	}
+	if len(ids) > 200 {
+		fail(c, http.StatusBadRequest, 40000, "单次最多归档 200 条告警")
+		return
+	}
+	now := time.Now().UTC()
+	if err := s.db.Model(&model.AlarmRecord{}).Where("id IN ?", ids).Where("archived = FALSE").
+		Updates(map[string]any{"archived": true, "updated_at": now}).Error; err != nil {
+		fail(c, http.StatusInternalServerError, 50000, "archive failed")
+		return
+	}
+	var archivedIDs []int64
+	if err := s.db.Model(&model.AlarmRecord{}).Where("id IN ?", ids).Where("archived = TRUE").
+		Pluck("id", &archivedIDs).Error; err != nil {
+		fail(c, http.StatusInternalServerError, 50000, "archive failed")
+		return
+	}
+	done := make(map[int64]bool, len(archivedIDs))
+	for _, alarmID := range archivedIDs {
+		done[alarmID] = true
+	}
+	failed := make([]int64, 0)
+	for _, alarmID := range ids {
+		if !done[alarmID] {
+			failed = append(failed, alarmID)
+		}
+	}
+	if len(archivedIDs) > 0 {
+		s.broadcast(gin.H{"type": "alarm_archived", "data": gin.H{"ids": archivedIDs}})
+	}
+	ok(c, gin.H{"archived": len(archivedIDs), "failed": failed, "updated_at": now})
 }

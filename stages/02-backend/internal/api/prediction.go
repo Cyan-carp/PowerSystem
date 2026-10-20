@@ -291,11 +291,13 @@ func (s *Server) savePrediction(device model.Device, result predictionResponse) 
 			}
 			event = &service.AlarmEvent{Type: "alarm_created", Data: active}
 		} else if result.RiskLevel == "low" && lookup == nil {
-			if err := tx.Model(&active).Updates(map[string]any{"recovered_at": now, "status": "recovered", "updated_at": now}).Error; err != nil {
+			if err := tx.Model(&active).Updates(map[string]any{"recovered_at": now, "status": "recovered", "close_reason": "prediction_risk_resolved", "updated_at": now}).Error; err != nil {
 				return err
 			}
 			active.RecoveredAt = &now
 			active.Status = "recovered"
+			reason := "prediction_risk_resolved"
+			active.CloseReason = &reason
 			if err := service.QueueAlarmNotification(tx, device, active, "recovered"); err != nil {
 				return err
 			}

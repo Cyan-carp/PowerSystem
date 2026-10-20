@@ -20,16 +20,17 @@ class Provider:
             for version,filename in [('sec-m2-policy/v1','policy/sec-m2-policy.txt'),('sec-m2-policy/v2','policy/sec-m2-policy-v2.txt'),('sec-m2-policy/v3','policy/sec-m2-policy-v3.txt'),('sec-m2-policy/v4','policy/sec-m2-policy-v4.txt')]}
         self.runtime_current=json.loads((Path(__file__).resolve().parents[1]/'policy/sec-m2-policy-v5.json').read_text(encoding='utf-8'))
 
-        self.m4_policies={v:json.loads((Path(__file__).resolve().parents[1]/f'policy/sec-m4-policy-v{v.rsplit("v",1)[1]}.json').read_text(encoding='utf-8')) for v in ('sec-m4-policy/v1','sec-m4-policy/v2','sec-m4-policy/v3','sec-m4-policy/v4','sec-m4-policy/v5')}
+        self.m4_policies={v:json.loads((Path(__file__).resolve().parents[1]/f'policy/sec-m4-policy-v{v.rsplit("v",1)[1]}.json').read_text(encoding='utf-8')) for v in ('sec-m4-policy/v1','sec-m4-policy/v2','sec-m4-policy/v3','sec-m4-policy/v4','sec-m4-policy/v5','sec-m4-policy/v6')}
         self.inspection_policies={version:json.loads((Path(__file__).resolve().parents[1]/filename).read_text(encoding='utf-8')) for version,filename in [('sec-m3-policy/v1','policy/sec-m3-policy-v1.json'),('sec-m3-policy/v2','policy/sec-m3-policy-v2.json'),(INSPECTION_POLICY,'policy/sec-m3-policy-v3.json')]}
 
     async def review(self, projected, timeout):
-        if projected['policy_version'] != POLICY and (self.cfg.model != 'deepseek-v4-flash-0731' or self.cfg.model_timeout != 30 or self.cfg.acceptance_timeout_exception):
+        expected_model = 'deepseek-v4.1-flash' if self.cfg.runtime_profile == 'm4-server-readonly' else 'deepseek-v4-flash-0731'
+        if projected['policy_version'] != POLICY and (self.cfg.model != expected_model or self.cfg.model_timeout != 30 or self.cfg.acceptance_timeout_exception):
             raise ReviewFailure('runtime_model_configuration_blocked')
         schema=Opinion.model_json_schema()
         schema['properties']['rule_hits']['items']={'type':'string','enum':list(RULES)}
         schema['properties']['evidence_refs']['items']={'type':'string','enum':[e['ref'] for e in projected['evidence']]}
-        policy = (self.runtime_current['common']+'\n本次审查类别严格为 '+projected['kind']+'，只应用以下类别规则：\n'+self.runtime_current['kinds'][projected['kind']]) if projected['policy_version']==RUNTIME_POLICY else {POLICY: self.policy, 'sec-m4-policy/v1':'', 'sec-m4-policy/v2':'', 'sec-m4-policy/v3':'', 'sec-m4-policy/v4':'', 'sec-m4-policy/v5':'', INSPECTION_POLICY:'', 'sec-m3-policy/v1':'', 'sec-m3-policy/v2':'', **self.runtime_policies}[projected['policy_version']]
+        policy = (self.runtime_current['common']+'\n本次审查类别严格为 '+projected['kind']+'，只应用以下类别规则：\n'+self.runtime_current['kinds'][projected['kind']]) if projected['policy_version']==RUNTIME_POLICY else {POLICY: self.policy, 'sec-m4-policy/v1':'', 'sec-m4-policy/v2':'', 'sec-m4-policy/v3':'', 'sec-m4-policy/v4':'', 'sec-m4-policy/v5':'', 'sec-m4-policy/v6':'', INSPECTION_POLICY:'', 'sec-m3-policy/v1':'', 'sec-m3-policy/v2':'', **self.runtime_policies}[projected['policy_version']]
         if projected['policy_version'] in self.inspection_policies:
             inspection_policy=self.inspection_policies[projected['policy_version']]
             policy=inspection_policy['common']+'\n本次审查类别：'+projected['kind']+'\n'+inspection_policy['kinds'][projected['kind']]

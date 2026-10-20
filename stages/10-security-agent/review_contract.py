@@ -23,11 +23,14 @@ M4_POLICY = 'sec-m4-policy/v2'
 M4_LOCAL_SCOPE = 'sec-m4-local-integration/v2'
 M4_SERVER_POLICY_V3 = 'sec-m4-policy/v3'
 M4_SERVER_POLICY_V4 = 'sec-m4-policy/v4'
-M4_SERVER_POLICY = 'sec-m4-policy/v5'
+M4_SERVER_POLICY_V5 = 'sec-m4-policy/v5'
+M4_SERVER_POLICY = 'sec-m4-policy/v6'
 M4_SERVER_SCOPE_PREVIOUS = 'sec-m4-project-readonly/v2'
 M4_SERVER_SCOPE_V3 = 'sec-m4-project-readonly/v3'
 M4_SERVER_SCOPE_V4 = 'sec-m4-project-readonly/v4'
-M4_SERVER_SCOPE = 'sec-m4-project-readonly/v5'
+M4_SERVER_SCOPE_V5 = 'sec-m4-project-readonly/v5'
+M4_SERVER_SCOPE = 'sec-m4-project-readonly/v6'
+M4_OPERATION_MODEL = 'deepseek-v4.1-flash'
 RULES = tuple(f'SEC-R{i:02}' for i in range(1, 13))
 KINDS = Literal['sensitive_read', 'data_egress', 'write_plan', 'write_preflight', 'post_execution', 'inspection_report']
 HASH = r'^[a-f0-9]{64}$'
@@ -144,7 +147,8 @@ class LocalEgress(Strict):
 
     @model_validator(mode='after')
     def receiver_model(self):
-        if self.model != ('deepseek-v4.1-flash' if self.receiver == 'supervisor' else 'deepseek-v4-flash-0731'):
+        expected = 'deepseek-v4.1-flash' if self.receiver == 'supervisor' or self.scope_version == M4_SERVER_SCOPE else 'deepseek-v4-flash-0731'
+        if self.model != expected:
             raise ValueError('unlicensed_egress_model')
         if len(self.fields)!=len(set(self.fields)): raise ValueError('duplicate_egress_field')
         return self
@@ -155,7 +159,7 @@ class InspectionEgress(LocalEgress):
 
 
 class M4Egress(LocalEgress):
-    scope_version: Literal['sec-m4-local-integration/v1', 'sec-m4-project-readonly/v1', 'sec-m4-local-integration/v2', 'sec-m4-project-readonly/v2', 'sec-m4-project-readonly/v3', 'sec-m4-project-readonly/v4', 'sec-m4-project-readonly/v5']
+    scope_version: Literal['sec-m4-local-integration/v1', 'sec-m4-project-readonly/v1', 'sec-m4-local-integration/v2', 'sec-m4-project-readonly/v2', 'sec-m4-project-readonly/v3', 'sec-m4-project-readonly/v4', 'sec-m4-project-readonly/v5', 'sec-m4-project-readonly/v6']
 
 
 class ReviewRequest(Strict):
@@ -169,8 +173,8 @@ class ReviewRequest(Strict):
     actor: Actor
     tool: Tool
     asset: Asset | None = None
-    policy_version: Literal['sec-m1-policy/v6', 'sec-m2-policy/v1', 'sec-m2-policy/v2', 'sec-m2-policy/v3', 'sec-m2-policy/v4', 'sec-m2-policy/v5', 'sec-m3-policy/v1', 'sec-m3-policy/v2', 'sec-m3-policy/v3', 'sec-m4-policy/v1', 'sec-m4-policy/v2', 'sec-m4-policy/v3', 'sec-m4-policy/v4', 'sec-m4-policy/v5']
-    scope_version: Literal['sec-m1-synthetic/v3', 'sec-m2-local-drill/v1', 'sec-m3-local-inspection/v1', 'sec-m4-local-integration/v1', 'sec-m4-project-readonly/v1', 'sec-m4-local-integration/v2', 'sec-m4-project-readonly/v2', 'sec-m4-project-readonly/v3', 'sec-m4-project-readonly/v4', 'sec-m4-project-readonly/v5']
+    policy_version: Literal['sec-m1-policy/v6', 'sec-m2-policy/v1', 'sec-m2-policy/v2', 'sec-m2-policy/v3', 'sec-m2-policy/v4', 'sec-m2-policy/v5', 'sec-m3-policy/v1', 'sec-m3-policy/v2', 'sec-m3-policy/v3', 'sec-m4-policy/v1', 'sec-m4-policy/v2', 'sec-m4-policy/v3', 'sec-m4-policy/v4', 'sec-m4-policy/v5', 'sec-m4-policy/v6']
+    scope_version: Literal['sec-m1-synthetic/v3', 'sec-m2-local-drill/v1', 'sec-m3-local-inspection/v1', 'sec-m4-local-integration/v1', 'sec-m4-project-readonly/v1', 'sec-m4-local-integration/v2', 'sec-m4-project-readonly/v2', 'sec-m4-project-readonly/v3', 'sec-m4-project-readonly/v4', 'sec-m4-project-readonly/v5', 'sec-m4-project-readonly/v6']
     normalized_intent: str = Field(min_length=1, max_length=1000)
     evidence: list[Evidence] = Field(max_length=20)
     egress: Egress | LocalEgress | InspectionEgress | M4Egress | None = None
@@ -183,7 +187,7 @@ class ReviewRequest(Strict):
         if len({e.ref for e in self.evidence}) != len(self.evidence): raise ValueError('duplicate_evidence_ref')
         if self.kind == 'data_egress' and self.egress is None: raise ValueError('egress_required')
         if self.tool.risk_class == 'R2' and self.asset is None: raise ValueError('asset_required')
-        if (self.policy_version, self.scope_version) not in ((POLICY, SCOPE), ('sec-m2-policy/v1', RUNTIME_SCOPE), ('sec-m2-policy/v2', RUNTIME_SCOPE), ('sec-m2-policy/v3', RUNTIME_SCOPE), ('sec-m2-policy/v4', RUNTIME_SCOPE), (RUNTIME_POLICY, RUNTIME_SCOPE), (INSPECTION_POLICY, INSPECTION_SCOPE), ('sec-m3-policy/v1',INSPECTION_SCOPE), ('sec-m3-policy/v2',INSPECTION_SCOPE), (M4_POLICY,M4_LOCAL_SCOPE), (M4_POLICY,M4_SERVER_SCOPE_PREVIOUS), (M4_SERVER_POLICY_V3,M4_SERVER_SCOPE_V3), (M4_SERVER_POLICY_V4,M4_SERVER_SCOPE_V4), (M4_SERVER_POLICY,M4_SERVER_SCOPE), ('sec-m4-policy/v1','sec-m4-local-integration/v1'), ('sec-m4-policy/v1','sec-m4-project-readonly/v1')):
+        if (self.policy_version, self.scope_version) not in ((POLICY, SCOPE), ('sec-m2-policy/v1', RUNTIME_SCOPE), ('sec-m2-policy/v2', RUNTIME_SCOPE), ('sec-m2-policy/v3', RUNTIME_SCOPE), ('sec-m2-policy/v4', RUNTIME_SCOPE), (RUNTIME_POLICY, RUNTIME_SCOPE), (INSPECTION_POLICY, INSPECTION_SCOPE), ('sec-m3-policy/v1',INSPECTION_SCOPE), ('sec-m3-policy/v2',INSPECTION_SCOPE), (M4_POLICY,M4_LOCAL_SCOPE), (M4_POLICY,M4_SERVER_SCOPE_PREVIOUS), (M4_SERVER_POLICY_V3,M4_SERVER_SCOPE_V3), (M4_SERVER_POLICY_V4,M4_SERVER_SCOPE_V4), (M4_SERVER_POLICY_V5,M4_SERVER_SCOPE_V5), (M4_SERVER_POLICY,M4_SERVER_SCOPE), ('sec-m4-policy/v1','sec-m4-local-integration/v1'), ('sec-m4-policy/v1','sec-m4-project-readonly/v1')):
             raise ValueError('policy_scope_mismatch')
         if self.scope_version == SCOPE:
             if any(f.key not in M1_FACT_KEYS for e in self.evidence for f in e.facts):
@@ -195,8 +199,8 @@ class ReviewRequest(Strict):
             if self.scope_version==INSPECTION_SCOPE:
                 if self.tool.risk_class!='R0' or self.kind in ('write_plan','write_preflight','post_execution'): raise ValueError('inspection_read_only_required')
                 if self.egress is not None and (not isinstance(self.egress, InspectionEgress) or self.egress.scope_version!=self.scope_version): raise ValueError('unlicensed_egress')
-            elif self.scope_version in (M4_LOCAL_SCOPE,M4_SERVER_SCOPE_PREVIOUS,M4_SERVER_SCOPE_V3,M4_SERVER_SCOPE_V4,M4_SERVER_SCOPE,'sec-m4-local-integration/v1','sec-m4-project-readonly/v1'):
-                if self.scope_version in (M4_SERVER_SCOPE_PREVIOUS,M4_SERVER_SCOPE_V3,M4_SERVER_SCOPE_V4,M4_SERVER_SCOPE,'sec-m4-project-readonly/v1') and (self.tool.risk_class!='R0' or self.kind in ('write_plan','write_preflight','post_execution')): raise ValueError('server_read_only_required')
+            elif self.scope_version in (M4_LOCAL_SCOPE,M4_SERVER_SCOPE_PREVIOUS,M4_SERVER_SCOPE_V3,M4_SERVER_SCOPE_V4,M4_SERVER_SCOPE_V5,M4_SERVER_SCOPE,'sec-m4-local-integration/v1','sec-m4-project-readonly/v1'):
+                if self.scope_version in (M4_SERVER_SCOPE_PREVIOUS,M4_SERVER_SCOPE_V3,M4_SERVER_SCOPE_V4,M4_SERVER_SCOPE_V5,M4_SERVER_SCOPE,'sec-m4-project-readonly/v1') and (self.tool.risk_class!='R0' or self.kind in ('write_plan','write_preflight','post_execution')): raise ValueError('server_read_only_required')
                 if self.egress is not None and (not isinstance(self.egress,M4Egress) or self.egress.scope_version!=self.scope_version): raise ValueError('unlicensed_egress')
             elif self.egress is not None and (not isinstance(self.egress, LocalEgress) or self.egress.scope_version!=self.scope_version): raise ValueError('unlicensed_egress')
         return self
@@ -251,7 +255,7 @@ def projection(request, secrets=()):
     result['actor_role'] = request.actor.role
     result['execution_epoch']=request.execution_epoch
     result['reviewed_at']=datetime.now(timezone.utc).isoformat()
-    if request.scope_version in (RUNTIME_SCOPE,INSPECTION_SCOPE,M4_LOCAL_SCOPE,M4_SERVER_SCOPE_PREVIOUS,M4_SERVER_SCOPE_V3,M4_SERVER_SCOPE_V4,M4_SERVER_SCOPE): result['scope_version'] = request.scope_version
+    if request.scope_version in (RUNTIME_SCOPE,INSPECTION_SCOPE,M4_LOCAL_SCOPE,M4_SERVER_SCOPE_PREVIOUS,M4_SERVER_SCOPE_V3,M4_SERVER_SCOPE_V4,M4_SERVER_SCOPE_V5,M4_SERVER_SCOPE): result['scope_version'] = request.scope_version
     if len(canonical(result)) > 32768: raise ValueError('projection_too_large')
     return result
 

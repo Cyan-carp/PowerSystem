@@ -9,6 +9,7 @@ import TaskReadableText from './TaskReadableText.vue'
 import TaskProgramFacts from './TaskProgramFacts.vue'
 import { dateTime } from '../lib/format'
 import InspectionReport from './InspectionReport.vue'
+import BusinessQuality from './BusinessQuality.vue'
 import BusinessEvidence from './BusinessEvidence.vue'
 import InfrastructureEvidence from './InfrastructureEvidence.vue'
 import SecurityReviews from './SecurityReviews.vue'
@@ -79,16 +80,18 @@ onUnmounted(() => { stopped = true; clearTimeout(timer); controller?.abort(); do
     </section>
     <details v-if="task.operation_evidence?.length"><summary>操作前后程序证据</summary><pre>{{ JSON.stringify(task.operation_evidence, null, 2) }}</pre></details>
     <TaskProgramFacts :task="task" :historical="isHistorical" />
-    <section v-if="task.diagnosis" class="ops-diagnosis" aria-label="Operation 模型诊断">
-      <h3>Operation 模型诊断 <span>解释与推测，独立于程序事实</span></h3>
-      <p class="ops-muted">如模型文字与上方工具字段不一致，以程序返回为准；缺失字段、连续健康和长期稳定性均不能由单次读数补推。</p>
-      <section v-if="task.diagnosis.summary" class="ops-conclusion"><h4>诊断结论</h4><TaskReadableText :text="task.diagnosis.summary" /></section>
+    <BusinessQuality :quality="task.business_quality" :historical="isHistorical" />
+    <p v-if="!task.business_quality && hasBusinessEvidence(task.evidence)" class="ops-muted">历史业务正文未按新规则校验，保留原文；不能据此认定当前状态。</p>
+    <section v-if="task.diagnosis" class="ops-diagnosis" :aria-label="task.business_quality ? '程序业务事实' : 'Operation 模型诊断'">
+      <h3>{{ task.business_quality ? '程序业务结论' : 'Operation 模型诊断' }} <span>{{ task.business_quality ? '按实际调用与业务规则生成' : '解释与推测，独立于程序事实' }}</span></h3>
+      <p class="ops-muted">{{ task.business_quality ? '结论仅覆盖已取得的事实；缺失信息与历史记录不能证明设备当前状态。' : '如模型文字与上方工具字段不一致，以程序返回为准；缺失字段、连续健康和长期稳定性均不能由单次读数补推。' }}</p>
+      <section v-if="task.diagnosis.summary" class="ops-conclusion"><h4>{{ task.business_quality ? '业务结论' : '诊断结论' }}</h4><TaskReadableText :text="task.diagnosis.summary" /></section>
       <section v-if="task.diagnosis.clarification" class="ops-clarification"><h4>需要澄清</h4><TaskReadableText :text="task.diagnosis.clarification" /></section>
       <div class="ops-opinions">
         <section v-if="task.diagnosis.hypotheses?.length"><h4>模型研判 <span>尚未等同证实</span></h4><ol><li v-for="(item, index) in task.diagnosis.hypotheses" :key="index"><TaskReadableText :text="item" /></li></ol></section>
         <section v-if="task.diagnosis.recommendations?.length"><h4>建议与下一步</h4><ol><li v-for="(item, index) in task.diagnosis.recommendations" :key="index"><TaskReadableText :text="item" /></li></ol><p class="ops-muted">建议不代表已执行，也不产生新的操作授权。</p></section>
       </div>
-      <details class="ops-original"><summary>原始模型输出 · 保留未格式化文本</summary><pre>{{ JSON.stringify(task.diagnosis, null, 2) }}</pre></details>
+      <details class="ops-original"><summary>{{ task.business_quality ? '结构化程序结论' : '原始模型输出 · 保留未格式化文本' }}</summary><pre>{{ JSON.stringify(task.diagnosis, null, 2) }}</pre></details>
     </section>
     <SecurityReviews :reviews="task.security_reviews || []" :historical="isHistorical" />
     <BusinessEvidence v-if="hasBusinessEvidence(task.evidence) && task.evidence" :evidence="task.evidence" :historical="isHistorical" />

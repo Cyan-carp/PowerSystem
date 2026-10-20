@@ -44,7 +44,7 @@ func TestMAC19BusinessContinuesWithOperationUnavailable(t *testing.T) {
 	}
 	sqlDB, _ := db.DB()
 	defer sqlDB.Close()
-	for _, name := range []string{"001_init.sql", "002_predictions.sql", "003_energy.sql", "004_business_notifications.sql", "005_agent_interpretations.sql", "006_alarm_statistics.sql"} {
+	for _, name := range []string{"001_init.sql", "002_predictions.sql", "003_energy.sql", "004_business_notifications.sql", "005_agent_interpretations.sql", "006_alarm_statistics.sql", "007_alarm_closure.sql", "008_alarm_archive.sql"} {
 		if err = store.Migrate(db, filepath.Join("../../deploy/postgres", name)); err != nil {
 			t.Fatal(err)
 		}

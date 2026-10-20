@@ -122,6 +122,7 @@ class ToolCall(Strict):
 
 
 class ResultEnvelope(Strict):
+    business_quality: dict | None = None
     task_kind: Literal['ops','security_inspection'] = 'ops'
     inspection_report: dict | None = None
     protocol: Literal['ma/v1']

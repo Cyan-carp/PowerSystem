@@ -76,9 +76,14 @@ class Alarm(Args):
     alarm_id: int = Field(gt=0)
 
 
+class Rules(Page):
+    device_id: int | None = Field(default=None, gt=0)
+
+
 MODELS = {"search_knowledge": KnowledgeQuery, "web_search": WebQuery, "list_devices": Devices, "get_device": Device,
     "get_telemetry": Telemetry, "get_prediction": Device, "list_alarms": Alarms,
-    "get_alarm_statistics": Statistics, "get_alarm_detail": Alarm, "get_dashboard_summary": Args}
+    "get_alarm_statistics": Statistics, "get_alarm_detail": Alarm, "get_dashboard_summary": Args,
+    "get_alarm_rules": Rules}
 DESCRIPTIONS = {
     "search_knowledge": "语义向量检索内部项目资料，返回相关章节与来源。",
     "web_search": "博查联网搜索普通问题、最新信息和技术资料，返回网页摘要、发布时间与URL。",
@@ -89,7 +94,8 @@ DESCRIPTIONS = {
     "list_alarms": "分页读取设备告警。unhandled未确认，acked已确认未恢复，recovered已恢复；可按设备、状态、级别及触发时间筛选。",
     "get_alarm_statistics": "数据库聚合全量告警事件。默认近30天按触发时间统计含已恢复与未恢复，返回时间范围、总数、分组及完整性；适用于排名与统计。",
     "get_alarm_detail": "读取单条告警详情。",
-    "get_dashboard_summary": "读取平台设备数、在线数、告警数及功率汇总。"
+    "get_dashboard_summary": "读取平台设备数、在线数、告警数及功率汇总。",
+    "get_alarm_rules": "查询设备告警规则（指标、比较运算符、阈值、单位、级别、启用状态、规则版本），用于程序化阈值比较。缺规则或单位不一致时只能说明无法比较，不能自行设定现场阈值。"
 }
 
 
@@ -100,6 +106,7 @@ def business_route(name, args):
     if name == "get_alarm_statistics": return "/api/v1/alarms/statistics", args
     if name == "get_alarm_detail": return f"/api/v1/alarms/{args['alarm_id']}", {}
     if name == "get_dashboard_summary": return "/api/v1/dashboard/summary", {}
+    if name == "get_alarm_rules": return "/api/v1/alarm-rules", args
     device_id = args.pop("device_id")
     if name == "get_device": return f"/api/v1/devices/{device_id}", {}
     if name == "get_prediction": return f"/api/v1/devices/{device_id}/prediction", {}

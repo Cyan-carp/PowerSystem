@@ -20,6 +20,7 @@ export interface Summary {
   today_energy_kwh: number | null; retained_energy_kwh: number | null
   energy_start_ms: number | null; energy_updated_at: string | null
   health_score_percent: number | null
+  health_valid_count?: number; health_unknown_count?: number; health_provisional?: boolean; health_rule_version?: string; health_computed_at?: string
 }
 export type AlarmLevel = 'urgent' | 'major' | 'minor'
 export type AlarmStatus = 'unhandled' | 'acked' | 'recovered'
@@ -27,6 +28,38 @@ export interface Alarm {
   id: number; device_id: number; rule_id: number | null; metric: string; level: AlarmLevel
   value: number; threshold: number; status: AlarmStatus; acked_by: number | null
   acked_at: string | null; recovered_at: string | null; triggered_at: string
+  archived: boolean
+  close_reason?: string | null; rule_operator?: string; rule_version?: string
+}
+export interface DeviceHealth {
+  rank: number | null
+  device_id: number; device_code: string; name: string; station_code: string
+  score: number | null; state: string; active_level?: string; status?: number | null
+  sampled_at_ms?: number | null; received_at?: string | null; matched_by: string; rule_version: string
+}
+export interface StationHealth {
+  rank: number | null
+  station_code: string; score: number | null; provisional: boolean
+  device_total: number; valid_count: number; unknown_count: number; rule_version: string
+}
+export interface AvailabilityItem {
+  device_id: number; device_code: string; station_code: string
+  covered_ms: number; window_ms: number; running_ms: number; stopped_ms: number
+  fault_ms: number; unknown_ms: number; observed_availability: number | null
+  data_coverage: number | null; insufficient_data: boolean; rule_version: string
+}
+export interface StationAvailability {
+  running_ms: number; stopped_ms: number; fault_ms: number; unknown_ms: number
+  station_code: string; covered_ms: number; window_ms: number; non_fault_ms: number
+  observed_availability: number | null; data_coverage: number | null
+  insufficient_data: boolean; device_count: number
+}
+export interface TimelinessStat { count: number; mean_ms: number | null; median_ms: number | null; p90_ms: number | null }
+export interface TimelinessResult {
+  scope: string; ack_timeliness: TimelinessStat; recover_timeliness: TimelinessStat
+  pending_ack: number; pending_recover: number; managed_or_unknown_recover: number
+  telemetry_recover_timeliness: TimelinessStat; prediction_recover_timeliness: TimelinessStat
+  managed_recover: number; unknown_recover: number; event_count: number; invalid_lifecycle: number; recovery_reasons: Record<string, number>
 }
 export interface PredictionListItem {
   device_id: number; device_code: string; name: string; station_code: string; group_name: string
@@ -91,7 +124,8 @@ export interface OpsAttempt { attempt_id: string; approval_id: string; call_id: 
 export interface InfrastructureEvidence { call_id: string; evidence_ref: string; tool: string; tool_version: string; asset_id?: string | null; asset_version?: number | null; asset_name?: string | null; status: 'ok' | 'error'; vantage?: 'host' | 'container' | 'database' | 'registry' | null; collected_at: string; sampled_at?: string | null; truncated: boolean; complete: boolean; filtered_lines?: number; filter_policy?: string; error?: { code: string; message: string; retryable: boolean } | null }
 export interface InspectionItem { check_id: string; category: string; asset_id: string | null; asset_version: number | null; tool: string | null; status: 'passed' | 'finding' | 'inconclusive' | 'not_checked'; reason: string; rule: string | null; evidence_refs: string[]; sampled_at: string | null; collected_at: string | null; vantage: string | null; historical: boolean }
 export interface InspectionReport { version: string; requested_scope: string[]; checked_scope: string[]; items: InspectionItem[]; confirmed_findings: InspectionItem[]; unchecked_items: InspectionItem[]; hypotheses: { review_id: string; decision: string; reason: string; evidence_refs: string[] }[]; recommendations: string[]; completeness: string; review_status: string }
-export interface OpsTask { task_kind?: 'ops' | 'security_inspection'; inspection_report?: InspectionReport | null; security_reviews?: SecurityReview[]; security_events?: { event_seq: number; review_id: string; state: string; reason: string; created_at: string }[]; approvals?: OpsApproval[]; execution_attempts?: OpsAttempt[]; operation_evidence?: Record<string, unknown>[]; evidence?: RAGEvidence; infrastructure_evidence?: InfrastructureEvidence[]; task_id: string; session_id: string; status: OpsStatus; intent: string; historical?: boolean; parent_turn_id?: number | null; steps?: { step_no: number; tool: string; status: string; result?: unknown; asset_id?: string | null; asset_version?: number | null }[]; tool_calls?: RAGToolCall[]; sources?: RAGSource[]; diagnosis?: { summary?: string; hypotheses?: unknown[]; recommendations?: unknown[]; clarification?: string }; warnings?: string[]; error?: { code: string; message: string; retryable: boolean } | null; created_at?: string; finished_at?: string | null; model_calls?: number; link_pending?: boolean }
-export interface RAGChatResponse { request_id: string; session_id: string; status: 'answered' | 'degraded' | 'out_of_scope'; answer_markdown: string; sources: RAGSource[]; tool_calls: RAGToolCall[]; warnings: string[]; model: string; response_mode?: 'model' | 'preset' | 'boundary' | 'task_dispatched'; task_cards?: OpsTask[]; model_called?: boolean; boundary?: { action: 'allow' | 'preset' | 'block'; reason: string; rule_id: string; rule_version: string }; turn_id?: number; evidence?: RAGEvidence; verification_available?: boolean; kind?: 'chat' | 'verification'; parent_turn_id?: number; device?: { id: number; device_code: string; name: string }; verification_results?: Record<string, unknown> }
+export interface BusinessQuality { version: string; state: string; scope: string; render_state?: string; digest: string; facts: {id: string; kind: string; device_id: number | null; call_refs: string[]; text: string; data: Record<string, unknown>}[]; missing: string[] }
+export interface OpsTask { business_quality?: BusinessQuality | null; task_kind?: 'ops' | 'security_inspection'; inspection_report?: InspectionReport | null; security_reviews?: SecurityReview[]; security_events?: { event_seq: number; review_id: string; state: string; reason: string; created_at: string }[]; approvals?: OpsApproval[]; execution_attempts?: OpsAttempt[]; operation_evidence?: Record<string, unknown>[]; evidence?: RAGEvidence; infrastructure_evidence?: InfrastructureEvidence[]; task_id: string; session_id: string; status: OpsStatus; intent: string; historical?: boolean; parent_turn_id?: number | null; steps?: { step_no: number; tool: string; status: string; result?: unknown; asset_id?: string | null; asset_version?: number | null }[]; tool_calls?: RAGToolCall[]; sources?: RAGSource[]; diagnosis?: { summary?: string; hypotheses?: unknown[]; recommendations?: unknown[]; clarification?: string }; warnings?: string[]; error?: { code: string; message: string; retryable: boolean } | null; created_at?: string; finished_at?: string | null; model_calls?: number; link_pending?: boolean }
+export interface RAGChatResponse { business_quality?: BusinessQuality | null; request_id: string; session_id: string; status: 'answered' | 'degraded' | 'out_of_scope'; answer_markdown: string; sources: RAGSource[]; tool_calls: RAGToolCall[]; warnings: string[]; model: string; response_mode?: 'model' | 'preset' | 'boundary' | 'task_dispatched'; task_cards?: OpsTask[]; model_called?: boolean; boundary?: { action: 'allow' | 'preset' | 'block'; reason: string; rule_id: string; rule_version: string }; turn_id?: number; evidence?: RAGEvidence; verification_available?: boolean; kind?: 'chat' | 'verification'; parent_turn_id?: number; device?: { id: number; device_code: string; name: string }; verification_results?: Record<string, unknown> }
 export interface RAGSession { id: string; title: string; created_at: string; updated_at: string }
 export interface RAGTurn { id?: number; kind?: 'chat' | 'verification'; parent_turn_id?: number; question: string; response: RAGChatResponse; created_at?: string }

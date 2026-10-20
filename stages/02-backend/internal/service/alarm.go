@@ -39,23 +39,25 @@ func ProcessSample(db *gorm.DB, item model.Inbox, sample telemetry.Sample) (mode
 			if lookup != nil && !errors.Is(lookup, gorm.ErrRecordNotFound) {
 				return lookup
 			}
-			if active && errors.Is(lookup, gorm.ErrRecordNotFound) {
-				ruleID := rule.ID
-				record = model.AlarmRecord{DeviceID: device.ID, RuleID: &ruleID, Metric: rule.Metric, Level: rule.Level, Value: value, Threshold: rule.Threshold, Status: "unhandled", TriggeredAt: now}
-				if err := tx.Create(&record).Error; err != nil {
-					return err
-				}
-				if err := QueueAlarmNotification(tx, device, record, "triggered"); err != nil {
-					return err
-				}
-				events = append(events, AlarmEvent{Type: "alarm_created", Data: record})
+		if active && errors.Is(lookup, gorm.ErrRecordNotFound) {
+			ruleID := rule.ID
+			record = model.AlarmRecord{DeviceID: device.ID, RuleID: &ruleID, Metric: rule.Metric, Level: rule.Level, Value: value, Threshold: rule.Threshold, Status: "unhandled", RuleOperator: rule.Operator, RuleVersion: rule.Version, TriggeredAt: now}
+			if err := tx.Create(&record).Error; err != nil {
+				return err
 			}
-			if !active && lookup == nil {
-				if err := tx.Model(&record).Updates(map[string]any{"recovered_at": now, "status": "recovered", "updated_at": now}).Error; err != nil {
-					return err
-				}
-				record.RecoveredAt = &now
-				record.Status = "recovered"
+			if err := QueueAlarmNotification(tx, device, record, "triggered"); err != nil {
+				return err
+			}
+			events = append(events, AlarmEvent{Type: "alarm_created", Data: record})
+		}
+		if !active && lookup == nil {
+			if err := tx.Model(&record).Updates(map[string]any{"recovered_at": now, "status": "recovered", "close_reason": "telemetry_recovered", "updated_at": now}).Error; err != nil {
+				return err
+			}
+			record.RecoveredAt = &now
+			record.Status = "recovered"
+			reason := "telemetry_recovered"
+			record.CloseReason = &reason
 				if err := QueueAlarmNotification(tx, device, record, "recovered"); err != nil {
 					return err
 				}

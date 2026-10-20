@@ -2,7 +2,7 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElNotification } from 'element-plus'
-import { Bell, ChatDotSquare, DataAnalysis, DataBoard, Monitor } from '@element-plus/icons-vue'
+import { Bell, ChatDotSquare, DataAnalysis, DataBoard, Monitor, TrendCharts, Files } from '@element-plus/icons-vue'
 import { clearSession, currentUser } from '../lib/auth'
 import { realtime } from '../lib/realtime'
 import { api } from '../lib/api'
@@ -21,6 +21,8 @@ let unsubscribe: (() => void) | null = null
 const navItems = [
   { to: '/dashboard', match: (path: string) => path === '/dashboard', icon: DataBoard, label: '总览大屏' },
   { to: '/devices', match: (path: string) => path.startsWith('/devices'), icon: Monitor, label: '设备管理' },
+  { to: '/health', match: (path: string) => path === '/health', icon: TrendCharts, label: '健康排行' },
+  { to: '/reports', match: (path: string) => path === '/reports', icon: Files, label: '统计报表' },
   { to: '/alarms', match: (path: string) => path === '/alarms', icon: Bell, label: '告警中心' },
   { to: '/predictions', match: (path: string) => path === '/predictions', icon: DataAnalysis, label: '故障预测' },
   { to: '/agent', match: (path: string) => path === '/agent', icon: ChatDotSquare, label: '智能助手' },

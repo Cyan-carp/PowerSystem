@@ -3,7 +3,7 @@ import type { AlarmLevel, AlarmStatus, Metric } from '../types'
 export const metricLabels: Record<Metric, string> = { voltage: '电压', current: '电流', temperature: '温度', power: '功率' }
 export const metricUnits: Record<Metric, string> = { voltage: 'V', current: 'A', temperature: '°C', power: 'kW' }
 export const levelLabels: Record<AlarmLevel, string> = { urgent: '紧急', major: '重要', minor: '一般' }
-export const statusLabels: Record<AlarmStatus, string> = { unhandled: '待确认', acked: '已确认', recovered: '已恢复' }
+export const statusLabels: Record<AlarmStatus, string> = { unhandled: '待确认', acked: '已确认', recovered: '已结束' }
 
 const beijingTime = new Intl.DateTimeFormat('en-GB', {
   timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit',

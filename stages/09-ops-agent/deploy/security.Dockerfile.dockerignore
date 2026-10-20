@@ -14,3 +14,6 @@
 !stages/10-security-agent/review_contract.py
 **/__pycache__
 **/*.pyc
+!stages/08-agent-rag
+!stages/08-agent-rag/rag_agent
+!stages/08-agent-rag/rag_agent/business_quality.py

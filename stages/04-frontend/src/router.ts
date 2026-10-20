@@ -12,6 +12,8 @@ export const router = createRouter({
         { path: 'dashboard', component: () => import('./views/DashboardView.vue'), name: 'dashboard', meta: { title: '运行总览' } },
         { path: 'devices', component: () => import('./views/DevicesView.vue'), name: 'devices', meta: { title: '设备管理' } },
         { path: 'devices/:id', component: () => import('./views/DeviceDetailView.vue'), name: 'device-detail', meta: { title: '设备详情' } },
+        { path: 'health', component: () => import('./views/HealthRankingView.vue'), name: 'health', meta: { title: '健康排行' } },
+        { path: 'reports', component: () => import('./views/ReportsView.vue'), name: 'reports', meta: { title: '统计报表' } },
         { path: 'alarms', component: () => import('./views/AlarmsView.vue'), name: 'alarms', meta: { title: '告警中心' } },
         { path: 'predictions', component: () => import('./views/PredictionsView.vue'), name: 'predictions', meta: { title: '故障预测' } },
       ],

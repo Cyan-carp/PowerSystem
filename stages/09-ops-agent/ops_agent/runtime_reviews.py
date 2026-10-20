@@ -57,11 +57,17 @@ def sensitive_report(report):
 
 
 def validate_payload(payload, cfg=None):
-    if not isinstance(payload,dict) or set(payload) not in ({'task_status','evidence','actions'}, {'task_status','evidence','actions','inspection'}):
+    if not isinstance(payload,dict) or not {'task_status','evidence','actions'} <= set(payload) or set(payload)-{'task_status','evidence','actions','inspection','business_quality'}:
         raise ValueError('security_projection_blocked')
     if payload['task_status'] not in ('queued','planning','executing','awaiting_approval','succeeded','failed','cancelled','timeout'):
         raise ValueError('security_projection_blocked')
     if not isinstance(payload['evidence'],list) or not isinstance(payload['actions'],list): raise ValueError('security_projection_blocked')
+    if 'business_quality' in payload:
+        q = payload['business_quality']
+        if not isinstance(q,dict) or set(q)!={'version','digest','state','fact_refs'} or q['version']!='bnd-business-v1' or not __import__('re').fullmatch('[a-f0-9]{64}', q.get('digest','')) or q['state'] not in ('not_queried','failed','partial_failed','queried'):
+            raise ValueError('security_projection_blocked')
+        if not isinstance(q['fact_refs'],list) or len(q['fact_refs'])>160 or any(not isinstance(r,str) or not __import__('re').fullmatch('F[a-f0-9]{20}',r) for r in q['fact_refs']):
+            raise ValueError('security_projection_blocked')
     for e in payload['evidence']:
         if not isinstance(e,dict) or set(e)-{'evidence_ref','tool','asset_id','asset_version','status','complete','truncated','collected_at','sampled_at','state','assets','metrics'}:
             raise ValueError('security_projection_blocked')
@@ -127,6 +133,9 @@ def licensed_summary(report, cfg=None):
                 value['assets']=[{k:a[k] for k in ('asset_id','kind','parent_id','version','criticality','enabled') if k in a} for a in data.get('list',[])]
         rows.append(value)
     payload={'task_status':report['status'],'evidence':rows,'actions':[{'status':a['status']} for a in report.get('execution_attempts',[])]}
+    if report.get('business_quality'):
+        from .business_quality import quality_summary
+        payload['business_quality'] = quality_summary(report['business_quality'])
     if report.get('inspection_report'):
         payload['inspection']={'version':'sec-m3-report/v1','completeness':'limited_project_checks','items':[{k:i[k] for k in ('status','reason','rule','evidence_refs','asset_id','asset_version')} for i in report['inspection_report']['items']]}
     return validate_payload(payload, cfg)
@@ -233,7 +242,7 @@ class SecurityGates:
     def __init__(self, cfg, store, client):
         self.cfg, self.store = cfg, store
         self.controller = RuntimeController(store.pool, client, cfg.security_service_token,
-            cfg.security_request_key, cfg.security_result_key, url=cfg.security_url, runtime_config=cfg)
+            cfg.security_request_key, cfg.security_result_key, url=cfg.security_url, model='deepseek-v4.1-flash' if cfg.runtime_profile == 'm4-server-readonly' else 'deepseek-v4-flash-0731', runtime_config=cfg)
 
     async def prepare_step(self, row, epoch, step, name, args, asset):
         async with self.store.pool.acquire() as c, c.transaction():
@@ -312,7 +321,7 @@ class SecurityGates:
             values['material_hash'] = digest(payload)
             evidence[0]['facts'] = [{'key': k, 'value': v} for k, v in values.items()]
             material['egress'] = {'destination': 'existing-gateway', 'scope_version': scope,
-                'receiver': receiver, 'model': 'deepseek-v4.1-flash' if receiver == 'supervisor' else 'deepseek-v4-flash-0731',
+                'receiver': receiver, 'model': 'deepseek-v4.1-flash' if receiver == 'supervisor' or scope == contract.M4_SERVER_SCOPE else 'deepseek-v4-flash-0731',
                 'fields': ['normalized_intent', 'tool', 'asset', 'evidence', 'policy_version'], 'payload_hash': digest(payload)}
             if kind=='inspection_report': material.pop('egress',None)
             if kind=='inspection_report' and scope in (contract.INSPECTION_SCOPE, contract.M4_LOCAL_SCOPE, contract.M4_SERVER_SCOPE) and 'inspection' in payload:

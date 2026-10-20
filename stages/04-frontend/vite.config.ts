@@ -12,7 +12,7 @@ export default defineConfig(({ mode }) => {
     strictPort: true,
     proxy: {
       '/api': { target, changeOrigin: true },
-      '/ws': { target: 'ws://127.0.0.1:8080', changeOrigin: false, ws: true },
+      '/ws': { target: target.replace(/^http/, 'ws'), changeOrigin: false, ws: true },
     },
   },
  }

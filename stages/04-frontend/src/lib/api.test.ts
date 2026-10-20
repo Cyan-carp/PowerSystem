@@ -27,4 +27,15 @@ describe('API authorization', () => {
     await expect(request('/api/v1/agent/tasks/fixture')).rejects.toMatchObject({ status: 429, retryAfter: 8 })
     vi.unstubAllGlobals()
   })
+  it('archives an alarm through the soft-delete endpoint', async () => {
+    const fetch = vi.fn().mockResolvedValue({
+      ok: true, status: 200, headers: new Headers(),
+      json: async () => ({ code: 0, message: 'success', data: { id: 42, archived: true } }),
+    })
+    vi.stubGlobal('fetch', fetch)
+    const { api } = await import('./api')
+    await expect(api.archiveAlarm(42)).resolves.toMatchObject({ id: 42, archived: true })
+    expect(fetch).toHaveBeenCalledWith('/api/v1/alarms/42/archive', expect.objectContaining({ method: 'POST' }))
+    vi.unstubAllGlobals()
+  })
 })
