@@ -10,7 +10,7 @@ import { alarmComparison, fixedNumber } from '../lib/detailPresentation'
 import { interpretationLayout, interpretationText } from '../lib/interpretation-layout'
 import { operationNotice, requiresEquipmentReview } from '../lib/agent-chat'
 import { attentionOrder, reasonLabels, shouldAutoOpen } from '../lib/interpretations'
-import { alarmMetricLabel, evidenceSourceLabel, evidenceStatusLabel, evidenceToolLabel, monitorAlertLabel, monitorSeverityLabel } from '../lib/interpretation-display'
+import { alarmMetricLabel, evidenceSourceLabel, evidenceStatusLabel, evidenceToolLabel, isLegacySimulationMetric, legacySimulationNote, monitorAlertLabel, monitorSeverityLabel, normalAlarmSamplingNote } from '../lib/interpretation-display'
 import type { AgentModelStatus, Interpretation, AgentEvidence, Metric } from '../types'
 import TelemetryChart from './TelemetryChart.vue'
 import SuggestionSources from './SuggestionSources.vue'
@@ -28,6 +28,7 @@ const seen = new Set<number>()
 const expandedEvidence = ref<string[]>([])
 const evidenceRoot = ref<HTMLElement | null>(null)
 const selected = computed(() => items.value.find(i => i.id === selectedID.value))
+const legacySimulation = computed(() => isLegacySimulationMetric(selected.value?.alarm?.metric))
 const display = computed(() => selected.value ? interpretationLayout(selected.value) : null)
 const comparison = computed(() => selected.value?.alarm ? alarmComparison(selected.value.alarm.value, selected.value.alarm.threshold, selected.value.alarm.metric === 'ai_failure_risk') : null)
 const monitorLabels = computed(() => selected.value?.monitor?.labels as Record<string, string> | undefined)
@@ -52,7 +53,10 @@ async function refresh(): Promise<void> {
     if (!alive) return
     // Keep the displayed item available even after confirmation removes it from attention.
     const old = selected.value
-    if (old && !all.some(i => i.id === old.id)) all.push(await api.interpretation(old.id))
+    if (old && !all.some(i => i.id === old.id)) {
+      try { all.push(await api.interpretation(old.id)) }
+      catch (cause) { if (cause instanceof ApiError && cause.status === 404) selectedID.value = all[0]?.id ?? null; else throw cause }
+    }
     if (!alive) return
     items.value = attentionOrder(all)
     error.value = ''
@@ -117,7 +121,7 @@ watch(selectedID, () => { expandedEvidence.value = [] })
 onMounted(() => {
   void refresh(); void modelStatus()
   unsubscribe = realtime.subscribe(event => {
-    if (['connected', 'interpretation_updated', 'alarm_acked', 'alarm_recovered'].includes(event.type)) void refresh()
+    if (['connected', 'interpretation_updated', 'alarm_created', 'alarm_acked', 'alarm_recovered'].includes(event.type)) void refresh()
     if (event.type === 'agent_model_updated') void modelStatus()
   })
   timer = setInterval(() => { void refresh() }, 5000)
@@ -139,19 +143,25 @@ onUnmounted(() => { alive = false; unsubscribe?.(); if (timer) clearInterval(tim
     </el-select>
     <div v-if="selected" class="interpretation-content">
       <section class="interpretation-facts" aria-label="事件与触发数据">
-        <div class="event-heading"><strong>{{ selected.category === 'prediction_risk' ? 'AI 故障风险' : selected.category === 'platform_monitor' ? '平台监控' : '设备越限' }}</strong><el-tag :type="selected.active ? 'warning' : 'info'" size="small">{{ selected.active ? (selected.alarm?.status === 'acked' ? '已确认，尚未恢复' : '活动事件') : '已恢复' }}</el-tag></div>
+        <h3>事件事实</h3>
+        <div class="event-heading"><strong>{{ legacySimulation ? alarmMetricLabel('simulation_scenario') : selected.category === 'prediction_risk' ? 'AI 故障风险' : selected.category === 'platform_monitor' ? '平台监控' : '设备越限' }}</strong><el-tag :type="selected.active ? 'warning' : 'info'" size="small">{{ selected.active ? (selected.alarm?.status === 'acked' ? '已确认，尚未结束' : '活动事件') : legacySimulation ? '演示已结束' : '已恢复' }}</el-tag></div>
         <div class="event-meta"><span>{{ display?.device }}</span><span>{{ levelLabels[selected.level] }}<template v-if="selected.alarm_id"> · 告警 #{{ selected.alarm_id }}</template></span><span>触发于 {{ dateTime(selected.occurred_at) }}</span></div>
-        <div v-if="selected.alarm" class="event-values"><div><span>{{ alarmMetricLabel(selected.alarm.metric) }} · 触发值</span><strong>{{ fixedNumber(selected.alarm.value) }}</strong></div><div><span>触发阈值</span><strong>{{ fixedNumber(selected.alarm.threshold) }}</strong></div><p v-if="comparison">{{ comparison.differenceText }}</p></div>
-        <template v-else><p>{{ monitorAlertLabel(monitorLabels?.alertname) }} · {{ monitorSeverityLabel(monitorLabels?.severity) }}</p><p>{{ interpretationText(monitorAnnotations?.summary) }}</p></template>
+        <p v-if="legacySimulation" role="note">{{ legacySimulationNote }}</p>
+        <div v-else-if="selected.alarm" class="event-values"><div><span>{{ alarmMetricLabel(selected.alarm.metric) }} · 触发值</span><strong>{{ fixedNumber(selected.alarm.value) }}</strong></div><div><span>触发阈值</span><strong>{{ fixedNumber(selected.alarm.threshold) }}</strong></div><p v-if="comparison">{{ comparison.differenceText }}</p></div>
+        <p v-if="selected.alarm && !legacySimulation" role="note" class="event-source-note">{{ normalAlarmSamplingNote }}</p>
+        <template v-if="!selected.alarm"><p>{{ monitorAlertLabel(monitorLabels?.alertname) }} · {{ monitorSeverityLabel(monitorLabels?.severity) }}</p><p>{{ interpretationText(monitorAnnotations?.summary) }}</p></template>
       </section>
+      <details v-if="selected.result?.facts?.length" class="interpretation-raw"><summary>后端规范化事实（非模型推断）</summary><dl><template v-for="fact in selected.result.facts" :key="fact.fact_id"><dt>{{ fact.label }}</dt><dd>{{ fact.display_value }}{{ fact.unit }}</dd></template></dl></details>
+      <h3>模型分析</h3>
       <p class="interpretation-warning" v-if="selected.task_status === 'pending' || selected.task_status === 'running'">{{ selected.task_status === 'running' ? '正在生成解读' : '等待解读或有限重试' }}；原告警可正常确认。</p>
       <div v-if="selected.result?.status === 'answered'">
         <InterpretationBrief :item="selected" @open-evidence="openEvidence" />
+        <section v-if="selected.result.hypotheses?.length"><h3>候选原因（未证实）</h3><SuggestionSources v-for="(claim, index) in selected.result.hypotheses" :key="index" :claim="claim" :evidence="selected.evidence || []" interpretation-mode /></section>
         <h3>人工检查建议</h3>
         <p v-if="selected.result.suggestions.some(requiresEquipmentReview)" class="suggestions-notice" role="note"><strong>操作说明</strong>{{ operationNotice }}</p>
         <SuggestionSources v-for="(claim, index) in selected.result.suggestions" :key="index" :claim="claim" :evidence="selected.evidence || []" :order="index + 1" interpretation-mode />
       </div>
-      <p v-else-if="selected.task_status === 'degraded'" role="status" class="interpretation-warning">智能解读暂不可用，原因尚无法判断。{{ reasonLabels[selected.reason] || '请人工核查原始事件。' }}</p>
+      <p v-else-if="selected.task_status === 'degraded'" role="status" class="interpretation-warning">模型分析未完成；以上事件事实仍可核查。{{ reasonLabels[selected.reason] || '请人工核查原始事件。' }}</p>
       <aside v-if="selected.result?.limitations?.length" class="interpretation-limit" aria-label="解读适用边界"><strong>解读边界</strong><p v-for="note in selected.result.limitations" :key="note">{{ interpretationText(note) }}</p></aside>
       <section ref="evidenceRoot" class="evidence-section" aria-label="事件证据快照">
       <h3>事件证据快照</h3>
@@ -215,6 +225,7 @@ onUnmounted(() => { alive = false; unsubscribe?.(); if (timer) clearInterval(tim
 .event-values strong { font-size: 25px; font-weight: 600; line-height: 1.2; margin: 0; font-variant-numeric: tabular-nums; }
 .event-values > div + div strong { color: var(--ink-2); }
 .event-values p { grid-column: 1 / -1; margin: 0; color: var(--ink-2); font-size: 12px; }
+.event-source-note { margin: 10px 0 0; padding: 8px 10px; border-left: 3px solid var(--line); background: var(--card-2); color: var(--ink-3); }
 .interpretation-limit { border: 1px solid var(--line); background: var(--card-2); padding: 12px 14px; margin-top: 18px; }
 .interpretation-limit strong { font-size: 12px; color: var(--ink-2); }
 .interpretation-limit p { margin: 6px 0 0; font-size: 12px; }

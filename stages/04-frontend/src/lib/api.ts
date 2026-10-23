@@ -1,10 +1,16 @@
 import { clearSession, token } from './auth'
 import { retryAfterSeconds } from './retry-after'
 import type { OpsStatus, OpsTask } from '../types'
-import type { Alarm, ApiEnvelope, Device, History, LoginResult, Metric, Page, Prediction, PredictionListItem, Summary, Telemetry, Interpretation, AgentModelStatus, KnowledgeSource, RAGChatResponse, RAGSession, RAGTurn, VerificationInput, DeviceHealth, StationHealth, AvailabilityItem, StationAvailability, TimelinessResult } from '../types'
+import type { Alarm, ApiEnvelope, Device, History, LoginResult, Metric, Overview, Page, Prediction, PredictionListItem, Scope, Station, Summary, Telemetry, Interpretation, AgentModelStatus, KnowledgeSource, RAGChatResponse, RAGSession, RAGTurn, VerificationInput, DeviceHealth, StationHealth, AvailabilityItem, StationAvailability, TimelinessResult } from '../types'
 
 export class ApiError extends Error {
   constructor(public status: number, public code: number, message: string, public retryAfter = 0) { super(message) }
+}
+
+export interface ScopeQuery { scope?: Scope; stationCode?: string }
+
+function scopeParams(filter: ScopeQuery = {}): { scope?: Scope; station_code?: string } {
+  return { scope: filter.scope, station_code: filter.stationCode }
 }
 
 function query(params: Record<string, string | number | undefined>): string {
@@ -74,6 +80,7 @@ export const api = {
   opsTasks: (sessionID?: string, offset = 0, options: { status?: OpsStatus; limit?: number; signal?: AbortSignal } = {}) => request<{ list: OpsTask[]; offset: number; page_size: number }>(`/api/v1/agent/tasks${query({ session_id: sessionID, offset, status: options.status, limit: options.limit })}`, { signal: options.signal }),
   opsTask: (id: string, signal?: AbortSignal) => request<OpsTask>(`/api/v1/agent/tasks/${encodeURIComponent(id)}`, { signal }),
   cancelOpsTask: (id: string) => request<OpsTask>(`/api/v1/agent/tasks/${encodeURIComponent(id)}/cancel`, { method: 'POST' }),
+  deleteOpsTask: (id: string) => request<{ task_id: string; deleted: boolean; already_deleted: boolean; deleted_at: string }>(`/api/v1/agent/tasks/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   decideOpsApproval: (id: string, approvalID: string, decision: 'approve' | 'reject') => request<OpsTask>(`/api/v1/agent/tasks/${encodeURIComponent(id)}/approvals/${encodeURIComponent(approvalID)}/decision`, { method: 'POST', body: JSON.stringify({ decision }) }),
   chat: (message: string, sessionID?: string, signal?: AbortSignal) => request<RAGChatResponse>('/api/v1/agent/chat', {
     method: 'POST', body: JSON.stringify({ message, ...(sessionID ? { session_id: sessionID } : {}) }), signal,
@@ -90,12 +97,14 @@ export const api = {
   modelStatus: () => request<AgentModelStatus>('/api/v1/agent/model-status'),
   modelProbe: () => request('/api/v1/agent/model-probe', { method: 'POST' }),
   login: (username: string, password: string) => request<LoginResult>('/api/v1/auth/login', { method: 'POST', body: JSON.stringify({ username, password }) }),
-  devices: (page = 1, pageSize = 20, groupName = '') => request<Page<Device>>(`/api/v1/devices${query({ page, page_size: pageSize, group_name: groupName })}`),
+  devices: (page = 1, pageSize = 20, groupName = '', filter: ScopeQuery = {}) => request<Page<Device>>(`/api/v1/devices${query({ page, page_size: pageSize, group_name: groupName, ...scopeParams(filter) })}`),
+  stations: (scope: Scope = 'all') => request<{ scope: Scope; list: Station[]; total: number }>(`/api/v1/stations${query({ scope })}`),
+  overview: (scope: Scope = 'all', stationCode = '') => request<Overview>(`/api/v1/dashboard/overview${query({ scope, station_code: stationCode })}`),
   device: (id: number) => request<Device>(`/api/v1/devices/${id}`),
   latest: (id: number) => request<Telemetry>(`/api/v1/devices/${id}/telemetry/latest`),
   history: (id: number, metric: Metric, start: Date, end: Date) => request<History>(`/api/v1/devices/${id}/telemetry${query({ metric, start: start.toISOString(), end: end.toISOString() })}`),
   summary: () => request<Summary>('/api/v1/dashboard/summary'),
-  alarms: (page = 1, pageSize = 20, status = '', level = '') => request<Page<Alarm>>(`/api/v1/alarms${query({ page, page_size: pageSize, status, level })}`),
+  alarms: (page = 1, pageSize = 20, status = '', level = '', filter: ScopeQuery & { origin?: 'normal' | 'simulation' } = {}) => request<Page<Alarm>>(`/api/v1/alarms${query({ page, page_size: pageSize, status, level, origin: filter.origin, ...scopeParams(filter) })}`),
   alarm: (id: number) => request<Alarm>(`/api/v1/alarms/${id}`),
   ackAlarm: (id: number) => request<Alarm>(`/api/v1/alarms/${id}/ack`, { method: 'POST' }),
   archiveAlarm: (id: number) => request<Alarm>(`/api/v1/alarms/${id}/archive`, { method: 'POST' }),

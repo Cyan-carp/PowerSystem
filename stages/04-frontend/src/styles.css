@@ -54,6 +54,14 @@
   --success: #3ecf8e;
   --success-soft: rgba(62, 207, 142, .12);
   --success-line: rgba(62, 207, 142, .3);
+
+  /* 场站色标：设备编码色点，低饱和并避让状态色，按场站编码稳定映射 */
+  --st-0: #6b7280;
+  --st-t1: #5b8def;
+  --st-t2: #34c9c0;
+  --st-t3: #a78bfa;
+  --st-t4: #d98a5f;
+  --st-t5: #7f8ea3;
 }
 
 /* Element Plus 深色变量：在官方 dark 基础上对齐本站色板 */
@@ -240,7 +248,7 @@ body:has(.icp-footer) { --site-footer-height: 28px; }
 }
 .toolbar-title { font-size: 14px; font-weight: 700; color: var(--ink); }
 .toolbar-title span { display: block; font-size: 11.5px; font-weight: 400; color: var(--ink-3); margin-top: 3px; }
-.toolbar-actions { display: flex; gap: 8px; align-items: center; }
+.toolbar-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .toolbar-actions .el-input { width: 205px; }
 
 .content-alert { margin-bottom: 14px; }
@@ -277,6 +285,12 @@ body:has(.icp-footer) { --site-footer-height: 28px; }
 .trend-foot .power-low { color: var(--warning-dot); }
 .trend-foot .power-over { color: var(--danger); }
 .trend-note { border-top: 1px solid var(--line-soft); margin: 0; padding: 8px 18px 10px; color: var(--ink-3); font-size: 10.5px; line-height: 1.5; }
+/* 范围切换与分时聚合占位 */
+.curve-pending { margin: 0 18px 14px; padding: 20px 18px; border: 1px dashed var(--line-strong); border-radius: var(--r-md); }
+.curve-pending strong { display: block; color: var(--ink); font-size: 13px; margin-bottom: 6px; }
+.curve-pending p { margin: 0; color: var(--ink-3); font-size: 11.5px; line-height: 1.6; }
+.station-compare { margin-bottom: 14px; }
+.head-meta .el-button-group { margin-bottom: 2px; }
 @media (max-width: 850px) { .gauge-grid { grid-template-columns: 1fr; } .gauge-cell + .gauge-cell { border-left: 0; border-top: 1px solid var(--line); } }
 
 /* ==========================================================================
@@ -290,6 +304,19 @@ body:has(.icp-footer) { --site-footer-height: 28px; }
 .data-table strong { color: var(--ink); }
 .code-cell { font-family: Consolas, monospace; font-size: 13px; }
 .cell-sub { display: block; color: var(--ink-3); font-size: 11px; margin-top: 2px; }
+/* 设备编码分段：常量部分弱化、序号强调并等宽，色点按场站着色，便于扫读 */
+.dev-code { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.dev-dot { width: 6px; height: 6px; border-radius: 50%; flex: none; background: var(--st-0); }
+.dev-dot--t1 { background: var(--st-t1); }
+.dev-dot--t2 { background: var(--st-t2); }
+.dev-dot--t3 { background: var(--st-t3); }
+.dev-dot--t4 { background: var(--st-t4); }
+.dev-dot--t5 { background: var(--st-t5); }
+.dev-const { color: var(--ink-3); font-size: 12px; }
+.dev-seq { font-family: Consolas, monospace; font-size: 13.5px; font-weight: 700; color: var(--ink); font-variant-numeric: tabular-nums; }
+.dev-plain { font-family: Consolas, monospace; font-size: 13px; color: var(--ink-2); }
+.dev-name { white-space: nowrap; }
+.dev-name-seq { font-family: Consolas, monospace; font-weight: 700; color: var(--ink); margin-right: 1px; }
 .table-footer {
   display: flex; align-items: center; justify-content: space-between;
   padding: 12px 18px; font-size: 12px; color: var(--ink-3);

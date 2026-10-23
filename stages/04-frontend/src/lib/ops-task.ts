@@ -1,4 +1,4 @@
-import type { OpsStatus } from '../types'
+import type { OpsStatus, OpsTask } from '../types'
 
 export const activeTaskStatuses: readonly OpsStatus[] = ['queued', 'planning', 'executing', 'awaiting_approval']
 
@@ -16,4 +16,22 @@ export function taskErrorText(error: { code: string; message: string }): string 
 }
 export function pollDelay(status: OpsStatus, hidden: boolean, retryAfter = 0): number | null {
   return terminalTask(status) || hidden ? null : Math.max(2000, retryAfter * 1000)
+}
+
+/** Only finished tasks may be removed from the records list; running ones must be cancelled first. */
+export const canDeleteTask = (status: OpsStatus): boolean => terminalTask(status)
+
+export function toggleSelection(ids: readonly string[], id: string): string[] {
+  return ids.includes(id) ? ids.filter(value => value !== id) : [...ids, id]
+}
+
+/** Drop selections that vanished from the list or are no longer deletable, keeping the original order. */
+export function retainedSelection(ids: readonly string[], records: readonly OpsTask[]): string[] {
+  const deletable = new Set(records.filter(task => canDeleteTask(task.status)).map(task => task.task_id))
+  return ids.filter(id => deletable.has(id))
+}
+
+export function allDeletableSelected(ids: readonly string[], records: readonly OpsTask[]): boolean {
+  const deletable = records.filter(task => canDeleteTask(task.status))
+  return deletable.length > 0 && deletable.every(task => ids.includes(task.task_id))
 }

@@ -1,9 +1,12 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { api } from '../lib/api'
-import { dateTime, errorMessage } from '../lib/format'
+import { dateTime, durationText, errorMessage } from '../lib/format'
 import type { Device, TimelinessStat } from '../types'
 import { useReportPanel, type ReportParams } from '../lib/report-panel'
+import { usePaged } from '../lib/paged'
+import DeviceCode from '../components/DeviceCode.vue'
+import StationCode from '../components/StationCode.vue'
 const now = new Date()
 const range = ref<[Date, Date] | null>([new Date(now.getTime() - 7 * 86400000), now])
 const station = ref(''), deviceID = ref<number | undefined>(), devices = ref<Device[]>([])
@@ -17,12 +20,16 @@ const loading = computed(() => availabilityLoading.value || timelinessLoading.va
 const error = ref(''), exporting = ref<'availability'|'alarm-timeliness'|null>(null)
 const stationCodes = computed(() => [...new Set(devices.value.map(d => d.station_code))].sort())
 const deviceOptions = computed(() => devices.value.filter(d => !station.value || d.station_code === station.value))
+// The availability report returns every device at once, so paging happens on
+// the client. Each successful query is a new result set and starts at page 1.
+const { page, pageSize, total, pageCount, rows, reset } = usePaged(() => availability.value, 20)
+watch(() => availabilityPanel.data.value, () => reset())
 const metrics = computed((): {name: string; value: TimelinessStat}[] => timeliness.value ? [
   {name:'告警确认耗时', value:timeliness.value.ack_timeliness}, {name:'平台告警恢复耗时（合计）', value:timeliness.value.recover_timeliness},
   {name:'遥测恢复耗时', value:timeliness.value.telemetry_recover_timeliness}, {name:'预测风险下降耗时', value:timeliness.value.prediction_recover_timeliness},
 ] : [])
 const pct = (v: number | null) => v == null ? '—' : `${(100 * v).toFixed(2)}%`
-const duration = (v: number | null) => v == null ? '—' : `${(v / 1000).toFixed(3)} 秒`
+const duration = durationText
 async function load() {
   if (loading.value) return
   error.value = ''
@@ -64,17 +71,19 @@ onMounted(async () => {
     <section class="surface"><div class="surface-head"><h2>设备可用率</h2><el-button :disabled="!availabilityLoaded || !!exporting" :loading="exporting === 'availability'" @click="download('availability')">导出可用率 CSV</el-button></div>
       <p class="report-note in-panel" v-if="availabilityPanel.data.value">计算时间：{{ dateTime(availabilityPanel.data.value.computed_at) }}</p>
       <el-alert v-if="availabilityError" :title="availabilityError" type="error" :closable="false" />
-      <el-table :data="availability" v-loading="availabilityLoading" empty-text="无符合条件的设备">
-        <el-table-column label="设备" prop="device_code" min-width="140" /><el-table-column label="场站" prop="station_code" width="100" />
+      <el-table :data="rows" v-loading="availabilityLoading" stripe empty-text="无符合条件的设备">
+        <el-table-column label="设备" min-width="160"><template #default="{row}"><DeviceCode :code="row.device_code" :station="row.station_code" /></template></el-table-column>
+        <el-table-column label="场站" width="110"><template #default="{row}"><StationCode :code="row.station_code" /></template></el-table-column>
         <el-table-column label="观测可用率" min-width="115"><template #default="{row}">{{ pct(row.observed_availability) }}</template></el-table-column>
         <el-table-column label="数据覆盖率" min-width="115"><template #default="{row}">{{ pct(row.data_coverage) }}</template></el-table-column>
         <el-table-column v-for="(label,key) in {running_ms:'运行',stopped_ms:'停机',fault_ms:'故障',unknown_ms:'未知'}" :key="key" :label="label" min-width="135"><template #default="{row}">{{ duration(row[key]) }}</template></el-table-column>
         <el-table-column label="说明" width="100"><template #default="{row}">{{ row.insufficient_data ? '数据不足' : '有效' }}</template></el-table-column>
       </el-table>
+      <div class="table-footer"><span>第 {{ page }} / {{ pageCount }} 页 · 共 {{ total }} 台设备</span><el-pagination v-model:current-page="page" v-model:page-size="pageSize" :page-sizes="[20, 50, 100]" :total="total" layout="prev, pager, next, sizes" /></div>
     </section>
     <section class="surface"><div class="surface-head"><h2>场站可用率</h2><p>按设备时长汇总后计算比率</p></div>
       <el-table v-loading="availabilityLoading" :data="stations" empty-text="暂无场站结果">
-        <el-table-column label="场站" prop="station_code" /><el-table-column label="设备数" prop="device_count" />
+        <el-table-column label="场站"><template #default="{row}"><StationCode :code="row.station_code" /></template></el-table-column><el-table-column label="设备数" prop="device_count" />
         <el-table-column label="观测可用率"><template #default="{row}">{{ pct(row.observed_availability) }}</template></el-table-column>
         <el-table-column label="数据覆盖率"><template #default="{row}">{{ pct(row.data_coverage) }}</template></el-table-column>
         <el-table-column label="未知时长"><template #default="{row}">{{ duration(row.unknown_ms) }}</template></el-table-column>

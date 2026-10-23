@@ -22,6 +22,27 @@ export interface Summary {
   health_score_percent: number | null
   health_valid_count?: number; health_unknown_count?: number; health_provisional?: boolean; health_rule_version?: string; health_computed_at?: string
 }
+export type Scope = 'all' | 'business' | 'baseline'
+export interface Station {
+  station_code: string; station_name: string; scope: Exclude<Scope, 'all'>; kind: string
+  expected_device_count: number; registered_device_count: number
+}
+export interface OverviewSummary {
+  device_total: number; online: number; offline: number; fault: number; active_alarms: number
+  current_power_kw: number | null; operational_health_percent: number | null
+  health_score_percent: number | null; health_valid_count: number; health_unknown_count: number
+  health_provisional: boolean; today_energy_kwh: number | null; energy_updated_at: string | null
+}
+export interface OverviewStation extends OverviewSummary {
+  station_code: string; station_name: string; scope: Exclude<Scope, 'all'>
+  expected_device_count: number; registered_device_count: number; observed_device_count: number
+  partial: boolean
+}
+export interface Overview {
+  scope: Scope; station_code: string; computed_at: string; partial: boolean
+  expected_device_count: number; registered_device_count: number; observed_device_count: number
+  health_rule_version: string; summary: OverviewSummary; stations: OverviewStation[]
+}
 export type AlarmLevel = 'urgent' | 'major' | 'minor'
 export type AlarmStatus = 'unhandled' | 'acked' | 'recovered'
 export interface Alarm {
@@ -29,6 +50,7 @@ export interface Alarm {
   value: number; threshold: number; status: AlarmStatus; acked_by: number | null
   acked_at: string | null; recovered_at: string | null; triggered_at: string
   archived: boolean
+  origin?: 'normal' | 'simulation'; scenario_id?: number | null
   close_reason?: string | null; rule_operator?: string; rule_version?: string
 }
 export interface DeviceHealth {
@@ -91,7 +113,11 @@ export interface Interpretation {
   alarm_id: number | null; level: AlarmLevel; occurred_at: string; updated_at: string
   task_status: 'pending' | 'running' | 'completed' | 'degraded'; reason: string; active: boolean; read: boolean
   alarm: Alarm | null; monitor: Record<string, unknown> | null; evidence: AgentEvidence[] | null
-  result: { status: string; conclusion: AgentClaim | null; suggestions: AgentClaim[]; limitations: string[]; model?: string } | null
+  result: { status: string; conclusion: AgentClaim | null; suggestions: AgentClaim[]; limitations: string[]; model?: string
+    protocol_version?: number; analysis_status?: 'answered' | 'insufficient_evidence' | 'rejected' | 'unavailable'
+    facts?: { fact_id: string; label: string; display_value: string; unit: string; role: string }[]
+    hypotheses?: AgentClaim[]
+  } | null
 }
 export interface AgentModelStatus { available: boolean; reason: string; message: string }
 

@@ -7,5 +7,5 @@ export const healthBasis = (basis: string): string => ({
 }[basis] ?? basis)
 
 export function alarmClosure(reason?: string | null): string {
-  return ({telemetry_recovered: '遥测恢复', prediction_risk_resolved: '预测风险下降', rule_disabled: '规则禁用（管理关闭）', rule_deleted: '规则删除（管理关闭）', device_deleted: '设备删除（管理关闭）'}[reason ?? ''] ?? '关闭原因未知（不能据此认定故障消除）')
+  return ({simulation_demo_ended: '模拟演示已结束（不代表实际指标恢复）', telemetry_recovered: '遥测恢复', prediction_risk_resolved: '预测风险下降', rule_disabled: '规则禁用（管理关闭）', rule_deleted: '规则删除（管理关闭）', device_deleted: '设备删除（管理关闭）'}[reason ?? ''] ?? '关闭原因未知（不能据此认定故障消除）')
 }

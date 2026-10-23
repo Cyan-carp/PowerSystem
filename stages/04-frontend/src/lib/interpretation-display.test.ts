@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { alarmMetricLabel, evidenceSourceLabel, evidenceStatusLabel, evidenceToolLabel, monitorAlertLabel, monitorSeverityLabel, readableInterpretationText } from './interpretation-display'
+import { alarmMetricLabel, alarmOriginLabel, evidenceSourceLabel, evidenceStatusLabel, evidenceToolLabel, isLegacySimulationMetric, legacySimulationNote, monitorAlertLabel, monitorSeverityLabel, normalAlarmSamplingNote, readableInterpretationText } from './interpretation-display'
 
 describe('告警解读展示文案', () => {
   it('将常见告警及监控字段转为易懂中文', () => {
@@ -25,5 +25,25 @@ describe('告警解读展示文案', () => {
   it('用来源说明代替接口路径', () => {
     expect(evidenceSourceLabel({ tool: 'get_alarm_detail', source: '/api/v1/alarms/98' })).toBe('告警详情记录')
     expect(evidenceSourceLabel({ tool: 'monitor_event', source: 'alertmanager/webhook' })).toBe('平台监控通知')
+  })
+
+  it('区分自然规则告警与历史演示记录', () => {
+    expect(alarmMetricLabel('temperature')).toBe('温度')
+    expect(alarmMetricLabel('ai_failure_risk')).toBe('AI 故障风险')
+    expect(alarmMetricLabel('simulation_scenario')).toBe('模拟演示告警（历史）')
+    expect(alarmOriginLabel('normal')).toBe('自然规则告警')
+    expect(alarmOriginLabel('simulation')).toBe('历史演示告警')
+    expect(alarmOriginLabel(undefined)).toBe('来源未标注')
+    expect(isLegacySimulationMetric('simulation_scenario')).toBe(true)
+    expect(isLegacySimulationMetric('temperature')).toBe(false)
+  })
+
+  it('对自然规则告警只作条件性合成来源提醒，不把设备断言成合成设备', () => {
+    expect(normalAlarmSamplingNote).toContain('若该设备属于合成车队')
+    expect(normalAlarmSamplingNote).toContain('可能来自真实设备')
+    expect(normalAlarmSamplingNote).not.toContain('采样来自合成设备')
+    expect(normalAlarmSamplingNote).toContain('不代表已确认物理现场故障')
+    expect(legacySimulationNote).toContain('仅作历史留存')
+    expect(legacySimulationNote).not.toContain('10分钟后')
   })
 })

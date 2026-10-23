@@ -38,4 +38,55 @@ describe('API authorization', () => {
     expect(fetch).toHaveBeenCalledWith('/api/v1/alarms/42/archive', expect.objectContaining({ method: 'POST' }))
     vi.unstubAllGlobals()
   })
+
+  it('passes scope and station filters through device and alarm queries', async () => {
+    const fetch = vi.fn().mockResolvedValue({
+      ok: true, status: 200, headers: new Headers(),
+      json: async () => ({ code: 0, message: 'success', data: { list: [], page: 1, page_size: 20, total: 0 } }),
+    })
+    vi.stubGlobal('fetch', fetch)
+    const { api } = await import('./api')
+
+    await api.devices(2, 50, 'PV-01-01区', { scope: 'business', stationCode: 'PV-01' })
+    const deviceUrl = new URL(fetch.mock.calls[0][0] as string, 'http://localhost')
+    expect(deviceUrl.pathname).toBe('/api/v1/devices')
+    expect(deviceUrl.searchParams.get('page')).toBe('2')
+    expect(deviceUrl.searchParams.get('page_size')).toBe('50')
+    expect(deviceUrl.searchParams.get('group_name')).toBe('PV-01-01区')
+    expect(deviceUrl.searchParams.get('scope')).toBe('business')
+    expect(deviceUrl.searchParams.get('station_code')).toBe('PV-01')
+
+    await api.alarms(1, 20, 'unhandled', 'major', { scope: 'baseline', stationCode: 'ST-01' })
+    const alarmUrl = new URL(fetch.mock.calls[1][0] as string, 'http://localhost')
+    expect(alarmUrl.pathname).toBe('/api/v1/alarms')
+    expect(alarmUrl.searchParams.get('status')).toBe('unhandled')
+    expect(alarmUrl.searchParams.get('level')).toBe('major')
+    expect(alarmUrl.searchParams.get('scope')).toBe('baseline')
+    expect(alarmUrl.searchParams.get('station_code')).toBe('ST-01')
+    vi.unstubAllGlobals()
+  })
+
+  it('keeps legacy calls scope-free and queries stations/overview with scope', async () => {
+    const fetch = vi.fn().mockResolvedValue({
+      ok: true, status: 200, headers: new Headers(),
+      json: async () => ({ code: 0, message: 'success', data: { list: [], total: 0, stations: [] } }),
+    })
+    vi.stubGlobal('fetch', fetch)
+    const { api } = await import('./api')
+
+    await api.devices()
+    const legacy = new URL(fetch.mock.calls[0][0] as string, 'http://localhost')
+    expect(legacy.searchParams.get('scope')).toBeNull()
+    expect(legacy.searchParams.get('station_code')).toBeNull()
+
+    await api.stations('business')
+    expect(fetch.mock.calls[1][0]).toBe('/api/v1/stations?scope=business')
+
+    await api.overview('all', 'PV-02')
+    const overviewUrl = new URL(fetch.mock.calls[2][0] as string, 'http://localhost')
+    expect(overviewUrl.pathname).toBe('/api/v1/dashboard/overview')
+    expect(overviewUrl.searchParams.get('scope')).toBe('all')
+    expect(overviewUrl.searchParams.get('station_code')).toBe('PV-02')
+    vi.unstubAllGlobals()
+  })
 })

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { attentionOrder, shouldAutoOpen } from './interpretations'
+import { attentionOrder, reasonLabels, shouldAutoOpen } from './interpretations'
 import type { Interpretation } from '../types'
 
 const item = (id: number, level = 'major', active = true, read = false) => ({ id, level, active, read, occurred_at: `2026-10-01T00:00:0${id}Z` }) as Interpretation
@@ -12,5 +12,9 @@ describe('interpretation attention', () => {
     expect(shouldAutoOpen(item(1), new Set([1]))).toBe(false)
     expect(shouldAutoOpen(item(1, 'major', false), new Set())).toBe(false)
     expect(shouldAutoOpen(item(1, 'major', true, true), new Set())).toBe(false)
+  })
+  it('labels truncated and rejected model answers', () => {
+    expect(reasonLabels.answer_truncated).toContain('截断')
+    expect(reasonLabels.answer_validation_failed).toContain('证据校验')
   })
 })

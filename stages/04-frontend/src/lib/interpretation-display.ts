@@ -33,7 +33,25 @@ const proseTerms: Record<string, string> = {
   level: '级别', labels: '标签', alarm: '告警',
 }
 
+// origin=normal only means a rule threshold was crossed; it does not prove the
+// device belongs to the simulator fleet. Real devices raise normal alarms too,
+// so the provenance reminder stays conditional instead of asserting synthetic
+// sampling.
+export const normalAlarmSamplingNote = '自然规则告警只表示设备遥测越过规则阈值，可能来自模拟器合成车队，也可能来自真实设备：若该设备属于合成车队，其采样为合成遥测与合成模型输出；真实设备请结合设备记录人工核查。两种情况都不代表已确认物理现场故障。'
+// Historical controlled-demo rows stay identifiable and are never rewritten as
+// natural alarms.
+export const legacySimulationNote = '早期受控演示记录，仅作历史留存，不代表物理故障或真实测量越限。'
+
+export function isLegacySimulationMetric(metric: string | undefined): boolean { return metric === 'simulation_scenario' }
+
+export function alarmOriginLabel(origin: string | undefined): string {
+  if (origin === 'simulation') return '历史演示告警'
+  if (origin === 'normal') return '自然规则告警'
+  return '来源未标注'
+}
+
 export function alarmMetricLabel(metric: string): string {
+  if (metric === 'simulation_scenario') return '模拟演示告警（历史）'
   if (metric === 'ai_failure_risk') return 'AI 故障风险'
   if (metric in metricLabels) return metricLabels[metric as keyof typeof metricLabels]
   return metric
