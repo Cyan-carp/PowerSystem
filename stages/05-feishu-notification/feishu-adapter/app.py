@@ -93,10 +93,13 @@ def business_message(payload: dict) -> dict:
     value, threshold = payload.get("value"), payload.get("threshold")
     if any(isinstance(item, bool) or not isinstance(item, (float, int)) or not math.isfinite(item) for item in (value, threshold)):
         raise ValueError("invalid metric values")
-    name = "AI 故障风险" if category == "prediction_risk" else "设备越限"
+    simulation = payload["metric"] == "simulation_scenario"
+    name = "模拟演示告警" if simulation else "AI 故障风险" if category == "prediction_risk" else "设备越限"
     metric = METRIC_LABELS.get(payload["metric"], payload["metric"])
     level = LEVEL_LABELS.get(payload["level"], payload["level"])
     style, action = STATE_STYLES[state]
+    if simulation and state == "recovered":
+        action = "演示已结束"
     highlight = f"**{value:.3f}**" if state == "triggered" else f"{value:.3f}"
     card = {
         "config": {"wide_screen_mode": True},
@@ -109,7 +112,7 @@ def business_message(payload: dict) -> dict:
                 field("指标", metric),
             ]},
             {"tag": "div", "text": {"tag": "lark_md",
-                                    "content": f"触发时记录值 {highlight} ／ 触发阈值 {threshold:.3f}"}},
+                                    "content": "受控模拟演示，10分钟后自动结束；不代表实际物理故障或测量越限。" if simulation else f"触发时记录值 {highlight} ／ 触发阈值 {threshold:.3f}"}},
             {"tag": "hr"},
             {"tag": "note", "elements": [{"tag": "plain_text",
                                           "content": f"事件 {event_id} · {beijing_time(payload['occurred_at'])}（北京时间）"}]},

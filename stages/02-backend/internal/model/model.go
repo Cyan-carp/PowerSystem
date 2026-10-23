@@ -55,6 +55,8 @@ type AlarmRecord struct {
 	CloseReason  *string    `json:"close_reason"`
 	RuleOperator string     `json:"rule_operator"`
 	RuleVersion  string     `json:"rule_version"`
+	Origin       string     `json:"origin" gorm:"default:normal"`
+	ScenarioID   *int64     `json:"scenario_id"`
 	AckedBy      *int64     `json:"acked_by"`
 	AckedAt      *time.Time `json:"acked_at"`
 	RecoveredAt  *time.Time `json:"recovered_at"`

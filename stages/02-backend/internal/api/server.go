@@ -27,6 +27,7 @@ import (
 
 	"powersystem/backend/internal/config"
 	"powersystem/backend/internal/energy"
+	"powersystem/backend/internal/fleet"
 	"powersystem/backend/internal/model"
 	"powersystem/backend/internal/service"
 	"powersystem/backend/internal/tdengine"
@@ -43,11 +44,25 @@ type Server struct {
 	clients   map[*websocket.Conn]struct{}
 	clientsMu sync.Mutex
 	chatGate  chatAdmission
+
+	fleetCatalog *fleet.Catalog
 }
 
 func New(cfg config.Config, db *gorm.DB, redis *redis.Client, td *tdengine.Client, log *zap.Logger) *Server {
 	gin.SetMode(gin.ReleaseMode)
 	s := &Server{cfg: cfg, db: db, redis: redis, td: td, log: log, clients: make(map[*websocket.Conn]struct{})}
+	// The fleet manifest is optional: a missing or invalid file must not stop the
+	// existing API from serving devices and alarms without scope filtering.
+	if cfg.FleetPath != "" {
+		catalog, err := fleet.Load(cfg.FleetPath)
+		if err != nil {
+			if log != nil {
+				log.Warn("fleet_config_unavailable", zap.String("path", cfg.FleetPath), zap.Error(err))
+			}
+		} else {
+			s.fleetCatalog = catalog
+		}
+	}
 	r := gin.New()
 	r.Use(gin.Recovery())
 	r.Use(httpMetrics.observe())
@@ -56,7 +71,9 @@ func New(cfg config.Config, db *gorm.DB, redis *redis.Client, td *tdengine.Clien
 	r.POST("/api/v1/auth/register", s.register)
 	r.POST("/api/v1/auth/login", s.login)
 	a := r.Group("/api/v1", s.authorize)
+	a.Use(s.alarmMaintenanceGuard)
 	a.GET("/devices", s.listDevices)
+	a.GET("/stations", s.listStations)
 	a.POST("/devices", requireAdmin, s.createDevice)
 	a.GET("/devices/:id", s.getDevice)
 	a.PUT("/devices/:id", requireAdmin, s.updateDevice)
@@ -82,11 +99,13 @@ func New(cfg config.Config, db *gorm.DB, redis *redis.Client, td *tdengine.Clien
 	a.GET("/reports/availability", s.availability)
 	a.GET("/reports/alarm-timeliness", s.alarmTimeliness)
 	a.GET("/dashboard/summary", s.dashboard)
+	a.GET("/dashboard/overview", s.dashboardOverview)
 	a.POST("/ws-ticket", s.ticket)
 	a.POST("/agent/chat", s.agentChat)
 	a.GET("/agent/tasks", s.opsProxy)
 	a.GET("/agent/tasks/:id", s.opsProxy)
 	a.POST("/agent/tasks/:id/cancel", s.opsProxy)
+	a.DELETE("/agent/tasks/:id", s.opsProxy)
 	a.POST("/agent/tasks/:id/approvals/:approval_id/decision", s.opsProxy)
 	r.GET("/internal/ma/v1/actor", s.maActor)
 	a.GET("/agent/sessions", s.agentRAGProxy)
@@ -111,6 +130,9 @@ func (s *Server) Run(ctx context.Context) error {
 	s.restoreLatest(ctx)
 	go s.worker(ctx)
 	go s.energyWorker(ctx)
+	if s.cfg.SimulationAlarmMode != "off" && s.cfg.SimulationAlarmMode != "" {
+		go s.simulationAlarmWorker(ctx)
+	}
 	if s.cfg.AgentInterpretEnabled {
 		go s.interpretationScanner(ctx)
 		go s.monitorConsumer(ctx)
@@ -210,6 +232,9 @@ func (s *Server) worker(ctx context.Context) {
 	}
 }
 func (s *Server) processPending(ctx context.Context) {
+	if s.alarmMaintenance(ctx) {
+		return
+	}
 	var items []model.Inbox
 	// Each device advances in inbox order. A late TDengine row for one device
 	// must not hold back healthy devices.
@@ -218,6 +243,9 @@ func (s *Server) processPending(ctx context.Context) {
 		return
 	}
 	for _, item := range items {
+		if s.alarmMaintenance(ctx) {
+			return
+		}
 		var sample telemetry.Sample
 		if err := json.Unmarshal(item.Payload, &sample); err != nil {
 			s.log.Error("inbox_payload_corrupt", zap.Error(err))

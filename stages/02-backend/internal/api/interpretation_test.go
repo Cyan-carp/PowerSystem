@@ -30,6 +30,9 @@ func TestInterpretationRetryPolicy(t *testing.T) {
 			t.Fatalf("permanent failure retried: %s", reason)
 		}
 	}
+	if !retryInterpretation("answer_truncated", 1) || retryInterpretation("answer_truncated", 2) {
+		t.Fatal("truncated answers must be retried exactly once")
+	}
 	for _, reason := range []string{"rate_limited", "unavailable"} {
 		if !retryInterpretation(reason, 1) || !retryInterpretation(reason, 2) || retryInterpretation(reason, 3) {
 			t.Fatalf("invalid bounded retry: %s", reason)

@@ -43,6 +43,9 @@ func (s *Server) businessNotificationWorker(ctx context.Context) {
 }
 
 func (s *Server) deliverBusinessNotification(ctx context.Context) error {
+	if s.alarmMaintenance(ctx) {
+		return nil
+	}
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var item pendingBusinessNotification
 		if err := tx.Raw(`SELECT id,payload,attempts FROM business_notification_outbox

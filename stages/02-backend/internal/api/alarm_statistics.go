@@ -11,7 +11,7 @@ import (
 
 // Only these server-owned expressions can enter GROUP BY. Client input is never SQL.
 var alarmDimensions = map[string]string{
-	"device": "a.device_id", "metric": "a.metric", "level": "a.level", "status": "a.status",
+	"device": "a.device_id", "metric": "a.metric", "level": "a.level", "status": "a.status", "origin": "a.origin",
 }
 
 type alarmStatisticsQuery struct {
@@ -19,12 +19,13 @@ type alarmStatisticsQuery struct {
 	Start, End time.Time
 	DeviceID   int64
 	Status     string
+	Origin     string
 }
 
 func parseAlarmStatistics(c *gin.Context, current time.Time) (alarmStatisticsQuery, bool) {
 	q := alarmStatisticsQuery{Group: c.DefaultQuery("group_by", "device"), End: current.UTC()}
 	for key, values := range c.Request.URL.Query() {
-		if (key != "group_by" && key != "start" && key != "end" && key != "device_id" && key != "status") || len(values) != 1 {
+		if (key != "group_by" && key != "start" && key != "end" && key != "device_id" && key != "status" && key != "origin") || len(values) != 1 {
 			return q, false
 		}
 	}
@@ -61,6 +62,12 @@ func parseAlarmStatistics(c *gin.Context, current time.Time) (alarmStatisticsQue
 		}
 	}
 	q.Start, q.End = q.Start.UTC(), q.End.UTC()
+	if origin := c.Query("origin"); origin != "" {
+		if origin != "normal" && origin != "simulation" {
+			return q, false
+		}
+		q.Origin = origin
+	}
 	return q, true
 }
 
@@ -86,6 +93,9 @@ func aggregateAlarms(db *gorm.DB, q alarmStatisticsQuery) ([]alarmStatisticsGrou
 	}
 	if q.Status != "" {
 		query = query.Where("a.status = ?", q.Status)
+	}
+	if q.Origin != "" {
+		query = query.Where("a.origin=?", q.Origin)
 	}
 	groups := make([]alarmStatisticsGroup, 0)
 	// One aggregate statement gives a consistent snapshot and an unpaginated result.
@@ -114,5 +124,5 @@ func (s *Server) alarmStatistics(c *gin.Context) {
 	}
 	ok(c, gin.H{"group_by": q.Group, "start": q.Start, "end": q.End, "total_events": total,
 		"groups": groups, "complete": true, "counting_basis": "triggered_at events in [start,end); includes recovered and unrecovered unless status filtered",
-		"status_filter": q.Status, "device_id": q.DeviceID, "device_scope": "non-deleted visible devices"})
+		"status_filter": q.Status, "origin_filter": q.Origin, "device_id": q.DeviceID, "device_scope": "non-deleted visible devices"})
 }

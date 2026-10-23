@@ -92,7 +92,12 @@ func (s *Server) listDevices(c *gin.Context) {
 	if !valid {
 		return
 	}
+	selection, valid := s.scopeSelection(c)
+	if !valid {
+		return
+	}
 	query := s.db.Model(&model.Device{}).Where("deleted_at IS NULL")
+	query = selection.applyToDevices(query)
 	if keyword := strings.TrimSpace(c.Query("keyword")); keyword != "" {
 		if len(keyword) > 128 {
 			fail(c, 400, 40001, "keyword exceeds 128 bytes")

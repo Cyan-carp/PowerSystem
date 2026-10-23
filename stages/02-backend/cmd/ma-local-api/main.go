@@ -33,7 +33,7 @@ func main() {
 	srv := api.New(cfg, db, rd, tdengine.New(cfg), logger)
 	log.Fatal(http.ListenAndServe(cfg.HTTPAddr, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		p := r.URL.Path
-		allowed := r.Method == "GET" || p == "/api/v1/auth/login" || p == "/api/v1/agent/chat" || strings.HasSuffix(p, "/verify") || strings.HasPrefix(p, "/api/v1/agent/tasks/") && (strings.HasSuffix(p, "/cancel") || r.Method == "POST" && strings.Contains(p, "/approvals/") && strings.HasSuffix(p, "/decision")) || r.Method == "DELETE" && strings.HasPrefix(p, "/api/v1/agent/sessions/")
+		allowed := r.Method == "GET" || p == "/api/v1/auth/login" || p == "/api/v1/agent/chat" || strings.HasSuffix(p, "/verify") || strings.HasPrefix(p, "/api/v1/agent/tasks/") && (strings.HasSuffix(p, "/cancel") || r.Method == "POST" && strings.Contains(p, "/approvals/") && strings.HasSuffix(p, "/decision")) || r.Method == "DELETE" && (strings.HasPrefix(p, "/api/v1/agent/sessions/") || strings.HasPrefix(p, "/api/v1/agent/tasks/"))
 		if !allowed {
 			w.WriteHeader(403)
 			return

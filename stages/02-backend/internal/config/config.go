@@ -44,6 +44,9 @@ type Config struct {
 	OpsURL                  string
 	OpsToken                string
 	MAActorKey              string
+	FleetPath               string
+	SimulationAlarmMode     string
+	AgentInterpretProtocol  string
 }
 
 var identifier = regexp.MustCompile(`^[a-z][a-z0-9_]{0,63}$`)
@@ -70,6 +73,9 @@ func Load(service string) (Config, error) {
 	v.SetDefault("POSTGRES_DB", "powersystem")
 	v.SetDefault("POSTGRES_USER", "powersystem")
 	v.SetDefault("STAGE2_DATA_DIR", filepath.Join("..", "..", "artifacts", "stage2", "runtime"))
+	v.SetDefault("FLEET_CONFIG_PATH", filepath.Join("..", "01-data-chain", "simulator", "fleet.json"))
+	v.SetDefault("SIMULATION_ALARM_MODE", "off")
+	v.SetDefault("AGENT_INTERPRET_PROTOCOL", "v1")
 	cfg := Config{
 		HTTPAddr: v.GetString("HTTP_ADDR"), Broker: v.GetString("MQTT_BROKER"),
 		ClientID:  v.GetString("MQTT_CLIENT_PREFIX") + "-" + service,
@@ -82,7 +88,16 @@ func Load(service string) (Config, error) {
 		AgentEnabled: v.GetBool("AGENT_ENABLED"), AgentURL: v.GetString("AGENT_URL"),
 		AgentChatURL: v.GetString("AGENT_CHAT_URL"), AgentChatTimeoutSeconds: v.GetInt("AGENT_CHAT_TIMEOUT_SECONDS"),
 		AgentChatInputChars: v.GetInt("AGENT_CHAT_INPUT_CHARS"), AgentChatRate: v.GetInt("AGENT_CHAT_RATE"), AgentChatConcurrency: v.GetInt("AGENT_CHAT_CONCURRENCY"),
-		AgentInterpretEnabled: v.GetBool("AGENT_INTERPRET_ENABLED"),
+		AgentInterpretEnabled:  v.GetBool("AGENT_INTERPRET_ENABLED"),
+		FleetPath:              v.GetString("FLEET_CONFIG_PATH"),
+		SimulationAlarmMode:    v.GetString("SIMULATION_ALARM_MODE"),
+		AgentInterpretProtocol: v.GetString("AGENT_INTERPRET_PROTOCOL"),
+	}
+	if cfg.SimulationAlarmMode != "off" && cfg.SimulationAlarmMode != "controlled" && cfg.SimulationAlarmMode != "paused" {
+		return Config{}, errors.New("invalid SIMULATION_ALARM_MODE")
+	}
+	if cfg.AgentInterpretProtocol != "v1" && cfg.AgentInterpretProtocol != "v2" {
+		return Config{}, errors.New("invalid AGENT_INTERPRET_PROTOCOL")
 	}
 	// Agent configuration must never prevent the business API from starting.
 	if service == "api" {

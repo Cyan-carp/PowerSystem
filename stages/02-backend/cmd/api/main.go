@@ -12,6 +12,8 @@ import (
 	"golang.org/x/crypto/bcrypt"
 	"powersystem/backend/internal/api"
 	"powersystem/backend/internal/config"
+	"powersystem/backend/internal/fleet"
+	"powersystem/backend/internal/service"
 	"powersystem/backend/internal/store"
 	"powersystem/backend/internal/tdengine"
 	"powersystem/backend/internal/telemetry"
@@ -36,13 +38,25 @@ func main() {
 	if err != nil {
 		logger.Fatal("postgres", zap.Error(err))
 	}
-	for _, path := range []string{"deploy/postgres/001_init.sql", "deploy/postgres/002_predictions.sql", "deploy/postgres/003_energy.sql", "deploy/postgres/004_business_notifications.sql", "deploy/postgres/005_agent_interpretations.sql", "deploy/postgres/006_alarm_statistics.sql", "deploy/postgres/007_alarm_closure.sql", "deploy/postgres/008_alarm_archive.sql"} {
+	for _, path := range []string{"deploy/postgres/001_init.sql", "deploy/postgres/002_predictions.sql", "deploy/postgres/003_energy.sql", "deploy/postgres/004_business_notifications.sql", "deploy/postgres/005_agent_interpretations.sql", "deploy/postgres/006_alarm_statistics.sql", "deploy/postgres/007_alarm_closure.sql", "deploy/postgres/008_alarm_archive.sql", "deploy/postgres/009_simulation_alarms.sql", "deploy/postgres/010_interpretation_v2.sql", "deploy/postgres/011_alarm_maintenance.sql"} {
 		if err = store.Migrate(pg, path); err != nil {
 			logger.Fatal("migration", zap.Error(err))
 		}
 	}
 	if err = store.SeedDemoDevices(pg); err != nil {
 		logger.Fatal("seed_devices", zap.Error(err))
+	}
+	// Refresh the exact fleet identity before adding natural rules. If the
+	// manifest or registry is incomplete, keep the API available but do not
+	// create an unverified subset of rules. The sample path also fails closed.
+	if catalog, loadErr := fleet.Load(cfg.FleetPath); loadErr != nil {
+		logger.Warn("fleet_natural_rules_skipped", zap.Error(loadErr))
+	} else if report, policyErr := service.EnsureSimulationPolicyDevices(pg, catalog); policyErr != nil {
+		logger.Warn("fleet_natural_rules_skipped", zap.Error(policyErr))
+	} else if !report.OK {
+		logger.Warn("fleet_natural_rules_skipped", zap.Int("expected", report.Expected), zap.Int("verified", report.Verified))
+	} else if err = store.Migrate(pg, "deploy/postgres/012_natural_alarm_rules.sql"); err != nil {
+		logger.Fatal("natural_alarm_rules_migration", zap.Error(err))
 	}
 	if *createAdmin != "" {
 		password, readErr := bufio.NewReader(os.Stdin).ReadString('\n')

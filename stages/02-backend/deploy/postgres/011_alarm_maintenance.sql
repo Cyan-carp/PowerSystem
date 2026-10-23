@@ -1,0 +1,6 @@
+CREATE TABLE IF NOT EXISTS alarm_maintenance_state (
+ id SMALLINT PRIMARY KEY CHECK(id=1),
+ enabled BOOLEAN NOT NULL DEFAULT FALSE,
+ updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+INSERT INTO alarm_maintenance_state(id,enabled) VALUES(1,FALSE) ON CONFLICT(id) DO NOTHING;

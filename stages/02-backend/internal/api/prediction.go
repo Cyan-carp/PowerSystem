@@ -136,12 +136,18 @@ func (s *Server) predictionWorker(ctx context.Context) {
 }
 
 func (s *Server) predictAll(ctx context.Context) {
+	if s.alarmMaintenance(ctx) {
+		return
+	}
 	var devices []model.Device
 	if err := s.db.Where("deleted_at IS NULL").Find(&devices).Error; err != nil {
 		s.log.Warn("prediction_devices_unavailable")
 		return
 	}
 	for _, device := range devices {
+		if s.alarmMaintenance(ctx) {
+			return
+		}
 		if err := s.predictDevice(ctx, device); err != nil {
 			s.log.Warn("prediction_skipped", zap.String("device", device.DeviceCode), zap.Error(err))
 		}
@@ -265,6 +271,12 @@ func (s *Server) savePrediction(device model.Device, result predictionResponse) 
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&device, device.ID).Error; err != nil {
 			return err
 		}
+		// 受控演示设备继续保存预测记录并保留既有风险告警的恢复路径，
+		// 只抑制新的预测风险告警。
+		controlled, err := service.IsControlledSimulationDevice(tx, device.ID)
+		if err != nil {
+			return err
+		}
 		insert := tx.Exec("INSERT INTO prediction_records(device_id,window_end_ms,probability,threshold,risk_level,model_version,top_factors,source) VALUES(?,?,?,?,?,?,?::jsonb,?) ON CONFLICT(device_id,window_end_ms,model_version) DO NOTHING",
 			device.ID, result.WindowEndMS, result.Probability, result.Threshold, result.RiskLevel, result.ModelVersion, string(result.TopFactors), result.Source)
 		if insert.Error != nil {
@@ -281,6 +293,9 @@ func (s *Server) savePrediction(device model.Device, result predictionResponse) 
 		}
 		now := time.Now().UTC()
 		if result.RiskLevel == "high" && errors.Is(lookup, gorm.ErrRecordNotFound) {
+			if controlled {
+				return nil
+			}
 			active = model.AlarmRecord{DeviceID: device.ID, Metric: aiMetric, Level: "major",
 				Value: result.Probability, Threshold: result.Threshold, Status: "unhandled", TriggeredAt: now}
 			if err := tx.Create(&active).Error; err != nil {

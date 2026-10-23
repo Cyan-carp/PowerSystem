@@ -4,6 +4,14 @@ tags: [源网智联, 后端, 源码运行]
 
 # 阶段二 · 后端主体
 
+2026-10-21告警v2已发布（旧业务告警10-22清理完成）：`AGENT_INTERPRET_PROTOCOL=v2`启用专属事件协议；当次发布的`SIMULATION_ALARM_MODE=controlled`核对fleet中143台设备并抑制自然新告警，`paused`仅停止新演示，已登记门控仍保留（历史行为）。迁移009/010/011分别维护演示日程、持久调用预算和维护冻结。自然预测仍保存，真实设备/平台监控不受每日五条配额影响。`GET /api/v1/alarms`及statistics支持`origin=normal|simulation`，statistics另支持`group_by=origin`；默认总数不变。
+
+2026-10-22 自然规则切换（**未生产发布**）：新增`deploy/postgres/012_natural_alarm_rules.sql`，为已核对的143台合成设备各建四类规则（五站共20类，`ON CONFLICT DO NOTHING`不覆盖既有规则）。`ProcessSample`不再对合成设备一律跳过自然新建，而是只在五个北京时间窗口内、由当日轮换设备、且当日策略设备自然/演示记录少于5条时允许新建；五条限额只统计策略表内合成设备，真实设备与平台监控不受限。`SIMULATION_ALARM_MODE=controlled`仅作为兼容输入，worker只结束历史演示，不再新建演示告警；旧演示记录保留。12个候选文件已按上传规范同步服务器源码、留原文件副本并核对LF/SHA；未构建候选或切换生产。012已在服务器上隔离断网的PostgreSQL夹具验证语法和幂等，但尚未在候选API镜像的实际迁移入口执行。
+
+清空旧告警仅由受控发布驱动在备份、冻结、排空后执行`scripts/reset-business-alarms.sql`；保留序列，禁止手工TRUNCATE/重置ID。定向短测为`go test ./internal/api ./internal/service -run 'Test(V2|Fact|EventFacts|Simulation|NormalizeSimulation)' -count=1`，真实PG/Redis夹具仅由隔离驱动运行。设计和当前发布结论见[官方解读与五次演示](../../notes/04-系统部署发布备份与变更记录/部署与运维日志/30-官方独立告警解读与每日五次演示.md)。
+
+启动兼容注意：既有`store.Migrate`按ASCII分号拆语句，注释/字符串中的分号也会被拆开；复杂SQL不能只用psql通过就投入此入口。009至011已经增加实际应用迁移入口的隔离短测。本轮只修010注释，不扩大到全库迁移器重写。
+
 历史记录（2026-10-09）：自然语言问答候选新增认证只读 `GET /api/v1/alarms/statistics`。允许 `group_by=device|metric|level|status`、带时区 `start/end`、设备 ID 与受限状态筛选；默认滚动近 30 天，按 `triggered_at` 左闭右开计数，包含已恢复和未恢复告警。固定数据库聚合返回 `total_events/groups/complete`，不使用分页列表推算排名；006 迁移增加时间和设备复合索引。Agent 代理接受 `out_of_scope`；本地隔离启动可用 `MQTT_CLIENT_PREFIX` 区分持久订阅身份。验收见[本地交付](../../notes/01-项目调研规划与开发建设记录/第二版-智能体升级/问答及调度业务主智能体/废案-旧智能体方案/02-功能开发与阶段交付/05-自然语言问答改造/02-测试与本地交付.md)。
 
 > 三台既有模拟器或新登记设备 → EMQX → 阶段二持久网关 → TDengine；独立后端订阅同一遥测主题，等待入库确认后更新 Redis、评估 PostgreSQL 告警规则并推送 WebSocket。阶段一 M1 代码和数据库保持独立。
@@ -33,15 +41,55 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\stages\02-backend\scri
 
 | 模块 | 路径 | 行为 |
 | --- | --- | --- |
-| 设备 | `/api/v1/devices`、`/api/v1/devices/:id` | 分页、分组筛选、创建、详情、更新元数据、软删除 |
+| 设备 | `/api/v1/devices`、`/api/v1/devices/:id` | 分页、分组筛选、可选 `scope`/`station_code`、创建、详情、更新元数据、软删除 |
+| 场站 | `/api/v1/stations` | 从共享清单返回场站名称、范围、期望设备数和有效台账登记数 |
 | 遥测 | `/api/v1/devices/:id/telemetry` | `metric` 为 voltage/current/temperature/power；`start/end` 为 RFC3339，跨度 ≤24 小时、最多 5000 点 |
 | 最新值 | `/api/v1/devices/:id/telemetry/latest` | Redis 中最近处理的遥测 |
 | 规则 | `/api/v1/alarm-rules`、`/api/v1/alarm-rules/:id` | 每设备每指标一条规则；比较符 `>`、`>=`、`<`、`<=`，级别 urgent/major/minor |
 | 告警 | `/api/v1/alarms`、`/api/v1/alarms/:id`、`/api/v1/alarms/:id/ack` | 分页、状态/级别筛选、详情、确认 |
 | 总览 | `/api/v1/dashboard/summary` | 在线/离线/故障数、实时功率、活动告警和基础运行健康比例 |
+| 范围总览 | `/api/v1/dashboard/overview` | 按 `scope=all|business|baseline` 和可选 `station_code` 返回当前聚合、日电量、完整性与场站汇总 |
 | 实时 | `POST /api/v1/ws-ticket` → `/ws/realtime?ticket=...` | JWT 换取 60 秒有效的一次性票据，再建立 WebSocket；`/test/ws` 是本机测试页 |
 
 响应统一为 `code/message/data`；成功 `code=0`，错误使用 HTTP 4xx/5xx 及设计稿错误码。列表默认 `page=1&page_size=20`，单页最多 100。设备编号与场站编号在建档后保持不变，以免与 TDengine 标签不一致。
+
+`scope` 省略时仍为 `all`，保持旧调用兼容。`/dashboard/overview` 只批量读取当前快照，并从现有 `energy_daily` 汇总当日电量，不扫描全天原始遥测；`partial=true` 表示登记数少于共享清单期望数，或当前有效观测少于已登记设备。缺失功率、电量或健康度返回 `null`，不补成零。
+
+4 场站台账工具当前仅提供离线只读 dry-run，不连接数据库、不执行 SQL：
+
+```powershell
+python .\stages\02-backend\scripts\plan-fleet-import.py
+python .\stages\02-backend\scripts\plan-fleet-import.py --existing .\path\to\exported-devices.json
+```
+
+无冲突退出 0，发现身份冲突退出 2，输入非法退出 1。上述 planner 始终只读。
+
+正式导入 SQL 由 `render-fleet-import.py` 从同一清单生成，只处理业务设备，使用单个事务、五秒锁等待、身份冲突检查与 `ON CONFLICT DO NOTHING`；不覆盖现有行，不改原三台或应用表结构。先保存备份和 dry-run，再在已授权的目标库执行：
+
+```powershell
+python stages/02-backend/scripts/render-fleet-import.py --output artifacts/stage2/import-140-<运行编号>.sql
+python -m unittest discover -s stages/02-backend/scripts -p test_render_fleet_import.py -q
+```
+
+SQL 以 `psql -v ON_ERROR_STOP=1` 执行；生产由现有容器内 `psql -U powersystem -d powersystem` 从标准输入读取，不把数据库密码写在命令中。脚本拒绝覆盖已有输出文件，任何设备身份冲突都会整体回滚。已提交的数据不会随应用镜像回退而自动删除。
+
+### 设备扩容最小验证入口
+
+从仓库根目录执行。先按阶段一 README 运行七台离线模拟器，以下命令复用其已创建的证据目录。显式绝对路径让验证不依赖 API 默认工作目录，不需要读取 `.env` 或启动服务栈：
+
+```powershell
+$fleetSmokeRoot = (Get-Location).Path
+$env:FLEET_CONFIG_PATH = (Resolve-Path 'stages/01-data-chain/simulator/fixtures/fleet-smoke-7.json').Path
+$env:FLEET_SMOKE_OUTPUT = Join-Path $fleetSmokeRoot 'artifacts/stage2/fleet-minimal-<运行编号>/api-responses.json'
+python stages/02-backend/scripts/plan-fleet-import.py --fleet $env:FLEET_CONFIG_PATH
+Push-Location stages/02-backend
+try { go test ./internal/api -run '^TestFleetMinimalSmoke$' -count=1 -timeout 90s -v } finally { Pop-Location }
+python stages/02-backend/scripts/smoke-fleet-agent.py --responses $env:FLEET_SMOKE_OUTPUT
+```
+
+Go 冒烟通过 `Server.New` 装载指定清单，使用独立内存 SQLite 承载七台测试行，调用真实 stations/devices/alarms/overview 处理函数共 13 次，导出三档范围响应。Redis 缺席，因此 `observed=0`、`partial=true` 是预期空观测结果；不验证 PostgreSQL 方言、认证中间件或实时供数联动。环境变量只影响当前 PowerShell 会话，运行后可关闭该会话。
+
+Agent 脚本用 `httpx.MockTransport` 回放上述响应，阶段 8 调用真实 `Tools.execute`，阶段 9 调用真实 `Executor.call`，各查询一次业务场站和基线总览；不请求模型。第三步已落实生产清单挂载和 140 台正式导入，现行发布事实见 [扩容上线记录](../../notes/04-系统部署发布备份与变更记录/部署与运维日志/26-四场站140台设备扩容上线.md)。
 
 ## 三、数据与故障语义
 
@@ -110,7 +158,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\stages\02-backend\scri
 
 新增 `005_agent_interpretations.sql` 为兼容迁移，仅增加任务、快照、监控与已读表。`AGENT_INTERPRET_ENABLED=true` 启用独立扫描、两个工作协程与监控 Stream 消费；首次以当前最大告警 ID 为基线，重启继续处理，原告警事务不调用 Agent。
 
-用户解读列表、详情和已读接口位于 `/api/v1/agent/interpretations`，使用当前 JWT；模型状态及检测限管理员，检测每分钟一次。内部 HTTP 45 秒预算、永久配置错误不重试、暂时错误最多三次。Agent 停机及解读表单独故障时的两轮既有业务回归均为 38/38，见[阶段二交付](../../notes/01-项目调研规划与开发建设记录/第二版-智能体升级/问答及调度业务主智能体/废案-旧智能体方案/02-功能开发与阶段交付/02-告警智能解读与大屏联动/05-V2-M2测试与交付.md)。
+以下为v1历史策略，v2统一以本页顶部持久两次调用上限为准。用户解读列表、详情和已读接口位于 `/api/v1/agent/interpretations`，使用当前 JWT；模型状态及检测限管理员，检测每分钟一次。内部 HTTP 45 秒预算、永久配置错误不重试、暂时错误最多三次。Agent 停机及解读表单独故障时的两轮既有业务回归均为 38/38，见[阶段二交付](../../notes/01-项目调研规划与开发建设记录/第二版-智能体升级/问答及调度业务主智能体/废案-旧智能体方案/02-功能开发与阶段交付/02-告警智能解读与大屏联动/05-V2-M2测试与交付.md)。
 
 ## 第二版阶段三兼容扩展
 
@@ -148,6 +196,10 @@ MA-T13～MA-T16及MA-C26～MA-C31在本机隔离演练范围完成，MA-M3本机
 SEC-M2复用本人任务代理与当前用户表身份，不新增自由送审接口。cmd/ma-local-api仅作为本机验收代理，不启动原MQTT/预测/告警通知工作进程。专用回归库隔离，Go全包与实际跨用户404须单独验收。
 
 当前状态见[[notes/01-项目调研规划与开发建设记录/第二版-智能体升级/多智能体协作建设/05-安全审查模型/05-功能开发与阶段交付/02-强制门禁集成/03-SEC-M2测试与交付]]；本阶段统一运行命令见[阶段10源码README](../10-security-agent/README.md)。历史“尚未接入”段落指建设前状态，不能作当前源码判定。
+
+## 2026-10-21 · 告警解读预算与截断重试
+
+版本 `interpretation-budget-20261021-r1` 已上线。`answer_truncated` 首次失败可额外重试一次（attempts<2），其余原校验失败仍不重试；管理员probe明确要求 `interpretation=true`。Agent仅解读使用4096预算，模型35秒/总40秒，API45秒保持。38项解读测试与线上短解读通过，正式记录见 [[notes/04-系统部署发布备份与变更记录/部署与运维日志/29-告警解读输出预算与截断重试]]。
 
 ## 相关笔记
 

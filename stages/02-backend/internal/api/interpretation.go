@@ -16,6 +16,7 @@ import (
 	"github.com/redis/go-redis/v9"
 	"gorm.io/gorm"
 	"powersystem/backend/internal/model"
+	"powersystem/backend/internal/service"
 	"powersystem/backend/internal/telemetry"
 )
 
@@ -23,15 +24,17 @@ const monitorStream = "stage7:monitor:events"
 const monitorGroup = "stage7-go"
 
 type interpretationTask struct {
-	ID         int64
-	EventKey   string
-	Category   string
-	AlarmID    *int64
-	Level      string
-	OccurredAt time.Time
-	Attempts   int
-	LeaseToken string
-	Evidence   json.RawMessage
+	ID              int64
+	EventKey        string
+	Category        string
+	AlarmID         *int64
+	Level           string
+	OccurredAt      time.Time
+	Attempts        int
+	LeaseToken      string
+	Evidence        json.RawMessage
+	ProtocolVersion int
+	ModelCalls      int
 }
 
 type eventEvidence struct {
@@ -48,8 +51,10 @@ func (s *Server) interpretationScanner(ctx context.Context) {
 	tick := time.NewTicker(time.Second)
 	defer tick.Stop()
 	for {
-		if err := s.scanInterpretations(ctx); err != nil && ctx.Err() == nil {
-			s.log.Warn("interpretation_scan_failed")
+		if !s.alarmMaintenance(ctx) {
+			if err := s.scanInterpretations(ctx); err != nil && ctx.Err() == nil {
+				s.log.Warn("interpretation_scan_failed")
+			}
 		}
 		select {
 		case <-ctx.Done():
@@ -85,8 +90,8 @@ func (s *Server) scanInterpretations(ctx context.Context) error {
 			if a.Metric == aiMetric {
 				category = "prediction_risk"
 			}
-			if err := tx.Exec(`INSERT INTO agent_interpretations(event_key,category,alarm_id,level,occurred_at)
-    VALUES(?,?,?,?,?) ON CONFLICT(event_key) DO NOTHING`, fmt.Sprintf("alarm:%d", a.ID), category, a.ID, a.Level, a.TriggeredAt).Error; err != nil {
+			if err := tx.Exec(`INSERT INTO agent_interpretations(event_key,category,alarm_id,level,occurred_at,protocol_version)
+    VALUES(?,?,?,?,?,?) ON CONFLICT(event_key) DO NOTHING`, fmt.Sprintf("alarm:%d", a.ID), category, a.ID, a.Level, a.TriggeredAt, s.interpretationVersion()).Error; err != nil {
 				return err
 			}
 			if a.ID > cursor.LastID {
@@ -172,8 +177,8 @@ func (s *Server) consumeMonitor(ctx context.Context, msg redis.XMessage) {
     recovered_at=COALESCE(agent_monitor_events.recovered_at,EXCLUDED.recovered_at),updated_at=now()`, key, level, a.StartsAt, recovered, string(payload)).Error; err != nil {
 				return err
 			}
-			if err := tx.Exec(`INSERT INTO agent_interpretations(event_key,category,level,occurred_at)
-    VALUES(?,'platform_monitor',?,?) ON CONFLICT(event_key) DO NOTHING`, key, level, a.StartsAt).Error; err != nil {
+			if err := tx.Exec(`INSERT INTO agent_interpretations(event_key,category,level,occurred_at,protocol_version)
+    VALUES(?,'platform_monitor',?,?,?) ON CONFLICT(event_key) DO NOTHING`, key, level, a.StartsAt, s.interpretationVersion()).Error; err != nil {
 				return err
 			}
 			if err := tx.Exec("UPDATE agent_interpretations SET updated_at=now() WHERE event_key=?", key).Error; err != nil {
@@ -195,12 +200,26 @@ func (s *Server) consumeMonitor(ctx context.Context, msg redis.XMessage) {
 
 func (s *Server) interpretationWorker(ctx context.Context) {
 	for ctx.Err() == nil {
+		if s.alarmMaintenance(ctx) {
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(time.Second):
+				continue
+			}
+		}
+		// Do not recover expired leases forever or spend a fresh budget per claim.
+		if err := s.db.WithContext(ctx).Exec(`UPDATE agent_interpretations SET task_status='degraded',reason=CASE WHEN model_calls>=2 THEN 'call_budget_exhausted' ELSE 'retry_deadline_exceeded' END,lease_until=NULL,lease_token=NULL,updated_at=now()
+ WHERE protocol_version=2 AND (task_status='pending' OR (task_status='running' AND lease_until<now())) AND (model_calls>=2 OR created_at<now()-interval '15 minutes')`).Error; err != nil {
+			s.log.Warn("interpretation_sweep_failed")
+		}
 		token, _ := randomTicket()
 		var item interpretationTask
 		err := s.db.WithContext(ctx).Raw(`UPDATE agent_interpretations SET task_status='running',
    lease_until=now()+interval '60 seconds',lease_token=?,attempts=attempts+1,updated_at=now()
    WHERE id=(SELECT id FROM agent_interpretations WHERE
-    (task_status='pending' AND next_attempt_at<=now()) OR (task_status='running' AND lease_until<now())
+    ((task_status='pending' AND next_attempt_at<=now()) OR (task_status='running' AND lease_until<now()))
+    AND ((protocol_version=1 AND attempts<3) OR (protocol_version=2 AND model_calls<2 AND created_at>=now()-interval '15 minutes'))
     ORDER BY occurred_at,id FOR UPDATE SKIP LOCKED LIMIT 1) RETURNING *`, token).Scan(&item).Error
 		if err != nil {
 			s.log.Warn("interpretation_claim_failed")
@@ -245,6 +264,14 @@ func (s *Server) buildEventEvidence(ctx context.Context, item interpretationTask
 	}
 	// Immutable trigger fields: do not present later acknowledgement as a trigger fact.
 	add("get_alarm_detail", "ok", fmt.Sprintf("/api/v1/alarms/%d", alarm.ID), gin.H{"id": alarm.ID, "device_id": alarm.DeviceID, "metric": alarm.Metric, "level": alarm.Level, "value": alarm.Value, "threshold": alarm.Threshold, "triggered_at": alarm.TriggeredAt}, &eventTime)
+	if alarm.Metric == service.SimulationMetric {
+		data := evidence[0].Data.(gin.H)
+		data["origin"] = "simulation_demo"
+		data["scenario_label"] = "定期人工核查演练，不代表实际物理故障"
+		if alarm.ScenarioID != nil {
+			data["scenario_id"] = *alarm.ScenarioID
+		}
+	}
 	var device model.Device
 	if err := s.db.WithContext(ctx).First(&device, alarm.DeviceID).Error; err != nil {
 		add("device", "no_data", "devices", gin.H{}, nil)
@@ -267,7 +294,7 @@ func (s *Server) buildEventEvidence(ctx context.Context, item interpretationTask
 		add("list_alarms", "ok", "alarm_records:preceding_24h", gin.H{"list": facts, "complete": complete}, &eventTime)
 	}
 	metric := alarm.Metric
-	if metric == aiMetric {
+	if metric == aiMetric || metric == service.SimulationMetric {
 		metric = "temperature"
 	}
 	if telemetry.Metrics[metric] {
@@ -314,10 +341,14 @@ func (s *Server) buildEventEvidence(ctx context.Context, item interpretationTask
 			add("get_telemetry", status, fmt.Sprintf("/api/v1/devices/%d/telemetry?metric=%s&start=%s&end=%s", alarm.DeviceID, metric, alarm.TriggeredAt.Add(-30*time.Minute).UTC().Format(time.RFC3339), eventTime), gin.H{"device_id": alarm.DeviceID, "metric": metric, "points": points, "original_points": len(rows), "compressed": len(rows) > 100, "statistics": gin.H{"count": valid, "min": min, "max": max, "mean": mean}}, &eventTime)
 		}
 	}
-	if alarm.Metric == aiMetric {
+	if alarm.Metric == aiMetric || alarm.Metric == service.SimulationMetric {
 		var prediction model.PredictionRecord
 		// Timestamp and trigger values must match; no use of a later/latest prediction.
-		err := s.db.WithContext(ctx).Where("device_id=? AND created_at<=? AND window_end_ms<=? AND window_end_ms>=? AND probability=? AND threshold=?", alarm.DeviceID, alarm.TriggeredAt, alarm.TriggeredAt.UnixMilli(), alarm.TriggeredAt.Add(-15*time.Minute).UnixMilli(), alarm.Value, alarm.Threshold).Order("created_at DESC,id DESC").First(&prediction).Error
+		query := s.db.WithContext(ctx).Where("device_id=? AND created_at<=? AND window_end_ms<=? AND window_end_ms>=?", alarm.DeviceID, alarm.TriggeredAt, alarm.TriggeredAt.UnixMilli(), alarm.TriggeredAt.Add(-15*time.Minute).UnixMilli())
+		if alarm.Metric == aiMetric {
+			query = query.Where("probability=? AND threshold=?", alarm.Value, alarm.Threshold)
+		}
+		err := query.Order("created_at DESC,id DESC").First(&prediction).Error
 		if err != nil {
 			add("get_prediction", "no_data", "prediction_records:trigger", gin.H{}, nil)
 		} else {
@@ -361,10 +392,18 @@ func (s *Server) callAgent(ctx context.Context, method, path string, body any) (
 }
 
 func retryInterpretation(reason string, attempts int) bool {
+	if reason == "answer_truncated" {
+		// Budget exhaustion gets exactly one extra attempt: 1 -> retry, 2 -> terminal.
+		return attempts < 2
+	}
 	return attempts < 3 && reason != "not_configured" && reason != "auth_failed" && reason != "quota_exhausted" && reason != "answer_validation_failed" && reason != "missing_event_evidence"
 }
 
 func (s *Server) processInterpretation(ctx context.Context, item interpretationTask) {
+	if item.ProtocolVersion == 2 {
+		s.processInterpretationV2(ctx, item)
+		return
+	}
 	var evidence []eventEvidence
 	reason := ""
 	if len(item.Evidence) == 0 {
@@ -538,11 +577,25 @@ func (s *Server) agentModelStatus(c *gin.Context) {
 		ok(c, gin.H{"available": false, "reason": "unavailable", "message": "智能体不可用或未启用，请检查服务器私有配置。"})
 		return
 	}
+	if s.interpretationVersion() == 2 && result["available"] == true {
+		state, err := s.redis.HGetAll(c.Request.Context(), circuitKey).Result()
+		if err != nil {
+			result = gin.H{"available": false, "reason": "model_state_unavailable", "message": "无法安全读取解读通道状态。"}
+		} else {
+			until, _ := strconv.ParseInt(state["until"], 10, 64)
+			failures, _ := strconv.Atoi(state["failures"])
+			if until > time.Now().UnixMilli() || failures >= 3 {
+				result["available"] = false
+				result["reason"] = "circuit_open"
+				result["message"] = "告警解读专属通道熔断中，等待半开恢复。"
+			}
+		}
+	}
 	ok(c, result)
 }
 
 func (s *Server) agentModelProbe(c *gin.Context) {
-	allowed, err := s.redis.SetNX(c.Request.Context(), "stage7:model:probe-limit", "1", time.Minute).Result()
+	allowed, err := s.redis.SetNX(c.Request.Context(), "stage7:interpret:model:probe-limit", "1", time.Minute).Result()
 	if err != nil {
 		fail(c, 503, 50301, "probe limiter unavailable")
 		return
@@ -556,12 +609,19 @@ func (s *Server) agentModelProbe(c *gin.Context) {
 		fail(c, 503, 50301, "model probe failed; inspect model status")
 		return
 	}
-	if result["chat"] != true || result["tools"] != true {
+	if result["interpretation"] != true {
 		fail(c, 503, 50301, "invalid model probe")
 		return
 	}
+	if s.interpretationVersion() == 2 {
+		if err := s.redis.Del(c.Request.Context(), circuitKey, circuitKey+":half").Err(); err != nil {
+			fail(c, 503, 50301, "probe passed but circuit recovery failed")
+			return
+		}
+	}
 	if err := s.db.WithContext(c.Request.Context()).Exec(`UPDATE agent_interpretations i SET task_status='pending',attempts=0,next_attempt_at=now(),updated_at=now()
   WHERE task_status='degraded' AND reason IN ('not_configured','auth_failed','quota_exhausted') AND occurred_at>now()-interval '24 hours'
+  AND (protocol_version=1 OR (model_calls<2 AND created_at>now()-interval '15 minutes'))
   AND ((alarm_id IS NOT NULL AND EXISTS(SELECT 1 FROM alarm_records a WHERE a.id=i.alarm_id AND a.recovered_at IS NULL))
   OR (alarm_id IS NULL AND EXISTS(SELECT 1 FROM agent_monitor_events m WHERE m.event_key=i.event_key AND m.recovered_at IS NULL)))`).Error; err != nil {
 		fail(c, 503, 50301, "model ready but replay unavailable")

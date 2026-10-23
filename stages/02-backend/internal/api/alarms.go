@@ -186,7 +186,16 @@ func (s *Server) listAlarms(c *gin.Context) {
 	if !valid {
 		return
 	}
+	selection, valid := s.scopeSelection(c)
+	if !valid {
+		return
+	}
 	query := s.db.Model(&model.AlarmRecord{}).Where("archived = FALSE")
+	query = selection.applyToAlarms(s.db, query)
+	if origin:=c.Query("origin"); origin!="" {
+		if origin!="normal"&&origin!="simulation" {fail(c,400,40001,"invalid origin");return}
+		query=query.Where("origin=?",origin)
+	}
 	if device := c.Query("device_id"); device != "" {
 		deviceID, err := strconv.ParseInt(device, 10, 64)
 		if err != nil || deviceID < 1 {
