@@ -4,7 +4,7 @@ tags:
   - 工作区导航
 status: 现行
 scope: 跨版本
-updated: 2026-10-17
+updated: 2026-10-23
 workspace_path: "stages/04-frontend/README.md"
 relative_path: "../../stages/04-frontend/README.md"
 repository_url: "https://github.com/Cyan-carp/PowerSystem/blob/main/stages/04-frontend/README.md"

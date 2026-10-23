@@ -1,5 +1,14 @@
 #!/usr/bin/env python3
-"""Validate the isolated Obsidian vault and its audited workspace links."""
+"""Validate the isolated Obsidian vault and its audited workspace links.
+
+Usage:
+    python tools/note-governance/check_notes.py        # 本地严格模式
+    python tools/note-governance/check_notes.py --ci   # CI 模式
+
+CI 模式放宽两类“按设计不入库”的目标：`artifacts/` 下的私有证据在全新克隆中
+必然缺失，因此指向它的 Markdown 链接与 manifest 条目不再判为缺失错误；
+仓库内的文件、双链、元数据与代理页仍按严格口径校验。
+"""
 
 from __future__ import annotations
 
@@ -74,6 +83,9 @@ def candidate_paths(source: Path, target: str) -> list[Path]:
 
 
 def resolves(source: Path, target: str, by_stem: dict[str, list[Path]]) -> bool:
+    # Markdown 表格里的 wikilink 必须写成 [[路径\|别名]]，反斜杠只是转义，
+    # 不参与路径。Linux 上 Path 不把 "\\" 当分隔符，必须先还原再切别名。
+    target = target.replace("\\|", "|")
     target = target.split("|", 1)[0].split("#", 1)[0].strip()
     if not target:
         return True
@@ -90,17 +102,21 @@ def resolves(source: Path, target: str, by_stem: dict[str, list[Path]]) -> bool:
 
 
 def git_tracked(path: str) -> bool:
-    result = subprocess.run(
-        ["git", "ls-files", "--error-unmatch", "--", path],
-        cwd=ROOT,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        check=False,
-    )
+    try:
+        result = subprocess.run(
+            ["git", "ls-files", "--error-unmatch", "--", path],
+            cwd=ROOT,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+    except OSError:
+        return False
     return result.returncode == 0
 
 
 def main() -> int:
+    ci_mode = "--ci" in sys.argv[1:]
     errors: list[str] = []
     notes = sorted(VAULT.rglob("*.md"))
     all_files = [path for path in VAULT.rglob("*") if path.is_file()]
@@ -153,6 +169,8 @@ def main() -> int:
             if any(mark in target for mark in ("${", "{{", "<", ">")):
                 continue
             if not resolves(path, target, by_stem):
+                if ci_mode and "artifacts/" in target.replace("\\", "/"):
+                    continue
                 errors.append(f"broken Markdown link in {rel}: ({raw})")
 
     if not CHECKLIST.exists():
@@ -171,7 +189,11 @@ def main() -> int:
             workspace_path = entry["workspace_path"]
             target = ROOT / workspace_path
             if not target.exists():
-                errors.append(f"workspace target is missing: {workspace_path}")
+                if entry.get("tracked") or not ci_mode:
+                    errors.append(f"workspace target is missing: {workspace_path}")
+                elif not (proxies / entry["proxy"]).is_file():
+                    errors.append(f"workspace proxy is missing: {entry['proxy']}")
+                continue
             expected_relative = Path(os.path.relpath(target, proxies)).as_posix()
             relative_path = entry.get("relative_path")
             if relative_path != expected_relative:

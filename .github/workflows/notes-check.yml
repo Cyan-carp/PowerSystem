@@ -1,0 +1,40 @@
+name: notes-check
+
+on:
+  push:
+    paths:
+      - "notes/**"
+      - "tools/note-governance/**"
+      - "shared-memory/**"
+      - "stages/**"
+      - "deploy/**"
+      - ".github/workflows/notes-check.yml"
+  pull_request:
+    paths:
+      - "notes/**"
+      - "tools/note-governance/**"
+      - "shared-memory/**"
+      - "stages/**"
+      - "deploy/**"
+      - ".github/workflows/notes-check.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: vault metadata and links
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Validate vault
+        run: python tools/note-governance/check_notes.py --ci

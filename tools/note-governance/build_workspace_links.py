@@ -62,6 +62,7 @@ def proxy_source(entry: dict[str, object]) -> str:
     path = str(entry["workspace_path"])
     repository_url = entry.get("repository_url")
     repository_yaml = str(repository_url) if repository_url else "null"
+    is_dir = (ROOT / path).is_dir()
     lines = [
         "---",
         "tags:",
@@ -69,7 +70,7 @@ def proxy_source(entry: dict[str, object]) -> str:
         "  - 工作区导航",
         "status: 现行",
         "scope: 跨版本",
-        "updated: 2026-10-17",
+        "updated: 2026-10-23",
         f'workspace_path: "{path}"',
         f'relative_path: "{entry["relative_path"]}"',
         f'repository_url: "{repository_yaml}"' if repository_url else "repository_url: null",
@@ -78,8 +79,14 @@ def proxy_source(entry: dict[str, object]) -> str:
         "",
         f"# 工作区链接 · `{path}`",
         "",
-        f"- 工作区目标：[打开相对路径目标]({entry['relative_path']})",
     ]
+    if is_dir:
+        lines.append(f"- 工作区目标：`{entry['relative_path']}`（目录，进入后按文件查看）")
+    elif entry["tracked"]:
+        lines.append(f"- 工作区目标：[打开相对路径目标]({entry['relative_path']})")
+    else:
+        # 私有运行产物按设计不入库：全新克隆中不存在，不能渲染成可点链接。
+        lines.append(f"- 工作区目标：`{entry['relative_path']}`（**该文件不随仓库分发**，仅在产出它的本机存在）")
     if repository_url:
         lines.append(f"- 仓库目标：[在 GitHub 中查看]({repository_url})")
     else:
@@ -130,7 +137,7 @@ def main() -> None:
         "  - 工作区导航",
         "status: 现行",
         "scope: 跨版本",
-        "updated: 2026-10-17",
+        "updated: 2026-10-23",
         "---",
         "",
         "# 代码工作区导航与链接映射",
