@@ -18,6 +18,8 @@ deploy/artifacts/frp-source-tests/*
 !deploy/artifacts/frp-source-tests/.gitkeep
 private/
 pytest-cache-files-*/
+# 构建与本地运行缓存（go-build、临时 sqlite、脚本产出），不入库
+.cache/
 runtime/
 data/
 notes/.obsidian/
