@@ -1,0 +1,26 @@
+# Append to the current full production stack; never use as a standalone stack.
+services:
+  api:
+    environment:
+      FLEET_CONFIG_PATH: /run/powersystem-fleet/fleet.json
+    volumes:
+      - ${POWERSYSTEM_FLEET_FILE:?set immutable fleet manifest path}:/run/powersystem-fleet/fleet.json:ro
+  simulator:
+    command:
+      - --broker
+      - emqx
+      - --continuous
+      - --fleet
+      - /run/powersystem-fleet/fleet.json
+      - --fault-mode
+      - scheduled
+      - --interval-seconds
+      - "5"
+      - --run-id
+      - stage4-live
+      - --outbox
+      - /data/simulator.sqlite
+      - --fault-labels
+      - /data/fault-labels.csv
+    volumes:
+      - ${POWERSYSTEM_FLEET_FILE:?set immutable fleet manifest path}:/run/powersystem-fleet/fleet.json:ro

@@ -1,0 +1,17 @@
+# Append to the complete frozen production stack, never standalone.
+services:
+  api:
+    environment:
+      AGENT_INTERPRET_PROTOCOL: v2
+      SIMULATION_ALARM_MODE: controlled
+  agent:
+    environment:
+      AGENT_INTERPRET_LLM_BASE_URL: https://api.deepseek.com
+      AGENT_INTERPRET_LLM_MODEL: deepseek-flash
+      AGENT_INTERPRET_THINKING: disabled
+      AGENT_INTERPRET_LLM_API_KEY_FILE: /run/secrets/agent_interpret_llm_key
+    secrets:
+      - agent_interpret_llm_key
+secrets:
+  agent_interpret_llm_key:
+    file: ${AGENT_INTERPRET_LLM_API_KEY_FILE:?set installed private official DeepSeek key path}

@@ -7,6 +7,8 @@ tags:
 
 # 第 15 周服务器部署
 
+告警官方v2与每日五次演示批次使用完整冻结编排叠加`interpretation-official.compose.yaml`，不能单独运行或覆盖原有问答/运维配置。专属密钥在`/etc/powersystem/interpret-deepseek-key`，只挂阶段7 Agent；新密钥纳入既有加密备份。受控分步驱动见阶段7`scripts/interpretation-remote.py`，仍经production-stack的prepare→新备份→publish；清理额外持有部署锁并冻结业务写入、留存可读密文快照，不重置序列或清Redis。实际状态见[发布与清理记录](../../../notes/04-系统部署发布备份与变更记录/部署与运维日志/30-官方独立告警解读与每日五次演示.md)。
+
 > 2026-10-14当前：SEC-M4本机限定签收及r6追加准入通过；MA-C32～C35和最终文档门槛已完成，MA-M4及联合阶段四在声明范围正式技术签收。服务器r6/v5、恢复维护修订3；本机唯一批准动作保留，写窗口关闭，生产仅登记R0。
 
 > **2026-10-11现行问答增量**：指定公网入口为`https://8.138.42.212/agent`。阶段8已接管通用问答，生产使用阶段4主编排、阶段7 Agent/搜索、阶段8生产编排及发布目录固定镜像文件；旧告警解读继续由阶段7运行。现行操作见[[notes/01-项目调研规划与开发建设记录/第二版-智能体升级/问答及调度业务主智能体/当前方案-Agent与RAG重建/02-技术选型与架构设计/04-服务器部署与回退]]，正式结果见[[notes/01-项目调研规划与开发建设记录/第二版-智能体升级/问答及调度业务主智能体/当前方案-Agent与RAG重建/03-功能开发与阶段交付/04-完整Agent与会话/05-RAG服务器发布测试与交付]]。以下初装步骤不能直接用于覆盖当前运行配置。
@@ -191,6 +193,18 @@ python3 /opt/powersystem/runtime/api-recovery-20261015-r1/verify-auth-wss.py /et
 
 ### 当前基线与只读查看
 
+2026-10-22 22:09 现行：生产指针 `report-duration-20261022-r1`，父版本 `natural-alarm-20261022-r2`，pending=false，**首个使用 `--tier frontend-fast` 的发布**。仅前端更新：统计报表的运行/停机/故障/未知时长改为「X时Y分Z秒」，为零的时、分省略。prepare 17.8 s、前端小包 21.5 MB 双上传、publish 100.4 s，全批约 2.5 分钟；基线 `powersystem-20261022T134233Z`（24 小时 RPO），隔离恢复演练 `ma_restore_passed=true`。同批修复控制器 `timing_receipt()`：原实现按 `*.tar.gz.gpg.timing.json` 找凭证，与 `backup.sh` 实际输出 `*.timing.json` 不符，导致快路径永远报 `fast_baseline_must_follow_current_release`。详情见[报表时长与快路径启用记录](../../../notes/04-系统部署发布备份与变更记录/部署与运维日志/36-报表时长格式与快路径首次启用.md)。
+
+2026-10-22 21:13 历史：生产指针 `natural-alarm-20261022-r2`，父版本 `agent-rag-sse-20261022-r2`，pending=false。更新 `api`、`frontend`、`simulator`：模拟器在北京时间 09/11/13/15/17 五个十分钟窗口向当日轮转的合成设备注入越限遥测，由 Go 既有自然规则创建/恢复 `origin=normal` 告警；同时删除旧 `fault_ramp` 故障排程，新增独立 `--window-mode`（默认 on），`--fault-mode` 降为兼容空操作——生产命令仍带 `--fault-mode off`，窗口照常注入。新全量加密备份（`powersystem-20261022T130048Z`，主 118.8 s / 次 116.1 s）双目标上传、正式双 HTTPS/WSS 门禁通过；迁移后车队规则 572 条（571 启用）、策略设备 143 条；模拟器启动日志 `window_mode=on`、`device_count=143`。详情见[自然规则告警上线记录](../../../notes/04-系统部署发布备份与变更记录/部署与运维日志/35-自然规则告警上线.md)。
+
+2026-10-22 13:55 历史：生产指针 `ui-devcode-20261022-r1`，父版本 `ui-paging-20261022-r1`，pending=false，仅前端更新。设备管理、健康排行、统计报表三页的设备编码与名称改为分段渲染（常量弱化、序号强调）并加场站色点，三个长列表加 stripe；本地类型检查与 70 项单测通过，更新前双目标密文备份、正式双 HTTPS/WSS 门禁和容器分块核对通过。其他镜像、编排、卷与设备台账未变；顺带清理了生产源码内遗留的 `src/_sync_tmp/`。详情见[视觉区分上线记录](../../../notes/04-系统部署发布备份与变更记录/部署与运维日志/32-设备编码与名称视觉区分上线.md)。
+
+2026-10-22 12:48 现行：生产指针 `ui-paging-20261022-r1`，父版本 `interpretation-official-20261021-r4`，pending=false，仅前端更新。健康排行与统计报表两页长列表改为客户端分页（20/50/100 可选），健康排行表头新增场站与设备编号/名称筛选；本地类型检查与 62 项单测通过，更新前双目标密文备份、正式双 HTTPS/WSS 门禁和公网路由分块核对通过。其他镜像、编排、卷与设备台账未变；详情见[分页上线记录](../../../notes/04-系统部署发布备份与变更记录/部署与运维日志/31-健康排行与统计报表分页上线.md)。以下早先基线按日期保留。
+
+2026-10-21 10:52 现行：生产指针 `interpretation-auto-20261021-r1`，父版本 `fleet-mqtt-lockfix-20261021-r1`，pending=false，仅旧agent镜像更新。新密文备份双云上传、正式门禁、30项定向测试、合成probe及线上解读通过；13条活动失败任务11条answered、2条原校验拒绝保留。其他镜像与设备台账未变；详情见[告警解读修复上线](../../../notes/04-系统部署发布备份与变更记录/部署与运维日志/28-告警解读工具调用兼容修复上线.md)。以下早先基线按日期保留。
+
+2026-10-20 22:31 现行：生产指针 `fleet-release-20261020-r2`，直接父版本 `alarm-schedule-restore-20261020-r1`，pending=false。新增四站 140 台合成设备供数，全平台 143 台当前观测到达；更新 API、frontend、simulator、agent-rag、ops-agent，双云备份、双 HTTPS/WSS 门禁和 14 项短核对通过。正式事实见 [扩容上线记录](../../../notes/04-系统部署发布备份与变更记录/部署与运维日志/26-四场站140台设备扩容上线.md)。以下早先基线按日期保留。
+
 2026-10-19 21:05:40 +08:00 当前生产指针 `ops-model-migration-20261019-r2`，修正安全审查按实际步骤绑定证据，运维与安全模型仍为 `deepseek-v4.1-flash`。仅更新安全服务，双云备份、双 HTTPS/WSS 门禁、设备查询和固定版本观察通过；基础设施完整任务仍有能力不可用及超时失败；R0/写关闭保持。见 [模型切换发布记录](../../../notes/04-系统部署发布备份与变更记录/部署与运维日志/22-运维与安全审查模型切换.md)。
 
 2026-10-19 20:49首次切换记录：当时生产指针为 `ops-model-migration-20261019-r1`，直接上一版 `report-performance-20261019-r1`。仅更新运维和安全审查服务，均使用 `deepseek-v4.1-flash`，当前生产许可/策略 v6，原私有目录中新建版本配置，保留旧文件及备份兼容。双云备份、双 HTTPS/WSS 门禁和设备查询通过，观察已完成，修订验证见现行记录，R0/写关闭保持。见 [[notes/04-系统部署发布备份与变更记录/部署与运维日志/22-运维与安全审查模型切换]]。
@@ -207,6 +221,24 @@ python3 /opt/powersystem/stages/04-frontend/deploy/production-stack.py status
 
 ### 后续发布
 
+设备扩容追加层为本目录 `fleet.compose.yaml`：为 API 与模拟器只读装载同一正式清单，保留 `scheduled` 及原模拟器账本。该文件必须叠加在当前完整编排末尾，并通过 `--from-args` 提交给统一入口；不得单独启动。清单建议使用 `runtime/production-stack/fleet-manifests/<批次>.json` 的版本化路径并设置 `POWERSYSTEM_FLEET_FILE`，或生成等价的绝对路径 JSON 覆盖层，以纳入现有备份和 `/run/` 只读引用摘要校验。
+
+扩容不修改智能体 R0/写关闭配置。台账导入是单独授权的数据事务，应用回退不自动删除已导入设备和遥测。上线后的短核对入口为：
+
+```bash
+python3 /opt/powersystem/stages/04-frontend/deploy/check-fleet-live.py --output /opt/powersystem/runtime/<本次批次>/live-check.json
+```
+
+检查只读设备、场站、总览和告警，最多等一分钟接收当前遥测，不请求模型或执行容量测试。脚本登录使用现有服务器私有口令文件，不输出密码、JWT 或完整响应。
+
+独立长观察（2026-10-21 新增，不发压、不重启服务）：
+
+```sh
+python3 watch-fleet-soak.py --duration 7200 --interval 60 --output-dir /path/to/new-evidence-dir
+```
+
+仅在已有本机服务和私有口令文件的服务器执行；输出目录必须不存在。输出 `samples.jsonl` / `summary.json`，核对固定 143/140/3、`partial`、错误和延迟，中断不判通过。离线测试：`python -m unittest discover -s stages/04-frontend/deploy -p test_watch_fleet_soak.py`（仓库根执行）。本次容量控制器与私有 Compose 只存于忽略的 `artifacts/fleet-capacity-20261021-r1/`，不能拿生产 Compose 或旧 `m4-load-setup.sql` 直接写生产；实际进度与边界见[容量与长时间测试记录](../../../notes/01-项目调研规划与开发建设记录/第三版-设备扩容/03-容量与稳定性验证/08-容量与长时间测试记录.md)。
+
 先独立构建并审查新镜像。`prepare`只解析配置、读取Docker元数据和冻结候选；可传递已构建镜像标签，工具会解析为实际镜像ID。以下新运行编号与镜像标签须替换，不能原样当成现成版本：
 
 ```bash
@@ -216,6 +248,20 @@ python3 /opt/powersystem/stages/04-frontend/deploy/production-stack.py prepare \
 
 同批其他镜像使用重复`--image frontend=...`等参数；仅配置变更使用`--service api`等显式指定应用。需要新的集成环境文件时，传入受审完整Compose参数JSON的`--from-args`，仍须包含原顺序的五份基础编排。已接受版本引用的私有文件不可原位修改，应使用新路径准备候选；数据库迁移、公开端口、持久卷变化不在此入口范围。
 
+`prepare`在冻结候选前会跑三项只读短检（失败即停在`preflight:*`，不写候选目录，可直接用同一 id 重跑）：
+
+| 检查 | 判据 |
+|---|---|
+| `preflight.private_layout` | 私有 env 位于 `<ma-m4-*>/private/`；`private/executor/` 存在且有 `executor.json`；`ops-executor` 的 `/run/ma-executor` 挂载源与该目录一致 |
+| `preflight.asset_ledger` | 主机 `registry.json` 的容器资产版本不超过 DB `ma_assets` 已提交版本 +1（+1 视为未提交导入） |
+| `preflight.migration_entry` | 从 API 镜像内取 `/app/deploy/postgres/*.sql`，按 `store.Migrate` 的按分号全切规则复算；注释内分号、`$$` 块、非关键字碎片一律拒绝，并要求 `telemetry_inbox` 建表语句存在 |
+
+备份前可单独复核一次：
+
+```bash
+python3 /opt/powersystem/stages/04-frontend/deploy/production-stack.py preflight --id release-YYYYMMDD-rN
+```
+
 候选准备完成后新建并核对更新前加密备份再发布，`--backup`必须是业务机既有备份目录内、候选准备后且24小时内生成、附有匹配SHA256的密文。发布会自动执行门禁，成功才移动当前指针：
 
 ```bash
@@ -224,7 +270,48 @@ python3 /opt/powersystem/stages/04-frontend/deploy/production-stack.py publish \
   --backup /var/backups/powersystem/powersystem-YYYYMMDDTHHMMSSZ.tar.gz.gpg
 ```
 
-该入口只重建指定应用，使用冻结JSON及全部固定镜像；自动检查Nginx并更新已登记容器身份，通过同ID Executor重载刷新登记。真实操作员凭据仅从`/etc/powersystem/demo-password`读取，不输出密码、JWT或ticket。无`--skip-test`、`--force`或跳过门禁选项。
+### 分级发布：仅前端镜像快路径（2026-10-22 已启用）
+
+默认 `--tier full` 保持上面的候选后新全量备份。只有本次唯一变更服务是 `frontend`、只替换其固定镜像 ID、完整冻结 Compose/私有环境/挂载/端口与父版一致时，才可显式选 `--tier frontend-fast`。控制器在创建候选前逐项比对配置；不确定范围、涉及 API/迁移/数据/私有配置时仍用 `full`。快路径不裁剪排空、全服务身份及健康、双公网 HTTPS/WSS 或失败回退门禁。
+
+快路径引用一份**当前非前端版本生效之后**、24 小时内完成且双异地上传成功的全量密文；若父版也是前端快发布，可沿用其已验证基线。该基线只承诺最多 24 小时的数据恢复点，不补录期间的数据库、遥测或队列变化；项目所有者已明确接受这项前端-only RPO。首次使用须等待新计时旁车证明双异地上传的全量备份，旧包无凭据不能冒充。候选本身另生成包含固定前端镜像、冻结清单和引用基线摘要的加密小包，并传至两处；任何核对失败即停，不自动降级到弱检查。后续 `full` 发布不继承快路径基线。
+
+```bash
+python3 /opt/powersystem/stages/04-frontend/deploy/production-stack.py prepare \
+  --id ui-YYYYMMDD-rN --tier frontend-fast --image frontend=reviewed-ui:ui-YYYYMMDD-rN
+python3 /opt/powersystem/stages/04-frontend/deploy/frontend-release-backup.py --id ui-YYYYMMDD-rN
+python3 /opt/powersystem/stages/04-frontend/deploy/production-stack.py publish \
+  --id ui-YYYYMMDD-rN \
+  --backup /var/backups/powersystem/powersystem-frontend-YYYYMMDDTHHMMSSZ.tar.gz.gpg
+```
+
+小包由私有脚本输出精确路径，不应根据上面的占位名猜测。脚本使用与全量备份相同的口令、SSH 身份和主备目标，不打印密钥内容。若基线失效、配置漂移或上传失败，重新评估为全量发布；已冻结快路径候选不能原位改档，须另用新候选 ID。上传前按 [[notes/02-工程规范边界与验收治理/项目工程规范/05-上传服务器规范]] 核对服务器目录索引、LF 与文件摘要。
+
+续基线后先跑轻量连续性检查，不启动业务容器：
+
+```bash
+python3 stages/04-frontend/deploy/verify-backup-integrity.py \
+  /var/backups/powersystem/powersystem-<UTC>.tar.gz.gpg \
+  --output /tmp/integrity.json
+```
+
+它校验密文摘要、GPG 解密、内层 `SHA256SUMS`、必需私有文件、队列快照、`pg_restore -l` 可读性和 SQLite 行数，`status=ok` 只代表“备份可读、结构完整”，**不能替代** `restore-verify.sh` 的完整隔离恢复演练。完整演练按上传规范 7.2.1 的触发条件执行，不按日历排期。
+
+灾难恢复时，全量基线负责其快照时刻**备份范围内**的数据与私有环境，快路径小包负责本版前端镜像、控制器和冻结文件；两份密文与摘要缺一不可。先在隔离环境验证全量基线，再解密小包并核对内层 `capsule.json` 的镜像 tar、控制器、manifest 和冻结文件摘要，导入前端镜像并核对固定 image ID，最后重建完整编排及门禁；不得把只恢复前端镜像当成数据恢复，也不得直接把备份里的生产指针激活。全量包没有保存所有非前端 Docker 镜像，也未承诺恢复 EMQX/Grafana/Prometheus 数据卷；这些按既有恢复计划另行核对，不可把24小时RPO外推到未备份范围。首次生产启用快路径前须做一次该组合的隔离恢复短演练，记录边界，不重跑全后端业务链路；该演练已于 2026-10-22 用基线 `powersystem-20261022T134233Z` 完成（`ma_restore_passed=true`），后续按换基线或工具链变更时复核。
+
+该入口只重建指定应用，使用冻结JSON及全部固定镜像；自动检查Nginx并更新已登记容器身份，通过同ID Executor重载刷新登记。真实操作员凭据仅从`/etc/powersystem/demo-password`读取，不输出密码、JWT或ticket。无`--skip-test`、`--force`或跳过门禁选项。`publish`在排空任务前会重跑同一组短检，已冻结候选不能绕过。
+
+### 分段计时
+
+`prepare`、`preflight`、`publish`、`rollback` 每次结束都写一条 `runtime/production-stack/timing/<ns>-<phase>.json`（0600，保留最近 200 条，成功与失败都写），stdout 同时给出 `total_seconds`、`timing_file`、`slowest`。`publish` 会把同批备份的旁车记录合并进 `notes.backup`，并记 `prepare_to_publish_seconds`。
+
+`backup.sh` 每段写一行 NDJSON，退出时合成 `/var/backups/powersystem/<run>.timing.json`，覆盖 dump、复制、校验、压缩、加密、两次上传（含 `megabytes_per_second`）与保留清理；失败时带 `failed_stage`/`failed_line`。开始前另有 `disk_headroom` 前检（默认要求 4 GiB 可用，`POWERSYSTEM_BACKUP_MIN_FREE_KB` 可调）。
+
+```bash
+python3 /opt/powersystem/stages/04-frontend/deploy/production-stack.py timing --limit 5
+```
+
+计时只记录阶段名、耗时、字节数与计数，不落命令输出、路径或凭据。
 
 ### 回退及中断恢复
 
