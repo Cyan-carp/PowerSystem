@@ -41,7 +41,7 @@ async def main(args):
                     body=Interpretation(event_key=row['event_key'],category=category,evidence=row['evidence'])
                     started=time.monotonic();status='failed';reason='';digest=None
                     try:
-                        result=await provider.complete([{'role':'system','content':SYSTEM},{'role':'user','content':body.model_dump_json()}],OUTPUT_SCHEMA)
+                        result=await provider.complete([{'role':'system','content':SYSTEM},{'role':'user','content':body.model_dump_json()}],OUTPUT_SCHEMA,cfg.interpret_max_tokens)
                         model_seconds=time.monotonic()-started
                         content=result.get('content')
                         if result.get('tool_calls'):content=result['tool_calls'][0]['function']['arguments']
@@ -53,7 +53,7 @@ async def main(args):
     report={'completed':True,'event_queue_and_snapshot':distribution(waiting),'agent_processing':distribution(processing),
         'isolated_model_replay':distribution([x['model_seconds'] for x in replay if x['status']=='answered']),
         'model_replay':replay,'page_display':{'verified':False,'reason':'requires actual browser timestamp evidence'},
-        'budgets_seconds':{'model':20,'agent':40,'go':45},
+        'budgets_seconds':{'model':35,'agent':40,'go':45},
         'measurement_boundary':'event wait ends at snapshot collection; Agent includes validation/audit setup; model replay uses saved synthetic snapshots independently and does not measure production queue/render'}
     args.output.parent.mkdir(parents=True,exist_ok=True);args.output.write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding='utf-8')
     print(json.dumps({k:report[k] for k in ('event_queue_and_snapshot','agent_processing','isolated_model_replay')}))

@@ -4,6 +4,16 @@ tags: [源网智联, 源码运行, 历史模块]
 
 # 第二版智能体 · 基础服务、告警解读与值班问答
 
+## 告警解读 v2（2026-10-21发布，10-22清理完成）
+
+告警专属配置为 `AGENT_INTERPRET_LLM_BASE_URL=https://api.deepseek.com`、`AGENT_INTERPRET_LLM_MODEL=deepseek-flash`、`AGENT_INTERPRET_THINKING=disabled`、`AGENT_INTERPRET_LLM_API_KEY_FILE`。服务器 secret 只读挂载，不复用 `AGENT_LLM_*`，不设置备用网关。请求为非流式 JSON Output、4096 tokens、不携带 tools/tool_choice/reasoning_effort；35/40/45 秒分别为模型、Agent、Go 预算。阶段8问答与阶段9运维配置保持。
+
+`/internal/agent/interpret/v2` 接收 Go 固定证据及类型化事实；模型返回事实模板，精确值由 Go 渲染。HTTP `/health` 不调用模型；管理员探针仅调用一次专属通道。Agent 不重试，Go 持久化预占最多两次模型调用，租约回收不重置次数；独立暂停和熔断不影响聊天。
+
+定向验证：`python -m unittest tests.test_interpret_v2 -v`。私有部署驱动为 `scripts/interpretation-remote.py`，按 `upload → build → fixture → prepare → publish → reset` 分步运行；`official-gate` 是固定六份合成证据的真实官方调用，不产生业务告警。必须先完成门禁与备份，才可执行已授权清理；不要把此驱动当作通用服务器脚本。真实密钥不出现在命令行或笔记中。当前生产状态以部署记录为准。
+
+以下为旧模块历史说明，旧 `AGENT_LLM_*` 不能替代 v2 专属配置。
+
 2026-10-09 自然语言问答本地候选：运行入口改为严格语义计划、程序强制实时取证、逐条资料来源核验。设备序数按当前 ID 升序；问题最多默认近 30 天触发事件数，包含已恢复告警；范围外仅说明服务范围；模型故障只保留业务直答。详细交付与复现见[自然语言问答改造](../../notes/01-项目调研规划与开发建设记录/第二版-智能体升级/问答及调度业务主智能体/废案-旧智能体方案/02-功能开发与阶段交付/05-自然语言问答改造/00-索引·自然语言问答改造.md)。本地候选没有改变下述现网 v2.0.0 的历史签收。
 
 新增 `scripts/test-natural.py` 执行 Agent 与真实 PostgreSQL 聚合测试，`scripts/smoke-natural.py` 对隔离本地环境执行真实模型问法，`scripts/fault-natural.py` 核查独立故障服务。运行前通过 `stage7-common.ps1` 加载私有配置；真实问法需要私有 `NATURAL_TEST_PASSWORD`，用户名用 `NATURAL_TEST_USERNAME`，默认 natural_test。测试报告只放忽略的 artifacts，不打印连接串或模型密钥。`tests/natural-cases.json` 是自然问法验收集；归档 `tests/legacy_orchestrator.py` 仅用于原有护栏回归。
@@ -389,6 +399,25 @@ python3 stages/07-agent/deploy/sync-v2m4-source.py --root /opt/powersystem --arc
 $env:PYTHONPATH = "stages/07-agent"
 python -m unittest discover -s stages/07-agent/tests -p test_provider_response.py -v
 ```
+
+## 2026-10-21 · 告警解读请求兼容修复
+
+旧告警解读的唯一 `submit_interpretation` 工具触发强制对象形式 `tool_choice`；同一模型端点普通聊天可用，三次合成强制函数请求均返回 502。修复保持完整 schema 与证据/数字校验，有工具时统一使用 `auto`。首次诊断 auto 的 503 保留为失败，不据此认定 `$defs` 不兼容。
+
+新增实际告警 schema 的合成 probe，通过原回答校验后才解除暂停；上游 HTTP 状态只进内部审计。`ready` 仍是配置/暂停状态，不表示实时模型验收。管理员恢复按钮仍仅重排原有三类永久配置失败，不自动重排 `unavailable`；本批用受限运维步骤恢复最近24小时仍活动的失败事件，已恢复历史保留。
+
+`interpretation-auto-20261021-r1` 已于北京时间10:52:21正式生效，父版本为 `fleet-mqtt-lockfix-20261021-r1`，仅旧Agent变化，pending=false。本机9项响应测试与镜像内30项定向测试通过；真实合成probe三项通过（27.164秒），线上合成HTTP解读answered。13条活动失败任务补处理11条answered、2条被原格式/数字校验拒绝；auto中3次偶发502经原重试恢复，不宣称全请求零错误。部署与边界见 [[notes/04-系统部署发布备份与变更记录/部署与运维日志/28-告警解读工具调用兼容修复上线]]，问题入口见 [[notes/01-项目调研规划与开发建设记录/第二版-智能体升级/问答及调度业务主智能体/废案-旧智能体方案/02-功能开发与阶段交付/02-告警智能解读与大屏联动/06-问题记录与解决方案·02-告警智能解读与大屏联动#八、在用告警模块请求兼容故障（2026-10-21）]]。
+
+离线定向命令（已有依赖环境，仓库根目录；不调用模型）：
+
+```powershell
+$env:PYTHONPATH = "stages/07-agent;stages/07-agent/tests"
+python -m unittest tests.test_provider_response tests.test_interpret tests.test_interpret_probe -v
+```
+
+Linux 使用冒号分隔两个路径。当前管理员真实探针收敛为一次生产形状的合成解读请求；Docker `/health` 仍不调用模型，不能替代该探针。生产发布仍使用阶段四统一控制器。
+
+输出预算修复已于2026-10-21 13:14上线为 `interpretation-budget-20261021-r1`（父版本为上述auto版本）：仅告警解读使用4096，模型/总/API超时35/40/45秒；保留安全finish_reason/usage审计，length且结构不可用时映射answer_truncated，Go最多额外重试一次。夹具保持4证据/100点，修正数值、统计与采集时间关系；明确告警阈值混引预测证据时按唯一告警阈值校验，预测改值仍拒绝。38项解读测试和完整模型探针通过（8.112秒），线上短解读answered。独立核对运行四文件摘要、实际4096/35/40参数、20服务健康及pending=false；未重跑全后端或长观察。历史失败与新备份见 [[notes/04-系统部署发布备份与变更记录/部署与运维日志/29-告警解读输出预算与截断重试]]。
 
 ## 相关笔记
 

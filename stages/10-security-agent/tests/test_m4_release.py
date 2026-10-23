@@ -94,6 +94,13 @@ def test_C32_asset_versions_remain_monotonic_after_actual_rollback():
     assert m.advanced_asset_version(2,3,True)==4
     assert m.advanced_asset_version(0,1,True)==2
 
+
+def test_C32_failed_asset_import_does_not_consume_committed_versions():
+    m=module()
+    assert m.advanced_asset_version(3,2,True)==3
+    assert m.advanced_asset_version(9,2,True)==3
+    assert m.advanced_asset_version(3,2,False)==3
+
 def test_C32_external_baseline_catalog_bootstrap_is_fresh_only_and_no_invented_history():
     spec=importlib.util.spec_from_file_location('ma_bootstrap_test',ROOT/'stages/09-ops-agent/deploy/bootstrap-assets.py')
     m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)

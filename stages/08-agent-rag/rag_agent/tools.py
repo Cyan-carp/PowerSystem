@@ -28,7 +28,15 @@ class Page(Args):
     page_size: int = Field(default=100, ge=1, le=100)
 
 
-class Devices(Page):
+class ScopeOnly(Args):
+    scope: Literal["all", "business", "baseline"] = "all"
+
+
+class ScopeFilter(ScopeOnly):
+    station_code: str | None = Field(default=None, pattern=r"^[A-Za-z0-9_-]{1,64}$")
+
+
+class Devices(Page, ScopeFilter):
     keyword: str | None = None
     group_name: str | None = None
 
@@ -44,12 +52,20 @@ class Telemetry(Device):
     end: str | None = None
 
 
-class Alarms(Page):
+class Alarms(Page, ScopeFilter):
     device_id: int | None = Field(default=None, gt=0)
     status: Literal["unhandled", "acked", "recovered"] | None = None
     level: Literal["urgent", "major", "minor"] | None = None
     start: str | None = None
     end: str | None = None
+
+
+class Stations(ScopeOnly):
+    pass
+
+
+class Overview(ScopeFilter):
+    pass
 
 
 class Statistics(Args):
@@ -71,18 +87,20 @@ class Rules(Page):
 MODELS = {"search_knowledge": KnowledgeQuery, "web_search": WebQuery, "list_devices": Devices, "get_device": Device,
     "get_telemetry": Telemetry, "get_prediction": Device, "list_alarms": Alarms,
     "get_alarm_statistics": Statistics, "get_alarm_detail": Alarm, "get_dashboard_summary": Args,
-    "get_alarm_rules": Rules}
+    "list_stations": Stations, "get_dashboard_overview": Overview, "get_alarm_rules": Rules}
 DESCRIPTIONS = {
     "search_knowledge": "语义向量检索内部项目资料，返回相关章节与来源。",
     "web_search": "博查联网搜索普通问题、最新信息和技术资料，返回网页摘要、发布时间与URL。",
-    "list_devices": "查询平台设备台账，按ID升序分页；第二台指ID升序第二项。名称或编码可以用keyword检索。",
+    "list_devices": "查询平台设备台账，按ID升序分页（page/page_size，单页最多100条）；第二台指ID升序第二项。名称或编码可以用keyword检索。scope=all|business|baseline，station_code可限定单个场站。返回含total：只取一页时仅覆盖该页，不能声称已检查全部设备；要全量结论必须按total继续翻页。",
     "get_device": "读取指定设备台账及编码。",
     "get_telemetry": "查询设备最新遥测或指标历史。最新值含ts_ms采样时间、received_at接收时间和status状态：0停机，1运行，2故障。数据可能陈旧，应结合时间理解；history需要metric及带时区start/end。",
     "get_prediction": "查询设备预测概率、阈值、风险、来源及stale过期标志。",
-    "list_alarms": "分页读取设备告警。unhandled未确认，acked已确认未恢复，recovered已恢复；可按设备、状态、级别及触发时间筛选。",
+    "list_alarms": "分页读取设备告警（page/page_size 按页返回，单页最多100条；按触发时间倒序、同时间按ID倒序）。unhandled未确认，acked已确认未恢复，recovered已恢复；可按设备、状态、级别及触发时间筛选。scope=all|business|baseline，station_code可限定单个场站。返回含total：只取一页时仅覆盖该页，不能声称已覆盖全部告警；要全量结论必须按total继续翻页。",
     "get_alarm_statistics": "数据库聚合全量告警事件。默认近30天按触发时间统计含已恢复与未恢复，返回时间范围、总数、分组及完整性；适用于排名与统计。",
     "get_alarm_detail": "读取单条告警详情。",
-    "get_dashboard_summary": "读取平台设备数、在线数、告警数及功率汇总。",
+    "get_dashboard_summary": "读取平台设备数、在线数、告警数及功率汇总（旧接口，固定全平台口径）。",
+    "list_stations": "按共享清单列出场站编码、名称、范围、类型、期望设备数与已登记设备数。scope=all|business|baseline，默认all；名称和范围以清单为准，不要自行猜测或翻译场站。",
+    "get_dashboard_overview": "读取当前范围的总览聚合（GET /api/v1/dashboard/overview）：summary、场站对比、computed_at及完整性标记。scope=all|business|baseline，station_code可限定单个场站。partial为真表示未达期望或已登记设备未全部观测；expected/registered/observed分别指清单期望数、台账登记数、当前有观测的设备数；null表示该值当前缺失或不可计算，不等于0，也不代表设备正常。",
     "get_alarm_rules": "查询设备告警规则（指标、比较运算符、阈值、单位、级别、启用状态、规则版本），用于程序化阈值比较。缺规则或单位不一致时只能说明无法比较，不能自行设定现场阈值。"
 }
 
@@ -94,6 +112,8 @@ def business_route(name, args):
     if name == "get_alarm_statistics": return "/api/v1/alarms/statistics", args
     if name == "get_alarm_detail": return f"/api/v1/alarms/{args['alarm_id']}", {}
     if name == "get_dashboard_summary": return "/api/v1/dashboard/summary", {}
+    if name == "list_stations": return "/api/v1/stations", args
+    if name == "get_dashboard_overview": return "/api/v1/dashboard/overview", args
     if name == "get_alarm_rules": return "/api/v1/alarm-rules", args
     device_id = args.pop("device_id")
     if name == "get_device": return f"/api/v1/devices/{device_id}", {}

@@ -137,19 +137,24 @@ def validate_answer(answer, evidence):
                     # Mixed alarm / prediction evidence must bind a threshold
                     # to its nearest explicit metric, not every prediction in
                     # the same paragraph. Unqualified thresholds stay strict.
-                    anchors = list(re.finditer(r"ai_failure_risk|probability|概率|预测|模型|model|风险|temperature|温度|voltage|电压|current|电流|power|功率|irradiance|辐照", claim.text[:match.start()], re.IGNORECASE))
-                    names = {"temperature":"temperature", "温度":"temperature", "voltage":"voltage", "电压":"voltage", "current":"current", "电流":"current", "power":"power", "功率":"power", "irradiance":"irradiance", "辐照":"irradiance"}
+                    anchors = list(re.finditer(r"ai_failure_risk|probability|概率|预测|模型|model|风险|告警|temperature|温度|voltage|电压|current|电流|power|功率|irradiance|辐照", claim.text[:match.start()], re.IGNORECASE))
+                    names = {"告警":"alarm", "temperature":"temperature", "温度":"temperature", "voltage":"voltage", "电压":"voltage", "current":"current", "电流":"current", "power":"power", "功率":"power", "irradiance":"irradiance", "辐照":"irradiance"}
                     metric = names.get(anchors[-1][0].lower()) if anchors else None
                     if metric:
                         expected = []
                         def thresholds(data):
                             if isinstance(data, dict):
-                                if data.get("metric") == metric and isinstance(data.get("threshold"), (int,float)):
+                                if (data.get("metric") == metric or (metric == "alarm" and data.get("metric"))) and isinstance(data.get("threshold"), (int,float)):
                                     expected.append(data["threshold"] * (100 if match[2] else 1))
                                 for value in data.values(): thresholds(value)
                             elif isinstance(data, list):
                                 for value in data: thresholds(value)
-                        for ref in claim.evidence_ids: thresholds(available[ref].data)
+                        for ref in claim.evidence_ids:
+                            if metric != "alarm" or available[ref].tool != "get_prediction":
+                                thresholds(available[ref].data)
+                        # An unqualified alarm threshold must be unambiguous.
+                        if metric == "alarm" and len(set(expected)) != 1:
+                            expected = []
                 if predictions and not any(observed in (value, round(value, 1), round(value, 2), round(value, 3), round(value, 4)) for value in expected):
                     raise ValueError("prediction_value_changed")
     return answer

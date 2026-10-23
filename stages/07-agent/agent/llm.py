@@ -1,12 +1,37 @@
 import json
 import httpx
 
+# Stage 07 keeps the small default budget for chat/tool calls; only callers that
+# need a larger budget (event interpretation) may override it per call.
+DEFAULT_MAX_TOKENS = 1500
+MAX_OUTPUT_TOKENS = 8192
+FINISH_REASONS = {"stop", "length", "tool_calls", "content_filter"}
+USAGE_FIELDS = ("prompt_tokens", "completion_tokens", "total_tokens")
+
+
+def safe_usage(value):
+    """Keep only bounded integer token counts; never vendor text or details."""
+    if not isinstance(value, dict):
+        return {}
+    usage = {}
+    for name in USAGE_FIELDS:
+        count = value.get(name)
+        if isinstance(count, int) and not isinstance(count, bool) and 0 <= count <= 10**9:
+            usage[name] = count
+    details = value.get("completion_tokens_details")
+    reasoning = details.get("reasoning_tokens") if isinstance(details, dict) else value.get("reasoning_tokens")
+    if isinstance(reasoning, int) and not isinstance(reasoning, bool) and 0 <= reasoning <= 10**9:
+        usage["reasoning_tokens"] = reasoning
+    return usage
+
 
 class ProviderError(Exception):
     """Deliberately contains only a safe reason, never vendor body or headers."""
-    def __init__(self, reason, retry_after=0):
+    def __init__(self, reason, retry_after=0, http_status=None, validation_code=""):
         super().__init__(reason)
         self.retry_after = retry_after
+        self.http_status = http_status
+        self.validation_code = validation_code
 
 
 def classify_error(status, raw, retry_after=""):
@@ -29,26 +54,30 @@ def classify_error(status, raw, retry_after=""):
         delay = min(60, max(0, int(retry_after)))
     except (ValueError, TypeError):
         delay = 0
-    return ProviderError(reason, delay)
+    return ProviderError(reason, delay, status)
 
 
 class Provider:
     def __init__(self, config, client: httpx.AsyncClient):
         self.config, self.client = config, client
 
-    async def complete(self, messages, tools=None):
+    async def complete(self, messages, tools=None, max_tokens=None):
         if not self.config.model_configured:
             raise ProviderError("not_configured")
+        budget = DEFAULT_MAX_TOKENS if max_tokens is None else max_tokens
+        if not isinstance(budget, int) or isinstance(budget, bool) or not 0 < budget <= MAX_OUTPUT_TOKENS:
+            raise ProviderError("model_output_budget_invalid")
         body = {"model": self.config.model, "messages": messages, "stream": False,
-                "max_tokens": 1500}
+                "max_tokens": budget}
         if tools:
             body["tools"] = tools
-            if len(tools) == 1 and tools[0].get("function", {}).get("name", "").startswith("submit_"):
-                body["tool_choice"] = {"type": "function", "function": {"name": tools[0]["function"]["name"]}}
+            # Forcing a named function was rejected by the compatible gateway;
+            # auto keeps the caller's original schema unchanged.
+            body["tool_choice"] = "auto"
         # The authentication header is separate; known credentials are never
         # allowed in model content, even if pasted by a caller.
         raw = json.dumps(body, ensure_ascii=False)
-        for secret in (self.config.api_key, self.config.service_token, self.config.monitor_token, self.config.search_key):
+        for secret in (self.config.api_key, self.config.interpret_api_key, self.config.service_token, self.config.monitor_token, self.config.search_key):
             if secret:
                 raw = raw.replace(secret, "[REDACTED]")
         if len(raw.encode()) > 163840:
@@ -73,7 +102,10 @@ class Provider:
                     if len(raw) > 262144:
                         raise ProviderError("model_response_too_large")
                 data = json.loads(raw)
-            message = data["choices"][0]["message"]
+            choice = data["choices"][0]
+            if not isinstance(choice, dict):
+                raise ValueError()
+            message = choice["message"]
             # Some compatible gateways emit an empty role for an otherwise
             # valid completion. Normalize only this omission; explicit user,
             # system or tool roles remain invalid and answer checks still run.
@@ -82,8 +114,14 @@ class Provider:
             calls = message.get("tool_calls", [])
             if not isinstance(calls, list) or len(calls) > 10:
                 raise ValueError()
-            # Drop unrecognized provider fields (e.g. hidden reasoning).
-            return {"role": "assistant", "content": message.get("content"), **({"tool_calls": calls} if calls else {})}
+            finish_reason = choice.get("finish_reason")
+            if not isinstance(finish_reason, str) or finish_reason not in FINISH_REASONS:
+                finish_reason = ""
+            # Drop unrecognized provider fields (e.g. hidden reasoning); only the
+            # allowlisted finish reason and numeric usage survive.
+            return {"role": "assistant", "content": message.get("content"),
+                    **({"tool_calls": calls} if calls else {}),
+                    "finish_reason": finish_reason, "usage": safe_usage(data.get("usage"))}
         except httpx.TimeoutException:
             raise ProviderError("model_timeout") from None
         except httpx.HTTPError:

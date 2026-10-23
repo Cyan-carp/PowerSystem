@@ -213,6 +213,9 @@ def create_app(config=None, store=None, redis=None, provider=None, run_worker=Tr
     @app.get("/internal/ma/v1/tasks/{tid}")
     async def detail(tid: UUID, req: Request): return await report_for(req,tid)
 
+    @app.delete("/internal/ma/v1/tasks/{tid}")
+    async def remove(tid: UUID, req: Request): return await app.state.store.soft_delete(tid, owner(req))
+
     @app.post('/internal/ma/v1/tasks/{tid}/model-summary')
     async def model_summary(tid:UUID,req:Request):
         if await req.json() != {}: raise HTTPException(400,'invalid_args')

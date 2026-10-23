@@ -131,6 +131,23 @@ def test_ordinary_technical_explanation_remains_free():
     assert out['business_quality']['state']=='failed'
 
 
+def test_fleet_overview_and_station_tools_are_business_evidence():
+    overview = {'scope':'business', 'partial':True, 'expected_device_count':140,
+        'registered_device_count':120, 'observed_device_count':110, 'computed_at':AT,
+        'summary':{'device_total':120, 'online':109, 'offline':11, 'fault':2,
+            'active_alarms':3, 'current_power_kw':None, 'today_energy_kwh':456.7,
+            'health_score_percent':None}}
+    stations = {'scope':'business', 'total':1, 'list':[{'station_code':'PV-01',
+        'scope':'business', 'expected_device_count':48, 'registered_device_count':40}]}
+    q = build_quality([call('list_stations', stations, {'scope':'business'}),
+        call('get_dashboard_overview', overview, {'scope':'business'})])
+    assert q['state'] == 'queried'
+    assert {fact['kind'] for fact in q['facts']} == {'station_scope', 'aggregate'}
+    aggregate = next(fact for fact in q['facts'] if fact['kind'] == 'aggregate')
+    assert aggregate['data']['values']['partial'] is True
+    assert aggregate['data']['values']['summary']['current_power_kw'] is None
+
+
 def test_legacy_history_explanation_uses_recorded_calls_not_old_prose():
     legacy={'task_id':'old','historical':True,'tool_calls':calls(),'diagnosis':{'summary':'错误的旧正文'}}
     original=copy.deepcopy(legacy)

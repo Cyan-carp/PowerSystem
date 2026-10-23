@@ -70,6 +70,8 @@ class ModelFailureTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(vendor.complete.await_count, 1)
         self.assertEqual(store[PAUSE_KEY], "quota_exhausted")
         vendor.probe.return_value = {"chat": True, "tools": True}
+        vendor.complete.side_effect = None
+        vendor.complete.return_value = {"content": json.dumps(answer("合成协议检查"))}
         await guarded.probe()
         self.assertTrue((await guarded.state())["available"])
 
@@ -98,6 +100,7 @@ class InterpretationHTTPTest(unittest.TestCase):
             self.assertEqual(result["status"], "answered")
             self.assertIn("需人工确认", result["suggestions"][0]["text"])
         self.assertEqual(vendor.complete.call_args.args[1][0]["function"]["name"], "submit_interpretation")
+        self.assertEqual(vendor.complete.call_args.kwargs["max_tokens"], 4096)
         # The sole function is a response schema; no GET, JWT or business tools.
 
     def test_output_function_never_executes_business_tools(self):
@@ -142,6 +145,71 @@ class InterpretationHTTPTest(unittest.TestCase):
         audit = AsyncMock(); audit.write.side_effect = OSError()
         with TestClient(self.app(audit=audit)) as client:
             self.assertEqual(client.post("/internal/agent/interpret", headers=self.headers(), json=self.body()).status_code, 503)
+
+    def test_upstream_http_status_is_audit_only(self):
+        vendor, audit = AsyncMock(), AsyncMock()
+        app = self.app(vendor, audit)
+        vendor.complete.side_effect = ProviderError("unavailable", http_status=502)
+        with TestClient(app) as client:
+            result = client.post("/internal/agent/interpret", headers=self.headers(), json=self.body()).json()
+            self.assertEqual(result["reason"], "unavailable")
+            self.assertNotIn("provider_http_status", result)
+        self.assertEqual(audit.write.call_args.args[0]["provider_http_status"], 502)
+
+    def test_length_without_usable_answer_is_truncated(self):
+        vendor, audit = AsyncMock(), AsyncMock()
+        app = self.app(vendor, audit)
+        truncated = [
+            {"content": '{"conclusion": {"text": "输出被截断', "finish_reason": "length"},
+            {"content": "", "finish_reason": "length"},
+            {"content": None, "finish_reason": "length", "tool_calls": [{"type": "function", "function": {
+                "name": "submit_interpretation", "arguments": '{"conclusion":'}}]},
+        ]
+        for candidate in truncated:
+            vendor.complete.return_value = candidate
+            with self.subTest(candidate=candidate), TestClient(app) as client:
+                result = client.post("/internal/agent/interpret", headers=self.headers(), json=self.body()).json()
+                self.assertEqual(result["status"], "degraded")
+                self.assertEqual(result["reason"], "answer_truncated")
+                self.assertIsNone(result["conclusion"])
+            entry = audit.write.call_args.args[0]
+            self.assertEqual(entry["validation_code"], "answer_truncated")
+            self.assertEqual(entry["finish_reason"], "length")
+            self.assertEqual(entry["rejected_claims"], [])
+            self.assertEqual(entry["max_tokens"], 4096)
+
+    def test_complete_json_passes_even_when_finish_reason_length(self):
+        vendor, audit = AsyncMock(), AsyncMock()
+        app = self.app(vendor, audit)
+        vendor.complete.return_value = {"content": json.dumps(answer()), "finish_reason": "length",
+                                        "usage": {"prompt_tokens": 120, "completion_tokens": 4096,
+                                                  "total_tokens": 4216,
+                                                  "completion_tokens_details": {"reasoning_tokens": 3600,
+                                                                                "text": "hidden"}}}
+        with TestClient(app) as client:
+            result = client.post("/internal/agent/interpret", headers=self.headers(), json=self.body()).json()
+        self.assertEqual(result["status"], "answered")
+        entry = audit.write.call_args.args[0]
+        self.assertEqual(entry["validation_code"], "")
+        self.assertEqual(entry["finish_reason"], "length")
+        self.assertEqual(entry["usage"], {"prompt_tokens": 120, "completion_tokens": 4096,
+                                          "total_tokens": 4216, "reasoning_tokens": 3600})
+        self.assertEqual(entry["max_tokens"], 4096)
+        self.assertNotIn("hidden", json.dumps(entry))
+
+    def test_stop_with_invalid_json_stays_validation_failed(self):
+        vendor, audit = AsyncMock(), AsyncMock()
+        app = self.app(vendor, audit)
+        for content in ('{"conclusion":', "", None):
+            vendor.complete.return_value = {"content": content, "finish_reason": "stop"}
+            with self.subTest(content=content), TestClient(app) as client:
+                result = client.post("/internal/agent/interpret", headers=self.headers(), json=self.body()).json()
+                self.assertEqual(result["reason"], "answer_validation_failed")
+                self.assertEqual(result["status"], "degraded")
+            entry = audit.write.call_args.args[0]
+            self.assertEqual(entry["validation_code"], "invalid_answer_schema")
+            self.assertEqual(entry["finish_reason"], "stop")
+            self.assertEqual(entry["rejected_claims"], [])
 
     def test_monitor_store_and_retry(self):
         payload = {"version":"4", "groupKey":"test", "truncatedAlerts":0, "status":"firing", "receiver":"agent",

@@ -35,6 +35,7 @@ class Store(ApprovalStore):
         self.security_tables = False
         self.security_gates = None
         self.security_required = False
+        self.task_tombstone = False
 
     @classmethod
     async def open(cls, cfg):
@@ -46,13 +47,20 @@ class Store(ApprovalStore):
                 await c.execute((Path(__file__).resolve().parents[1] / 'deploy/002_assets.sql').read_text(encoding='utf-8'))
                 await c.execute((Path(__file__).resolve().parents[1] / 'deploy/004_approvals.sql').read_text(encoding='utf-8'))
                 await c.execute((Path(__file__).resolve().parents[1] / 'deploy/007_runtime_context.sql').read_text(encoding='utf-8'))
+                await c.execute((Path(__file__).resolve().parents[1] / 'deploy/008_task_deletion.sql').read_text(encoding='utf-8'))
                 if cfg.security_enabled:
                     for migration in ('005_security_reviews.sql', '006_security_gates.sql'):
                         await c.execute((Path(__file__).resolve().parents[1] / 'deploy' / migration).read_text(encoding='utf-8'))
             has_reviews = await c.fetchval("SELECT to_regclass('ma_security_reviews') IS NOT NULL")
             has_gates = await c.fetchval("SELECT to_regclass('ma_security_gate_contexts') IS NOT NULL")
+            # Restore-readonly skips migrations and runs against older dumps, so the tombstone
+            # column is probed at runtime instead of being assumed present. Resolve the table
+            # through to_regclass so the probe reads the same relation the queries will use;
+            # information_schema.columns matches on table name across every schema.
+            has_tombstone = await c.fetchval("SELECT EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('ma_tasks') AND attname='deleted_at' AND NOT attisdropped)")
         store = cls(pool, cfg); store.security_tables = has_reviews
         store.security_required = has_gates
+        store.task_tombstone = bool(has_tombstone)
         return store
 
     async def create(self, task):
@@ -125,7 +133,9 @@ class Store(ApprovalStore):
         return ResultEnvelope.model_validate(report).model_dump(mode='json', exclude_none=False)
 
     async def listing(self, user, sid=None, status=None, offset=0, limit=20):
-        rows = await self.pool.fetch("SELECT task_id,status,session_id,parent_turn_id,created_at,finished_at,envelope->>'intent' AS intent FROM ma_tasks WHERE user_id=$1 AND ($2::uuid IS NULL OR session_id=$2) AND ($3::text IS NULL OR status=$3) ORDER BY created_at DESC,task_id DESC OFFSET $4 LIMIT $5", user, sid, status, offset, limit)
+        where = "user_id=$1 AND ($2::uuid IS NULL OR session_id=$2) AND ($3::text IS NULL OR status=$3)"
+        if self.task_tombstone: where += " AND deleted_at IS NULL"
+        rows = await self.pool.fetch("SELECT task_id,status,session_id,parent_turn_id,created_at,finished_at,envelope->>'intent' AS intent FROM ma_tasks WHERE " + where + " ORDER BY created_at DESC,task_id DESC OFFSET $4 LIMIT $5", user, sid, status, offset, limit)
         return {"list": [{**dict(r),'intent':display_intent(r['intent'])} for r in rows], "offset": offset, "page_size": limit}
 
     async def claim(self, tid, worker):
@@ -178,6 +188,20 @@ class Store(ApprovalStore):
                     await c.execute("UPDATE ma_tasks SET status='cancelled',finished_at=now() WHERE task_id=$1", tid)
                     await c.execute("INSERT INTO ma_task_events(task_id,from_status,to_status,execution_epoch,reason) VALUES($1,$2,'cancelled',$3,'user_cancel')", tid,row['status'],row["execution_epoch"])
         return await self.report(tid, user)
+
+    async def soft_delete(self, tid, user):
+        # Hide one finished task from the records list. Steps, calls, events, approvals and
+        # security reviews are never touched, so the evidence chain stays intact.
+        if not self.task_tombstone: raise HTTPException(409, "task_delete_unsupported")
+        async with self.pool.acquire() as c, c.transaction():
+            row = await c.fetchrow("SELECT status,execution_epoch,deleted_at FROM ma_tasks WHERE task_id=$1 AND user_id=$2 FOR UPDATE", tid, user)
+            if not row: raise HTTPException(404, "task_not_found")
+            if row["status"] not in TERMINAL: raise HTTPException(409, "task_not_terminal")
+            if row["deleted_at"] is not None:
+                return {"task_id": str(tid), "deleted": True, "already_deleted": True, "deleted_at": row["deleted_at"]}
+            deleted_at = await c.fetchval("UPDATE ma_tasks SET deleted_at=now(),deleted_by=$2 WHERE task_id=$1 RETURNING deleted_at", tid, user)
+            await c.execute("INSERT INTO ma_task_events(task_id,from_status,to_status,execution_epoch,reason) VALUES($1,$2,$2,$3,'user_deleted')", tid, row["status"], row["execution_epoch"])
+        return {"task_id": str(tid), "deleted": True, "already_deleted": False, "deleted_at": deleted_at}
 
     async def bind(self, tid, user, sid, turn):
         await self.get(tid, user)

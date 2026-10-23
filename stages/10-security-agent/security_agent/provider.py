@@ -12,6 +12,93 @@ class ReviewFailure(Exception):
         super().__init__(code)
 
 
+def merge_tool_calls(target, deltas):
+    """Merge OpenAI-style incremental tool_call deltas into a full list."""
+    for delta in deltas:
+        if not isinstance(delta, dict):
+            continue
+        index = delta.get('index')
+        if not isinstance(index, int) or isinstance(index, bool) or index < 0:
+            index = len(target)
+        while len(target) <= index:
+            target.append({'id': '', 'type': 'function', 'function': {'name': '', 'arguments': ''}})
+        slot = target[index]
+        if isinstance(delta.get('id'), str) and delta['id'] and not slot['id']:
+            slot['id'] = delta['id']
+        function = delta.get('function')
+        if not isinstance(function, dict):
+            continue
+        if isinstance(function.get('name'), str) and function['name'] and not slot['function']['name']:
+            slot['function']['name'] = function['name']
+        if isinstance(function.get('arguments'), str):
+            slot['function']['arguments'] += function['arguments']
+    return target
+
+
+def parse_event_stream(raw):
+    """Rebuild (content, tool_calls, usage) from a completed SSE body.
+
+    The gateway answers stream=false with a bare keepalive frame, so requests are
+    sent with stream=true and the chunks are aggregated here. Frames carrying
+    usage usually have an empty choices list and must not be treated as errors.
+    Keep in sync with the ops and RAG providers.
+    """
+    content = []
+    calls = []
+    usage = {}
+    for line in raw.splitlines():
+        line = line.strip()
+        if not line or line.startswith(':'):
+            continue
+        if not line.startswith('data:'):
+            continue
+        payload = line[5:].strip()
+        if payload == '[DONE]':
+            break
+        try:
+            data = json.loads(payload)
+        except ValueError:
+            continue
+        if not isinstance(data, dict):
+            continue
+        if isinstance(data.get('usage'), dict) and data['usage']:
+            usage = data['usage']
+        choices = data.get('choices')
+        if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
+            continue
+        delta = choices[0].get('delta')
+        if not isinstance(delta, dict):
+            delta = choices[0].get('message')
+        if not isinstance(delta, dict):
+            continue
+        piece = delta.get('content')
+        if isinstance(piece, str):
+            content.append(piece)
+        if isinstance(delta.get('tool_calls'), list):
+            merge_tool_calls(calls, delta['tool_calls'])
+    return (''.join(content) or None), (calls or None), usage
+
+
+def message_from_json(payload):
+    """Read (content, tool_calls, usage) from a non-streaming completion body."""
+    choices = payload['choices']
+    if not isinstance(choices, list) or not choices:
+        raise TypeError()
+    message = choices[0]['message']
+    if not isinstance(message, dict):
+        raise TypeError()
+    calls = message.get('tool_calls')
+    usage = payload.get('usage')
+    return message.get('content'), (calls if isinstance(calls, list) and calls else None), (usage if isinstance(usage, dict) else {})
+
+
+def read_message(response):
+    """Return (content, tool_calls, usage) for either wire format."""
+    if 'text/event-stream' in response.headers.get('content-type', '').lower():
+        return parse_event_stream(response.text)
+    return message_from_json(response.json())
+
+
 class Provider:
     def __init__(self, cfg, client):
         self.cfg, self.client = cfg, client
@@ -38,7 +125,7 @@ class Provider:
             m4=self.m4_policies[projected['policy_version']]
             policy=m4['common']+'\n本次审查类别：'+projected['kind']+'\n'+m4['kinds'][projected['kind']]
         instruction=policy+'\n严格匹配以下输出JSON Schema，模型只返回四个意见字段，不生成任何关联标识。Schema不预先指定decision。\n'+json.dumps(schema,ensure_ascii=False)
-        body = {'model': self.cfg.model, 'stream': False, 'max_tokens': self.cfg.max_tokens,
+        body = {'model': self.cfg.model, 'stream': True, 'max_tokens': self.cfg.max_tokens,
                 'response_format':{'type':'json_object'},'temperature':0,
                 'messages': [{'role': 'system', 'content': instruction},
                              {'role': 'user', 'content': json.dumps(projected, ensure_ascii=False, allow_nan=False)}]}
@@ -54,12 +141,10 @@ class Provider:
                     headers={'Authorization': 'Bearer ' + self.cfg.llm_key}, timeout=timeout)
             if response.status_code != 200:
                 raise ReviewFailure('model_http_' + str(response.status_code))
-            raw = response.json()
-            message = raw['choices'][0]['message']
-            if message.get('tool_calls') or not isinstance(message.get('content'), str):
+            content, calls, usage = read_message(response)
+            if calls or not isinstance(content, str):
                 raise ReviewFailure('model_invalid_output', 'invalid')
-            decision = json.loads(message['content'])
-            usage = raw.get('usage', {})
+            decision = json.loads(content)
             # Billing counts only; never save model reasoning or gateway response bodies.
             usage = {k: v for k, v in usage.items() if k in ('prompt_tokens', 'completion_tokens', 'total_tokens') and type(v) is int and v >= 0}
             return decision, usage

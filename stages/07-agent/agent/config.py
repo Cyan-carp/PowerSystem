@@ -36,9 +36,9 @@ class Config:
     audit_dir: Path
     max_rounds: int = 5
     max_calls: int = 10
-    total_timeout: float = 43
+    total_timeout: float = 40
     tool_timeout: float = 5
-    model_timeout: float = 25
+    model_timeout: float = 35
     session_ttl: int = 86400
     monitor_token: str = ""
     model_configured: bool = True
@@ -47,6 +47,15 @@ class Config:
     search_url: str = ""
     search_key: str = ""
     search_provider: str = "generic"
+    # Event interpretation needs room for hidden reasoning plus the structured
+    # answer. Chat/tool calls keep the provider default.
+    interpret_max_tokens: int = 4096
+    interpret_llm_url: str = "https://api.deepseek.com"
+    interpret_model: str = "deepseek-flash"
+    interpret_api_key: str = ""
+    interpret_model_configured: bool = False
+    interpret_model_timeout: float = 35
+    interpret_total_timeout: float = 40
 
     @classmethod
     def load(cls):
@@ -86,6 +95,17 @@ class Config:
                 search_key = secret_file("AGENT_SEARCH_KEY_FILE", required=False)
             except ValueError:
                 pass  # Optional integration degrades independently of the Agent.
+        # Event inference never inherits the interactive provider or its key.
+        interpret_key = ""
+        try:
+            interpret_key = secret_file("AGENT_INTERPRET_LLM_API_KEY_FILE", required=False)
+        except ValueError:
+            pass
+        interpret_url = os.getenv("AGENT_INTERPRET_LLM_BASE_URL", "https://api.deepseek.com").rstrip("/")
+        interpret_model = os.getenv("AGENT_INTERPRET_LLM_MODEL", "deepseek-flash").strip()
+        interpret_configured = bool(interpret_key and interpret_url == "https://api.deepseek.com"
+                                    and interpret_model == "deepseek-flash"
+                                    and os.getenv("AGENT_INTERPRET_THINKING", "disabled") == "disabled")
         return cls(
             backend_url=base_url(os.getenv("AGENT_BACKEND_URL", "http://127.0.0.1:8080")),
             llm_url=llm_url if configured else "",
@@ -101,4 +121,8 @@ class Config:
             search_url=search_url,
             search_key=search_key,
             search_provider=search_provider,
+            interpret_llm_url=interpret_url,
+            interpret_model=interpret_model,
+            interpret_api_key=interpret_key,
+            interpret_model_configured=interpret_configured,
         )

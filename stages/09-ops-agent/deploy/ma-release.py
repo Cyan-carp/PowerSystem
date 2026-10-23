@@ -181,7 +181,9 @@ def reload_executor_registry():
 
 def advanced_asset_version(current,retained,changed):
     if not changed:return current
-    return max(current,retained)+1
+    # Only database-committed versions are history. A failed import can leave
+    # a newer provisional host registry, which must not consume another version.
+    return retained+1
 
 def refresh_assets(r):
     sys=__import__('sys');sys.path.insert(0,str(ROOT/'stages/09-ops-agent'))

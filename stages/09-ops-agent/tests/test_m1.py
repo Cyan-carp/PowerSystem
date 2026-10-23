@@ -457,3 +457,34 @@ async def test_stream_rejects_bad_protocol_extra_fields_and_orphan_ids(env):
     payloads=[{'protocol':'ma/v2','task_id':str(t.task_id)},{'protocol':'ma/v1','task_id':str(t.task_id),'jwt':'forged'},{'protocol':'ma/v1','task_id':'bad'},{'protocol':'ma/v1','task_id':str(uuid4())}]
     await worker.consume([('fixture-stream',[(str(index),value) for index,value in enumerate(payloads)])])
     assert not worker.jobs and (await store.get(t.task_id))['status']=='queued'
+
+
+@pytest.mark.asyncio
+async def test_MA_C20_task_record_soft_delete_keeps_audit(env):
+    _,store=env;t=task();await store.create(t)
+    with pytest.raises(Exception):await store.soft_delete(t.task_id,91001)
+    with pytest.raises(Exception):await store.soft_delete(t.task_id,91002)
+    await store.cancel(t.task_id,91001)
+    first=await store.soft_delete(t.task_id,91001);second=await store.soft_delete(t.task_id,91001)
+    assert first['deleted'] and not first['already_deleted'] and second['already_deleted']
+    assert second['deleted_at']==first['deleted_at']
+    assert all(r['task_id']!=t.task_id for r in (await store.listing(91001))['list'])
+    row=await store.get(t.task_id,91001)
+    assert row['deleted_at'] is not None and row['deleted_by']==91001
+    assert (await store.report(t.task_id,91001))['status']=='cancelled'
+    assert await store.pool.fetchval("SELECT count(*) FROM ma_task_events WHERE task_id=$1 AND reason='user_deleted'",t.task_id)==1
+
+
+@pytest.mark.asyncio
+async def test_MA_C21_task_delete_route_ownership_and_status(env):
+    cfg,store=env;app=create_app(cfg,store,Queue(),run_worker=False)
+    async with app.router.lifespan_context(app),httpx.AsyncClient(transport=httpx.ASGITransport(app=app),base_url="http://test") as client:
+        t=task();await store.create(t)
+        def headers(user):return {"X-PowerSystem-Token":cfg.service_token,"X-MA-Actor":sign(claims({"user_id":user,"role":"operator"},t.session_id,t.trace_id,""),cfg.actor_key)}
+        url="/internal/ma/v1/tasks/"+str(t.task_id)
+        assert (await client.delete(url,headers=headers(91001))).status_code==409
+        assert (await client.delete(url,headers=headers(91002))).status_code==404
+        assert (await client.delete(url,headers={**headers(91001),"X-MA-Actor":"forged"})).status_code==403
+        await store.cancel(t.task_id,91001)
+        assert (await client.delete(url,headers=headers(91001))).status_code==200
+        assert (await client.get(url,headers=headers(91001))).status_code==200

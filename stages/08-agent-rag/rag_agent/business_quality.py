@@ -11,7 +11,7 @@ from datetime import datetime, timezone, timedelta
 from decimal import Decimal, InvalidOperation
 
 VERSION = 'bnd-business-v1'
-BUSINESS = frozenset({'list_devices', 'get_device', 'get_telemetry', 'get_prediction', 'list_alarms', 'get_alarm_detail', 'get_alarm_statistics', 'get_dashboard_summary', 'get_alarm_rules'})
+BUSINESS = frozenset({'list_devices', 'get_device', 'get_telemetry', 'get_prediction', 'list_alarms', 'get_alarm_detail', 'get_alarm_statistics', 'get_dashboard_summary', 'list_stations', 'get_dashboard_overview', 'get_alarm_rules'})
 UNITS = {'voltage': 'V', 'current': 'A', 'temperature': '°C', 'power': 'kW', 'ai_failure_risk': '1'}
 EXPLANATIONS = {
     'facts_only': '',
@@ -144,6 +144,20 @@ def build_quality(calls, historical=False):
                 devices[device['id']] = device
                 device_refs[device['id']] = ref
                 add('device', {'device_id': device['id'], 'device_code': device.get('device_code'), 'queried_at': collected}, '台账设备 ' + text(device.get('device_code') or device['id']) + '（ID ' + str(device['id']) + '）；查询时间 ' + text(collected) + '。', [ref], device['id'])
+        elif name == 'list_stations':
+            rows = data.get('list', [])
+            values = [{'station_code': row.get('station_code'), 'scope': row.get('scope'),
+                'expected_device_count': row.get('expected_device_count'),
+                'registered_device_count': row.get('registered_device_count')}
+                for row in rows if isinstance(row, dict)]
+            add('station_scope', {'scope': args.get('scope', 'all'), 'total': data.get('total'), 'stations': values},
+                '场站清单查询返回 ' + str(len(values)) + ' 个场站；范围 ' + text(args.get('scope', 'all')) + '；查询时间 ' + text(collected) + '。', [ref])
+        elif name == 'get_dashboard_overview':
+            summary = data.get('summary') if isinstance(data.get('summary'), dict) else {}
+            values = {k:data.get(k) for k in ('scope', 'station_code', 'partial', 'expected_device_count', 'registered_device_count', 'observed_device_count', 'computed_at')}
+            values['summary'] = {k:summary.get(k) for k in ('device_total', 'online', 'offline', 'fault', 'active_alarms', 'current_power_kw', 'today_energy_kwh', 'health_score_percent')}
+            add('aggregate', {'values':values, 'filters':args},
+                '当前总览聚合（仅限本次筛选范围）：' + text(json.dumps(values, ensure_ascii=False)) + '。', [ref])
         elif name == 'get_telemetry':
             device_id = positive_id(args.get('device_id'))
             if not device_id or data.get('device_id') != device_id or args.get('mode', 'latest') != 'latest':

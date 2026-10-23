@@ -8,6 +8,7 @@ from fastapi import HTTPException
 from .executor import Executor, SCHEMAS, fixed_verification
 from .schemas import Verification, TERMINAL, Diagnosis
 from .store import LostLease
+from .wire import read_message
 from .infrastructure import MANIFEST as INFRA_MANIFEST
 from .write import ApprovalPending, SCHEMA as WRITE_SCHEMA, execute as execute_write
 from .business_quality import business_request, build_quality, finalize_diagnosis
@@ -59,11 +60,15 @@ class Worker:
         schemas=await self.available_schemas()
         if self.provider: return await self.provider(messages, schemas)
         cfg = self.cfg
+        # stream=True is mandatory: the gateway answers stream=false with an empty
+        # keepalive event stream, so the reply is aggregated by .wire.read_message.
         reply = await self.client.post(cfg.llm_url + "/chat/completions", headers={"Authorization": "Bearer " + cfg.llm_key},
-            json=json.loads(cfg.redact(json.dumps({"model": cfg.model, "messages": messages, "tools": schemas, "tool_choice": "auto", "max_tokens": cfg.max_tokens, "stream": False}, ensure_ascii=False))), timeout=cfg.model_timeout)
+            json=json.loads(cfg.redact(json.dumps({"model": cfg.model, "messages": messages, "tools": schemas, "tool_choice": "auto", "max_tokens": cfg.max_tokens, "stream": True}, ensure_ascii=False))), timeout=cfg.model_timeout)
         if reply.status_code != 200: raise ValueError("model_http_" + str(reply.status_code))
-        msg = reply.json()["choices"][0]["message"]
-        return {"role": "assistant", "content": msg.get("content"), **({"tool_calls": msg["tool_calls"]} if msg.get("tool_calls") else {})}
+        try:
+            return read_message(reply)
+        except (ValueError, KeyError, IndexError, TypeError):
+            raise ValueError("model_invalid_output") from None
 
     async def run_task(self, row):
         tid, epoch = row["task_id"], row["execution_epoch"]
@@ -162,7 +167,7 @@ class Worker:
                 diagnostic["fields"] = [{"loc": list(e["loc"]), "type": e["type"]} for e in exc.errors()]
             result["warnings"].append("执行异常诊断：" + json.dumps(diagnostic, ensure_ascii=False))
             status = "timeout" if isinstance(exc, TimeoutError) else "cancelled" if isinstance(exc, InterruptedError) else "failed"
-            allowed = {"auth_context_lost", "permission_denied", "guard_blocked", "invalid_args", "invalid_device", "required_tool_failed", "model_budget_exceeded", "tool_budget_exceeded",'asset_not_found','asset_not_verified','asset_version_changed','capability_unavailable','target_ambiguous','approval_invalidated','approval_expired','write_disabled','drill_not_healthy'}
+            allowed = {"auth_context_lost", "permission_denied", "guard_blocked", "invalid_args", "invalid_device", "required_tool_failed", "model_budget_exceeded", "tool_budget_exceeded",'asset_not_found','asset_not_verified','asset_version_changed','capability_unavailable','target_ambiguous','approval_invalidated','approval_expired','write_disabled','drill_not_healthy','model_invalid_output'}
             allowed.update({'inspection_scope_blocked','inspection_scope_too_large'})
             allowed.update({'security_denied','security_clarification_required','security_unavailable','security_invalid','security_review_stale','security_projection_blocked'})
             code = str(exc) if str(exc) in allowed or str(exc).startswith("model_http_") else "timeout" if status == "timeout" else "cancelled" if status == "cancelled" else "execution_failed"

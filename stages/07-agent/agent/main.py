@@ -19,6 +19,8 @@ from .llm import Provider, ProviderError
 from .tools import Tools, ToolDenied
 from .orchestrator import Orchestrator
 from .interpret import GuardedProvider, install_routes
+from .interpret_provider import InterpretationProvider
+from . import interpret_v2
 from .knowledge import Knowledge
 from .misses import Misses
 from .search import Search
@@ -36,11 +38,12 @@ def create_app(config=None, sessions=None, provider=None, tools=None, audit=None
         app.state.sessions = sessions or Sessions(redis, cfg.session_ttl)
         app.state.redis = redis
         app.state.provider = provider or GuardedProvider(Provider(cfg, client), redis, cfg)
+        app.state.interpret_provider = InterpretationProvider(cfg, client, redis)
         app.state.tools = tools or Tools(cfg, client)
         app.state.knowledge = Knowledge(cfg.knowledge_path)
         app.state.context = Context(app.state.knowledge, Search(cfg, client), Misses(cfg.misses_dir,
-            (cfg.api_key, cfg.service_token, cfg.monitor_token, cfg.search_key)))
-        app.state.audit = audit or Audit(cfg.audit_dir, (cfg.api_key, cfg.service_token, cfg.monitor_token, cfg.search_key))
+            (cfg.api_key, cfg.interpret_api_key, cfg.service_token, cfg.monitor_token, cfg.search_key)))
+        app.state.audit = audit or Audit(cfg.audit_dir, (cfg.api_key, cfg.interpret_api_key, cfg.service_token, cfg.monitor_token, cfg.search_key))
         try:
             yield
         finally:
@@ -80,7 +83,8 @@ def create_app(config=None, sessions=None, provider=None, tools=None, audit=None
     async def health():
         return {"status": "ok", "stage": "V2-M3", "model_configured": app.state.config.model_configured, "model_validated": False,
                 "knowledge_available": app.state.knowledge.available, "knowledge_version": app.state.knowledge.version,
-                "search_configured": bool(app.state.config.search_url and app.state.config.search_key)}
+                "search_configured": bool(app.state.config.search_url and app.state.config.search_key),
+                "interpret_model_configured": app.state.config.interpret_model_configured}
 
     @app.get("/internal/agent/knowledge/{chunk_id}")
     async def knowledge_source(chunk_id: str, request: Request):
@@ -94,8 +98,8 @@ def create_app(config=None, sessions=None, provider=None, tools=None, audit=None
     async def probe(request: Request):
         await authenticate(request)
         try:
-            async with asyncio.timeout(app.state.config.total_timeout):
-                return await app.state.provider.probe()
+            async with asyncio.timeout(app.state.config.interpret_total_timeout):
+                return await interpret_v2.probe(app.state.interpret_provider, app.state.audit)
         except (ProviderError, TimeoutError) as error:
             reason = str(error) if isinstance(error, ProviderError) else "model_probe_timeout"
             raise HTTPException(503, reason) from None
@@ -119,7 +123,7 @@ def create_app(config=None, sessions=None, provider=None, tools=None, audit=None
             raise HTTPException(401, "missing_user_token")
         cfg = app.state.config
         message = body.message
-        for secret in (jwt, cfg.api_key, cfg.service_token, cfg.monitor_token, cfg.search_key):
+        for secret in (jwt, cfg.api_key, cfg.interpret_api_key, cfg.service_token, cfg.monitor_token, cfg.search_key):
             if secret:
                 message = message.replace(secret, "[REDACTED]")
         rid, sid = str(uuid4()), None
@@ -187,6 +191,7 @@ def create_app(config=None, sessions=None, provider=None, tools=None, audit=None
         return response
 
     install_routes(app, authenticate)
+    interpret_v2.install_routes(app, authenticate)
     return app
 
 
