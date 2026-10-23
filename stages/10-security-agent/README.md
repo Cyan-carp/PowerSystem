@@ -1,6 +1,8 @@
-> 2026-10-22 模型接入改为兼容式：`security_agent/provider.py` 新增与阶段9同名的 `merge_tool_calls`/`parse_event_stream`/`message_from_json`/`read_message`，请求统一 `stream: true`。SSE 下 `response_format: json_object` 仍生效，`usage` 从 `choices` 为空的帧收集并只保留三项计数；`ReviewFailure` 语义、30 秒预算、零自动重试、策略与许可校验、`gpt-5.6-sol` 专用分支均不变。镜像 `powersystem-security-agent:model-wire-20261022-r1`（`6c505696d547`），发布事实见[部署日志37](../../notes/04-系统部署发布备份与变更记录/部署与运维日志/37-模型网关兼容式改造三服务.md)。
+# 阶段十 · 安全审查与强制门禁
 
-> 2026-10-19当前生产：安全审查与运维型号均为 `deepseek-v4.1-flash`，生产许可/策略为 v6，30 秒、TTL、并发、零自动重试及 R0/写关闭保持。签名前对当前步骤 P{step_no} 的必要条件作程序限制，不接受模型从角色或资产信息推断缺失身份。20 项真实合成服务样例经程序约束全部通过，原始意见 19/20；不外推模型永远正确。正式事实见 [模型切换发布记录](../../notes/04-系统部署发布备份与变更记录/部署与运维日志/22-运维与安全审查模型切换.md)；下文旧型号/策略及本机签收均为各自历史范围。
+> **当前实现**：`security_agent/provider.py` 请求 `stream: true`，按响应 `Content-Type` 分流解析（SSE 聚合 / 整包 JSON），工具调用增量按 `index` 合并；`response_format: json_object`、`usage` 只保留三项计数、`ReviewFailure` 语义、30 秒预算、零自动重试、策略与许可校验、`gpt-5.6-sol` 专用分支均不变。镜像与发布事实见[部署日志 37](../../notes/04-系统部署发布备份与变更记录/部署与运维日志/37-模型网关兼容式改造三服务.md)。
+
+> **现行状态**：生产指针、策略/许可版本（v6）与运行限制见[当前系统状态](../../notes/00-当前系统状态.md)。下文各 SEC 批次命令属各自历史签收范围，不代表当前写窗口开放。
 
 ---
 
