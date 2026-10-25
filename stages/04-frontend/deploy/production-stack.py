@@ -41,6 +41,7 @@ APPLICATIONS = {'api', 'frontend', 'agent', 'agent-rag', 'ops-agent',
                 'security-agent', 'ops-executor', 'simulator', 'feishu-adapter',
                 'gateway', 'ai-predict'}
 ID = re.compile(r'sha256:[a-f0-9]{64}')
+CHUNK = re.compile(r'-[A-Za-z0-9_-]{6,12}\.(?:js|css)$')
 NAME = re.compile(r'[a-z0-9][a-z0-9-]{0,63}')
 BACKUP_DIR = Path('/var/backups/powersystem')
 FAST_TIER = 'frontend-fast'
@@ -382,6 +383,22 @@ def states(rows):
             for s, r in rows.items()}
 
 
+def chunk_names(names):
+    """Logical frontend chunk names, independent of each build's content hash."""
+    return {CHUNK.sub('', name) for name in names if name.endswith(('.js', '.css'))}
+
+
+def frontend_chunk_names(image):
+    output = command(['docker', 'run', '--rm', '--entrypoint', 'sh', image, '-c',
+                      'ls /usr/share/nginx/html/assets'])
+    return chunk_names(output.decode().split())
+
+
+def missing_chunks(candidate, baseline):
+    """Chunks the serving image has that the candidate image no longer ships."""
+    return sorted(frontend_chunk_names(baseline) - frontend_chunk_names(candidate))
+
+
 def healthy(rows):
     require(all(r['State']['Running'] and
                 r['State'].get('Health', {}).get('Status', 'healthy') == 'healthy'
@@ -714,7 +731,8 @@ def validate_fast_frontend_config(config, args, env, parent, services, overrides
     require(escaped(config) == old, 'fast_tier_configuration_changed')
 
 
-def freeze(name, args_path, parent, services, overrides, backup_tier=FULL_TIER):
+def freeze(name, args_path, parent, services, overrides, backup_tier=FULL_TIER,
+           allow_asset_shrink=False):
     with track('freeze.origin_args') as span:
         args, env = origin_args(args_path)
         span['arguments'] = len(args)
@@ -765,6 +783,15 @@ def freeze(name, args_path, parent, services, overrides, backup_tier=FULL_TIER):
             value.pop('build', None)
             value.pop('pull_policy', None)
         span['images'] = len(config['services'])
+    if 'frontend' in overrides:
+        # A build from a stale source tree silently drops route chunks. Compare the
+        # logical asset names with the serving image before any candidate is written.
+        with track('freeze.frontend_chunks') as span:
+            missing = missing_chunks(config['services']['frontend']['image'],
+                                     rows['frontend']['Image'])
+            span['missing'] = missing
+            require(not missing or allow_asset_shrink,
+                    'frontend_assets_missing:' + ','.join(missing))
     # Fail here rather than after a fresh 650 MB backup and two remote uploads.
     preflight(config, env)
     if backup_tier == FAST_TIER:
@@ -993,7 +1020,8 @@ def prepare(a):
         services.add(service)
     require(bool(services) and services.issubset(APPLICATIONS), 'explicit_application_services_required')
     args_path = a.from_args or previous / 'private/origin-args.json'
-    freeze(a.id, args_path, previous.name, services, overrides, a.tier)
+    freeze(a.id, args_path, previous.name, services, overrides, a.tier,
+           getattr(a, 'allow_asset_shrink', False))
 
 
 def drain():
@@ -1322,6 +1350,7 @@ def main():
     plan.add_argument('--service', action='append')
     plan.add_argument('--image', action='append')
     plan.add_argument('--tier', choices=(FULL_TIER, FAST_TIER), default=FULL_TIER)
+    plan.add_argument('--allow-asset-shrink', action='store_true')
     check = sub.add_parser('preflight')
     check.add_argument('--id', required=True)
     activate = sub.add_parser('publish')

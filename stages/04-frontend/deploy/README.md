@@ -239,7 +239,11 @@ python3 watch-fleet-soak.py --duration 7200 --interval 60 --output-dir /path/to/
 
 仅在已有本机服务和私有口令文件的服务器执行；输出目录必须不存在。输出 `samples.jsonl` / `summary.json`，核对固定 143/140/3、`partial`、错误和延迟，中断不判通过。离线测试：`python -m unittest discover -s stages/04-frontend/deploy -p test_watch_fleet_soak.py`（仓库根执行）。本次容量控制器与私有 Compose 只存于忽略的 `artifacts/fleet-capacity-20261021-r1/`，不能拿生产 Compose 或旧 `m4-load-setup.sql` 直接写生产；实际进度与边界见[容量与长时间测试记录](../../../notes/01-项目调研规划与开发建设记录/第三版-设备扩容/03-容量与稳定性验证/08-容量与长时间测试记录.md)。
 
-先独立构建并审查新镜像。`prepare`只解析配置、读取Docker元数据和冻结候选；可传递已构建镜像标签，工具会解析为实际镜像ID。以下新运行编号与镜像标签须替换，不能原样当成现成版本：
+先独立构建并审查新镜像。**构建上下文必须取自仓库 `HEAD`**：服务器上的阶段目录可能停在旧版本，就地构建会静默丢掉新文件（2026-10-25 前端因此丢过整个第四版界面，见部署日志 45）。做法是 `git archive HEAD stages/04-frontend` 同步过去再 `docker build`，或改在受控工作区构建后导入。
+
+前端候选还有一层产物门禁：`prepare` 会比对候选镜像与当前运行镜像的逻辑分块名（剥掉构建哈希），候选缺少任何一个即以 `frontend_assets_missing:<名字>` 停止；确实要下线页面时显式加 `--allow-asset-shrink`。
+
+`prepare`只解析配置、读取Docker元数据和冻结候选；可传递已构建镜像标签，工具会解析为实际镜像ID。以下新运行编号与镜像标签须替换，不能原样当成现成版本：
 
 ```bash
 python3 /opt/powersystem/stages/04-frontend/deploy/production-stack.py prepare \

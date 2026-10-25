@@ -237,5 +237,26 @@ class PublishBaselineTests(unittest.TestCase):
             self.assertNotEqual(value['updated_at'],pointer['updated_at'])
 
 
+class FrontendAssetTests(unittest.TestCase):
+    """A stale build context silently drops route chunks; prepare must refuse it."""
+
+    def test_only_the_build_hash_is_ignored(self):
+        self.assertEqual(
+            ps.chunk_names(['AgentSchedulesView-BYDNIkqa.js', 'index-AbCdEf12.js',
+                            'LoginView-By5KEgWA.js', 'installCanvasRenderer-EuOyc_8b.js',
+                            'AgentChatView-BYDNIkqa.css', 'logo-abc123.png']),
+            {'AgentSchedulesView', 'index', 'LoginView', 'installCanvasRenderer',
+             'AgentChatView'})
+
+    def test_only_chunks_the_candidate_lost_are_reported(self):
+        with patch.object(ps, 'frontend_chunk_names',
+                          side_effect=[{'index', 'AgentChatView', 'AgentSchedulesView'},
+                                       {'index', 'AgentChatView'}]):
+            self.assertEqual(ps.missing_chunks('candidate', 'baseline'), ['AgentSchedulesView'])
+        with patch.object(ps, 'frontend_chunk_names',
+                          side_effect=[{'index'}, {'index', 'AgentSchedulesView'}]):
+            self.assertEqual(ps.missing_chunks('candidate', 'baseline'), [])
+
+
 if __name__ == '__main__':
     unittest.main()
