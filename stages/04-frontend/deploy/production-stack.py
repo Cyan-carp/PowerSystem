@@ -263,9 +263,43 @@ def verified_full_baseline(archive):
                 archive.stat().st_mtime, datetime.timezone.utc).isoformat()}
 
 
+def activation_time(pointer, path=None):
+    """When the running application release was activated, ignoring re-signs.
+
+    ``updated_at`` moves on every acceptance-pointer write, and a post-backup
+    maintenance requalification is one of them. A full baseline has to follow the
+    application release, not that re-sign, so ``published_at`` records the
+    activation itself. Pointers written before the field existed are traced back
+    through the retained ``backup-maintenance-*.json`` records to the pointer each
+    re-sign replaced.
+    """
+    for _ in range(16):
+        if pointer.get('published_at'):
+            return datetime.datetime.fromisoformat(pointer['published_at'])
+        for record in (sorted(Path(path).glob('backup-maintenance-*.json'), reverse=True)
+                       if path is not None else ()):
+            try:
+                value = read(record)
+            except (OSError, ValueError):
+                continue
+            if value.get('gate_file') == pointer.get('gate_file') and value.get('previous_pointer'):
+                pointer = value['previous_pointer']
+                break
+        else:
+            require(bool(pointer.get('updated_at')), 'activation_time_unknown')
+            return datetime.datetime.fromisoformat(pointer['updated_at'])
+    raise Blocked('backup_maintenance_chain_too_long')
+
+
 def choose_fast_baseline(pointer):
-    """A full snapshot after the last non-frontend release, or its inherited baseline."""
-    boundary = datetime.datetime.fromisoformat(pointer['updated_at']).timestamp()
+    """A full snapshot after the last release activation, or its inherited baseline.
+
+    The boundary is the activation time, never a maintenance re-sign: the re-sign
+    happens after the backup it repairs, so using it would disqualify that same
+    backup for a release that changed nothing but the frontend image.
+    """
+    boundary = activation_time(
+        pointer, release(pointer['release']) if pointer.get('release') else None).timestamp()
     candidates = sorted((path for path in BACKUP_DIR.glob('powersystem-*.tar.gz.gpg')
                          if re.fullmatch(r'powersystem-\d{8}T\d{6}Z\.tar\.gz\.gpg',
                                          path.name)),
@@ -377,9 +411,36 @@ def origin_args(path):
     return args, env
 
 
+def validate_v4_readonly(services):
+    """V4 isolation profiles never become production permission by publishing.
+
+    This gate is deliberately independent of OPS_WRITE_ENABLED: schedule
+    configuration and the new action authorities have separate switches.
+    Enabling them needs an explicitly reviewed production profile first.
+    """
+    readonly = {'V4_ASSISTANT_ENABLED', 'V4_RUNS_ENABLED', 'V4_ARTIFACTS_ENABLED'}
+    for service, spec in services.items():
+        env = spec.get('environment', {})
+        protocol = env.get('V4_READ_DELEGATION_PROTOCOL')
+        if 'V4_READ_DELEGATION_PROTOCOL' in env:
+            require(service == 'agent-rag' and protocol == 'ma/v1-bound-read',
+                    'v4_production_read_protocol_not_authorized')
+        for key in (key for key in env if key.startswith('V4_') and key not in readonly):
+            if key == 'V4_READ_DELEGATION_PROTOCOL':
+                continue  # Explicit old-production R0 bridge, never a write authority.
+            # Docker compose config resolves env_file into this mapping.
+            # Fail closed for unknown values and preserve absent old configs.
+            require(key not in env or str(env[key]).lower() in ('false', '0'),
+                    'v4_production_profile_not_authorized:' + service + ':' + key)
+        if service == 'security-agent':
+            require(env.get('SEC_RUNTIME_PROFILE') == 'm4-server-readonly',
+                    'v4_production_security_profile_not_authorized')
+
+
 def validate(config):
     require(config.get('name') == PROJECT, 'wrong_project')
     services = config['services']
+    validate_v4_readonly(services)
     require(APPLICATIONS.issubset(services), 'missing_production_service')
     env = services['api'].get('environment', {})
     for key, value in {
@@ -739,10 +800,14 @@ def freeze(name, args_path, parent, services, overrides, backup_tier=FULL_TIER):
     return path, m
 
 
-def set_active(path, gate_name, backup_baseline=None):
+def set_active(path, gate_name, backup_baseline=None, published_at=None):
+    """Move the acceptance pointer; a maintenance re-sign keeps the activation time."""
     m = read(path / 'manifest.json')
+    published = published_at or now()
+    if not isinstance(published, str):
+        published = published.isoformat()
     pointer = {'release': path.name, 'manifest_sha256': digest(m),
-               'gate_file': gate_name, 'updated_at': now()}
+               'gate_file': gate_name, 'updated_at': now(), 'published_at': published}
     if backup_baseline is not None:
         pointer['backup_baseline'] = backup_baseline
     write(path / 'acceptance-pointer.json', pointer)
@@ -752,6 +817,147 @@ def set_active(path, gate_name, backup_baseline=None):
 def current_matches(path, m):
     gate = read(path / read(STATE_DIR / 'active.json')['gate_file'])
     require(states(inspect()) == gate['states'], 'running_baseline_drift')
+
+
+def maintenance_states_match(before, after):
+    """A full backup may restart only its two writers, never recreate them."""
+    require(set(before) == set(after), 'backup_maintenance_service_set_changed')
+    for service, expected in before.items():
+        actual = after[service]
+        keys = ('id', 'image', 'restarts') if service in ('agent-rag', 'ops-agent') else expected.keys()
+        require(all(actual.get(k) == expected[k] for k in keys),
+                'backup_maintenance_identity_changed:' + service)
+
+
+def backup_maintenance_snapshot(path, after=False, archive=None):
+    """Called under backup.sh's existing lock; no deployment or pointer update."""
+    path = Path(path)
+    if archive is not None:
+        value = read(path)
+        require('after' in value, 'backup_maintenance_resume_unproven')
+        value.update(archive=Path(archive).name, sha256=sha(archive))
+        write(Path(str(archive) + '.v4-maintenance.json'), value)
+        return
+    release_path, manifest = active()
+    rows = inspect()
+    healthy(rows)
+    if not after:
+        current_matches(release_path, manifest)
+        write(path, {'version': 1, 'active': read(STATE_DIR / 'active.json'),
+                     'before': states(rows), 'started_at': now()})
+    else:
+        value = read(path)
+        require(value['active'] == read(STATE_DIR / 'active.json'),
+                'backup_maintenance_active_changed')
+        maintenance_states_match(value['before'], states(rows))
+        value.update(after=states(rows), resumed_at=now())
+        write(path, value)
+
+
+def verify_backup_maintenance(a):
+    """Requalify this same release after its recorded backup pause/resume only."""
+    path, manifest = active()
+    pointer = read(STATE_DIR / 'active.json')
+    baseline = verified_full_baseline(a.backup)
+    receipt = read(Path(str(Path(a.backup).resolve()) + '.v4-maintenance.json'))
+    require(receipt.get('version') == 1 and receipt.get('active') == pointer and
+            receipt.get('archive') == baseline['archive'] and
+            receipt.get('sha256') == baseline['sha256'], 'backup_maintenance_receipt_mismatch')
+    old_gate = read(path / pointer['gate_file'])
+    require(receipt['before'] == old_gate['states'], 'backup_maintenance_baseline_mismatch')
+    maintenance_states_match(receipt['before'], receipt['after'])
+    rows = inspect()
+    healthy(rows)
+    require(states(rows) == receipt['after'], 'backup_maintenance_post_resume_drift')
+    require(bool(manifest.get('parent')) and bool(manifest['services']),
+            'backup_maintenance_parent_required')
+    transaction = {'previous': manifest['parent'], 'candidate': path.name,
+                   'services': manifest['services'], 'before': states(rows),
+                   'started_at': now(), 'kind': 'post_backup_maintenance',
+                   'backup': baseline}
+    write(STATE_DIR / 'pending.json', transaction)
+    try:
+        accepted_gate = gate(path, [], states(rows))
+        # Record the old receipt and gate; only the existing gate can issue the
+        # new acceptance pointer. Every original gate/manifest stays retained.
+        write(path / ('backup-maintenance-' + str(time.time_ns()) + '.json'),
+              {'previous_pointer': pointer, 'receipt': receipt, 'gate_file': accepted_gate})
+        set_active(path, accepted_gate, pointer.get('backup_baseline'),
+                   pointer.get('published_at') or activation_time(pointer, path).isoformat())
+        (STATE_DIR / 'pending.json').unlink()
+    except Exception:
+        restore_transaction(transaction)
+        raise
+
+
+def rollback_maintenance_matches(receipt_path, path, pointer, rows):
+    """A failed backup may prove resume, but cannot issue new acceptance."""
+    receipt_path = Path(receipt_path).resolve()
+    require(receipt_path.parent == BACKUP_DIR and
+            re.fullmatch(r'powersystem-\d{8}T\d{6}Z\.tar\.gz\.gpg\.v4-maintenance.json', receipt_path.name),
+            'backup_maintenance_receipt_path_invalid')
+    receipt = read(receipt_path)
+    require(receipt.get('version') == 1 and receipt.get('active') == pointer,
+            'backup_maintenance_receipt_mismatch')
+    resumed = datetime.datetime.fromisoformat(receipt['resumed_at'])
+    require(resumed.tzinfo is not None and 0 <= time.time() - resumed.timestamp() <= 86400,
+            'backup_maintenance_receipt_expired')
+    require(receipt['before'] == read(path / pointer['gate_file'])['states'],
+            'backup_maintenance_baseline_mismatch')
+    maintenance_states_match(receipt['before'], receipt['after'])
+    healthy(rows)
+    require(states(rows) == receipt['after'], 'backup_maintenance_post_resume_drift')
+
+
+def maintenance_receipt(archive, m, pm, archive_sha):
+    """The pause/resume record of the full backup this candidate was planned on.
+
+    A full backup stops and restarts the two V4 writers, so the state after it can
+    never equal the snapshot frozen before it. This receipt is the only accepted
+    explanation for that difference: same parent release and frozen manifest, the
+    same encrypted archive proven on both targets, the candidate's own freeze
+    snapshot as ``before``, and nothing but the two writers' start times allowed to
+    move. It never replaces an acceptance gate, never rewrites the frozen manifest
+    and excuses no other drift.
+    """
+    archive = Path(archive).resolve()
+    path = Path(str(archive) + '.v4-maintenance.json')
+    if not path.is_file():
+        return None
+    receipt = read(path)
+    baseline = verified_full_baseline(archive)
+    require(baseline['sha256'] == archive_sha, 'backup_maintenance_archive_changed')
+    require(receipt.get('version') == 1 and 'before' in receipt and 'after' in receipt,
+            'backup_maintenance_receipt_incomplete')
+    require(receipt.get('archive') == archive.name and receipt.get('sha256') == archive_sha,
+            'backup_maintenance_receipt_archive_mismatch')
+    pointer = receipt.get('active') or {}
+    require(pointer.get('release') == m['parent'] and
+            pointer.get('manifest_sha256') == digest(pm) and
+            bool(pointer.get('gate_file')), 'backup_maintenance_parent_mismatch')
+    require(read(release(m['parent']) / pointer['gate_file']).get('states') == receipt['before'],
+            'backup_maintenance_baseline_mismatch')
+    maintenance_states_match(receipt['before'], receipt['after'])
+    require(receipt['before'] == m['before'], 'backup_maintenance_candidate_mismatch')
+    try:
+        started = datetime.datetime.fromisoformat(receipt['started_at'])
+        resumed = datetime.datetime.fromisoformat(receipt['resumed_at'])
+        frozen = datetime.datetime.fromisoformat(m['created_at'])
+    except (KeyError, TypeError, ValueError):
+        raise Blocked('backup_maintenance_receipt_incomplete') from None
+    require(started.timestamp() >= frozen.timestamp(),
+            'backup_maintenance_receipt_predates_candidate')
+    require(resumed.timestamp() >= started.timestamp(), 'backup_maintenance_receipt_incomplete')
+    return receipt
+
+
+def require_baseline(running, snapshot, receipt, reason):
+    """The running state is the accepted snapshot, or its own proven backup window."""
+    if running == snapshot:
+        return 'snapshot'
+    require(receipt is not None and receipt['before'] == snapshot and
+            running == receipt['after'], reason)
+    return 'backup_maintenance'
 
 
 def bootstrap(a):
@@ -836,6 +1042,75 @@ def started_at(row):
         tzinfo=datetime.timezone.utc).timestamp()
 
 
+def api_startup_wait_diagnostic(diagnostic):
+    for line in diagnostic.splitlines():
+        line = line.strip()
+        if (line == 'timed out waiting for containers to become healthy' or
+                line == 'container ' + PROJECT + '-api-1 is unhealthy' or
+                re.fullmatch(r'application not healthy after [0-9hms.]+', line)):
+            return True
+    return False
+
+
+def wait_initial_api(manifest, services, seconds=480):
+    """Allow a live, unchanged API to finish its large latest-value scan.
+
+    This is startup time only. No unhealthy instance is accepted, and every
+    original gate still runs after this function returns.
+    """
+    require('api' in services, 'startup_wait_requires_api')
+    initial = inspect()
+    require(set(services).issubset(initial), 'startup_service_missing')
+    before = states({name: initial[name] for name in services})
+    deadline = time.monotonic() + seconds
+    while True:
+        rows = inspect()
+        require(set(services).issubset(rows), 'startup_service_missing')
+        require(states({name: rows[name] for name in services}) == before,
+                'startup_instance_changed')
+        for name in services:
+            row = rows[name]
+            require(row['Image'] == manifest['images'][name] and
+                    row['State']['Running'] and not row['State']['OOMKilled'] and
+                    row['RestartCount'] == 0, 'startup_instance_not_stable')
+            if name != 'api':
+                healthy({name: row})
+        status = rows['api']['State'].get('Health', {}).get('Status')
+        require(status in ('starting', 'unhealthy', 'healthy'), 'api_health_probe_required')
+        if status == 'healthy':
+            healthy({name: rows[name] for name in services})
+            return
+        require(time.monotonic() < deadline, 'api_initialization_timeout')
+        time.sleep(2)
+
+
+def healthy_parent_already_deployed(path, services):
+    """An interrupted rollback can finish its gate without another restart."""
+    m = immutable(path)
+    config = read(path / 'private/compose.json')
+    rows = inspect()
+    try:
+        healthy(rows)
+    except Blocked:
+        return False
+    for name in services:
+        if name not in rows:
+            return False
+        row = rows[name]
+        labels = row['Config']['Labels']
+        env = dict(value.split('=', 1) for value in row['Config']['Env'])
+        if (row['Image'] != m['images'][name] or
+                row['State']['OOMKilled'] or row['RestartCount'] != 0 or
+                labels.get('com.docker.compose.project') != PROJECT or
+                labels.get('com.docker.compose.service') != name or
+                labels.get('com.docker.compose.project.config_files') != str(path / 'private/compose.json') or
+                labels.get('com.docker.compose.project.environment_file') != m['origin_environment'] or
+                not all(env.get(key) == str(value) for key, value in
+                        config['services'][name].get('environment', {}).items())):
+            return False
+    return True
+
+
 def deploy(path, services):
     with track('deploy.immutable'):
         m = immutable(path)
@@ -843,9 +1118,17 @@ def deploy(path, services):
     wall = time.time()
     with track('deploy.compose_up') as span:
         span['services'] = len(services)
-        command(compose(path) + ['up', '-d', '--no-deps', '--no-build', '--pull', 'never',
-                                '--force-recreate', '--wait', '--wait-timeout', '120', *services],
-                log)
+        try:
+            command(compose(path) + ['up', '-d', '--no-deps', '--no-build', '--pull', 'never',
+                                    '--force-recreate', '--wait', '--wait-timeout', '120', *services],
+                    log)
+        except Blocked as error:
+            diagnostic = log.read_text(errors='replace') if log.is_file() else ''
+            known_wait = api_startup_wait_diagnostic(diagnostic)
+            if str(error) != 'command_failed:docker' or not known_wait:
+                raise
+            wait_initial_api(m, services)
+            span['api_initialization_grace_used'] = True
         span['log_bytes'] = log.stat().st_size if log.is_file() else 0
     with track('deploy.nginx'):
         if {'api', 'frontend'} & set(services):
@@ -918,7 +1201,14 @@ def restore_transaction(transaction):
     with track('rollback.drain'):
         drain()
     with track('rollback.deploy'):
-        deploy(previous, services)
+        if healthy_parent_already_deployed(previous, services):
+            pm = immutable(previous)
+            refresh_registry(previous, pm['origin_environment'])
+            if {'api', 'frontend'} & set(services):
+                command(['docker', 'exec', PROJECT + '-frontend-1', 'nginx', '-t'])
+                command(['docker', 'exec', PROJECT + '-frontend-1', 'nginx', '-s', 'reload'])
+        else:
+            deploy(previous, services)
     with track('rollback.gate'):
         gate_name = gate(previous, services, transaction['before'])
     with track('rollback.activate'):
@@ -931,22 +1221,17 @@ def restore_transaction(transaction):
 def publish(a):
     with track('publish.resolve_active'):
         previous, pm = active()
-    with track('publish.confirm_baseline'):
-        current_matches(previous, pm)
-    with track('publish.confirm_health'):
-        healthy(inspect())
     with track('publish.candidate_manifest'):
         candidate = release(a.id)
         m = immutable(candidate)
     require(m['parent'] == previous.name, 'stale_or_unrelated_candidate')
-    with track('publish.baseline_drift'):
-        require(states(inspect()) == m['before'], 'candidate_baseline_drift')
     services = m['services']
     require(bool(services) and set(services).issubset(APPLICATIONS), 'invalid_release_services')
     archive = Path(a.backup).resolve()
     tier = m.get('backup_tier', FULL_TIER)
     require(tier in (FULL_TIER, FAST_TIER), 'unknown_backup_tier')
     baseline = None
+    maintenance = None
     if tier == FAST_TIER:
         with track('publish.verify_fast_capsule') as span:
             receipt, baseline = verified_fast_capsule(
@@ -968,6 +1253,20 @@ def publish(a):
             require(archive.stat().st_mtime >=
                     datetime.datetime.fromisoformat(m['created_at']).timestamp(),
                     'backup_must_follow_candidate_preparation')
+        # That backup paused and resumed the two writers after this manifest was
+        # frozen; only its own receipt can explain the difference, and both baseline
+        # checks below plus the full gate still have to pass.
+        with track('publish.maintenance_receipt'):
+            maintenance = maintenance_receipt(archive, m, pm, archive_sha)
+    with track('publish.confirm_baseline'):
+        running = states(inspect())
+        checkpoint = read(STATE_DIR / 'active.json')
+        require_baseline(running, read(previous / checkpoint['gate_file'])['states'],
+                         maintenance, 'running_baseline_drift')
+    with track('publish.confirm_health'):
+        healthy(inspect())
+    with track('publish.baseline_drift'):
+        require_baseline(running, m['before'], maintenance, 'candidate_baseline_drift')
     if TIMELINE is not None:
         TIMELINE.notes['candidate_created_at'] = m['created_at']
         TIMELINE.notes['prepare_to_publish_seconds'] = round(
@@ -1028,7 +1327,10 @@ def main():
     activate = sub.add_parser('publish')
     activate.add_argument('--id', required=True)
     activate.add_argument('--backup', required=True)
-    sub.add_parser('rollback')
+    maintenance = sub.add_parser('verify-backup')
+    maintenance.add_argument('--backup', required=True)
+    rollback = sub.add_parser('rollback')
+    rollback.add_argument('--backup-maintenance')
     sub.add_parser('status')
     watch = sub.add_parser('timing')
     watch.add_argument('--limit', type=int, default=10)
@@ -1054,7 +1356,11 @@ def main():
             if a.phase == 'rollback':
                 if not pending.exists():
                     current, cm = active()
-                    current_matches(current, cm)
+                    if a.backup_maintenance:
+                        rollback_maintenance_matches(a.backup_maintenance, current,
+                                                     read(STATE_DIR / 'active.json'), inspect())
+                    else:
+                        current_matches(current, cm)
                     require(bool(cm['parent']) and bool(cm['services']), 'no_previous_release')
                     accepted(release(cm['parent']),
                              read(release(cm['parent']) / 'acceptance-pointer.json'))
@@ -1065,13 +1371,14 @@ def main():
             else:
                 require(not pending.exists(), 'unfinished_release_requires_rollback')
                 {'prepare': prepare, 'bootstrap': bootstrap, 'preflight': verify_candidate,
+                 'verify-backup': verify_backup_maintenance,
                  'publish': publish}[a.phase](a)
     except Exception as error:
         persist_timing('failed', error)
         raise
     record, value = persist_timing('ok')
     print(json.dumps({'phase': a.phase, 'completed': True,
-                      'verification_run': a.phase in ('publish', 'rollback'),
+                      'verification_run': a.phase in ('publish', 'rollback', 'verify-backup'),
                       'total_seconds': value['total_seconds'] if value else None,
                       'timing_file': str(record) if record else None,
                       'slowest': value['slowest'] if value else None}))
