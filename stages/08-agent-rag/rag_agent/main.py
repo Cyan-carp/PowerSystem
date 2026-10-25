@@ -37,7 +37,7 @@ class Chat(BaseModel):
 UNLOCK = "if redis.call('GET',KEYS[1])==ARGV[1] then return redis.call('DEL',KEYS[1]) else return 0 end"
 
 
-def create_app(config=None, store=None, redis=None, provider=None, tools=None):
+def create_app(config=None, store=None, redis=None, provider=None, tools=None, run_worker=True, run_authority=None):
     @asynccontextmanager
     async def lifespan(app):
         cfg = config or Config.load()
@@ -59,20 +59,50 @@ def create_app(config=None, store=None, redis=None, provider=None, tools=None):
         app.state.tools = tools or Tools(cfg, client, app.state.knowledge)
         app.state.fixture_tools = tools is not None
         app.state.provider = provider or Provider(cfg, client)
+        loop=None;schedule_loop=None
+        if hasattr(app.state.store,'pool'):
+            from .run_store import RunStore
+            from .run_worker import RunWorker
+            app.state.runs=RunStore(app.state.store)
+            from .artifacts import ArtifactService
+            app.state.artifacts=ArtifactService(app.state.runs,cfg,client)
+            app.state.run_worker=RunWorker(app,app.state.runs,run_authority)
+            from .schedules import ScheduleService
+            app.state.schedules=ScheduleService(app)
+            if getattr(cfg,'v4_schedules_enabled',False):
+                await app.state.schedules.guard()
+                if run_worker:schedule_loop=asyncio.create_task(app.state.schedules.loop())
+            # Keep recovery and queries alive even when new admission is disabled.
+            if run_worker:loop=asyncio.create_task(app.state.run_worker.loop())
         try:
             yield
         finally:
+            if schedule_loop:
+                schedule_loop.cancel();await asyncio.gather(schedule_loop,return_exceptions=True)
+            if hasattr(app.state,'schedules'):
+                for task in list(app.state.schedules.controls):task.cancel()
+                await asyncio.gather(*list(app.state.schedules.controls),return_exceptions=True)
+            if loop:
+                loop.cancel();await asyncio.gather(loop,return_exceptions=True)
+                await app.state.run_worker.stop()
             await client.aclose()
             if not store: await app.state.store.pool.close()
             if not redis: await app.state.redis.aclose()
 
     app = FastAPI(title="PowerSystem general Agent and RAG", lifespan=lifespan)
+    from .schedules import routes as schedule_routes
+    schedule_routes(app)
+    from .schedule_bridge import routes as bridge_routes
+    bridge_routes(app)
 
     @app.middleware("http")
     async def security(request, next_handler):
         if request.url.path.startswith("/internal/") and request.url.path != "/internal/agent/knowledge/search":
             supplied = request.headers.get("X-PowerSystem-Token", "")
-            if not hmac.compare_digest(supplied.encode(), app.state.config.service_token.encode()):
+            expected = app.state.config.service_token
+            if request.url.path.startswith('/internal/schedule-bridge/'):
+                expected = getattr(app.state.config,'schedule_bridge_token','')
+            if len(expected)<32 or not hmac.compare_digest(supplied.encode(), expected.encode()):
                 return JSONResponse(status_code=401, content={"detail": "invalid_service_token"})
         if request.method == "POST":
             raw = bytearray()
@@ -91,7 +121,8 @@ def create_app(config=None, store=None, redis=None, provider=None, tools=None):
     async def health():
         return {"status": "ok", "engine": "agent-rag", "model": app.state.config.model, "model_validated": False,
                 "embedding_ready": app.state.embedding_ready, "boundaries": {"evidence": app.state.config.evidence_enabled, "verify": app.state.config.verify_enabled,
-                "daily_gate": app.state.config.daily_gate_enabled, "daily_rule_version": RULE_VERSION}}
+                "daily_gate": app.state.config.daily_gate_enabled, "daily_rule_version": RULE_VERSION,
+                "v4_assistant": getattr(app.state.config, 'v4_assistant_enabled', False)}}
 
     @app.get("/internal/agent/sessions")
     async def sessions(user_id: int, offset: int = 0):
@@ -107,6 +138,7 @@ def create_app(config=None, store=None, redis=None, provider=None, tools=None):
             ops = Ops(app.state.config, app.state.client, request.headers.get("X-MA-Actor", ""), request.headers.get("Authorization", "").removeprefix("Bearer "), sid, user_id)
             for turn in turns:
                 for card in turn["response"].get("task_cards", []):
+                    if turn.get('run_id'):continue  # S03 children are already bound at creation.
                     if card.get("historical") or not card.get("link_pending"): continue
                     try:
                         await ops.bind(card["task_id"], turn["id"])
@@ -155,9 +187,12 @@ def create_app(config=None, store=None, redis=None, provider=None, tools=None):
             await app.state.redis.eval(UNLOCK, 1, key, rid)
 
     @app.get("/internal/agent/rag/sources/{chunk_id}")
-    async def source(chunk_id: str):
+    async def source(chunk_id: str, collection: str | None = None, version: str | None = None):
         if not re.fullmatch(r"K[a-f0-9]{20}", chunk_id): raise HTTPException(400, "invalid_source")
-        row = await app.state.knowledge.source(chunk_id)
+        try:
+            row = await app.state.knowledge.source(chunk_id,collection,version) if collection or version else await app.state.knowledge.source(chunk_id)
+        except ValueError:
+            raise HTTPException(400,'invalid_source_reference') from None
         if not row: raise HTTPException(404, "source_not_found")
         return row
 
@@ -200,8 +235,9 @@ def create_app(config=None, store=None, redis=None, provider=None, tools=None):
                 raise HTTPException(404, "session_not_found")
             previous = await app.state.store.turns(sid)
             try:
-                decision = classify(question, previous) if cfg.daily_gate_enabled else None
-                context = model_history(previous, cfg.daily_gate_enabled)
+                legacy_daily = cfg.daily_gate_enabled and not getattr(cfg, 'v4_assistant_enabled', False)
+                decision = classify(question, previous) if legacy_daily else None
+                context = model_history(previous, legacy_daily)
             except Exception:
                 raise HTTPException(503, "daily_boundary_unavailable") from None
             if decision is not None:
@@ -254,6 +290,10 @@ def create_app(config=None, store=None, redis=None, provider=None, tools=None):
         finally:
             await app.state.redis.eval(UNLOCK, 1, key, rid)
 
+    from .run_api import routes
+    routes(app)
+    from .artifact_api import routes as artifact_routes
+    artifact_routes(app)
     return app
 
 

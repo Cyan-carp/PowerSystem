@@ -44,6 +44,12 @@ class Ops:
         try:
             r = await self.client.request(method, cfg.ops_url + path, json=body, headers=headers, timeout=35 if path.endswith('/model-summary') else cfg.tool_timeout)
             if r.status_code not in (200,202):
+                if path.startswith(('/internal/ma-action/v1/','/internal/ma-ops/v1/')):
+                    allowed={'action_binding_conflict','approval_binding_changed','approval_binding_changed','approval_decision_conflict','approval_expired','target_version_changed','permission_changed','security_review_stale','action_cancelled','action_not_found','isolated_s06_policy_required','business_actions_disabled','invalid_action_arguments'}
+                    allowed.update(('admin_required','ops_actions_disabled','isolated_s07_policy_required','registered_service_required','security_unavailable'))
+                    try:detail=r.json().get('detail')
+                    except ValueError:detail=None
+                    if detail in allowed:raise HTTPException(r.status_code,detail)
                 raise HTTPException(r.status_code if r.status_code in (400,401,403,404,409,429,503) else 503, "ops_"+str(r.status_code), headers={"Retry-After": r.headers.get("Retry-After", "2")} if r.status_code == 429 else None)
             return r.json()
         except (TimeoutError, OSError): raise HTTPException(503, "ops_unavailable") from None
@@ -123,7 +129,7 @@ class SupervisorTools:
                     self.dispatched = await self.ops.dispatch(args.intent, args.target_description,operation=args.operation, **({"task_kind":args.task_kind} if args.task_kind!="ops" else {}))
                     result["task_cards"] = [self.dispatched]
                     result["response_mode"] = "task_dispatched"
-                task = await self.ops.wait(self.dispatched, min(15, max(0, self.deadline-time.monotonic()-5)))
+                task = await self.ops.wait(self.dispatched, min(getattr(self.ops,'run_wait',15), max(0, self.deadline-time.monotonic()-5)))
                 self.dispatched = task; result["task_cards"] = [task]
                 # Actual delegated calls only: queued tasks never become queried evidence.
                 result["tool_calls"].extend(c for c in task.get("tool_calls", []) if c not in result["tool_calls"])

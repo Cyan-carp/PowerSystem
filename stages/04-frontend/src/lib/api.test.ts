@@ -1,6 +1,14 @@
 import { describe, expect, it, vi } from 'vitest'
 
 describe('API authorization', () => {
+  it('pins knowledge collection and version without forwarding a supplied origin or other query fields', async () => {
+    const fetch = vi.fn().mockResolvedValue({ ok: true, status: 200, headers: new Headers(), json: async () => ({ code: 0, data: {} }) })
+    vi.stubGlobal('fetch', fetch)
+    const { api } = await import('./api')
+    await api.ragSource('K-fixed', 'https://untrusted.invalid/anything?collection=powersystem_rag_fixed&version=abc&token=secret')
+    expect(fetch.mock.calls[0][0]).toBe('/api/v1/agent/rag/sources/K-fixed?collection=powersystem_rag_fixed&version=abc')
+    vi.unstubAllGlobals()
+  })
   it('clears the session and returns to login after a protected request receives 401', async () => {
     const values = new Map<string, string>()
     const replace = vi.fn()

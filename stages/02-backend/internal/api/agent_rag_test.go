@@ -53,3 +53,30 @@ func TestRAGProxyUsesNewChatAndPreservesOldService(t *testing.T) {
 		t.Fatal("legacy knowledge routing changed")
 	}
 }
+
+func TestRAGSourcePinsHistoricalCollectionAndVersion(t *testing.T) {
+	calls := 0
+	next := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if r.URL.Query().Get("collection") != "powersystem_rag_old_import" || r.URL.Query().Get("version") != strings.Repeat("a", 64) {
+			t.Errorf("lost source version: %s", r.URL.RawQuery)
+		}
+		w.Write([]byte(`{"content":"retained source"}`))
+	}))
+	defer next.Close()
+	s := &Server{cfg: config.Config{AgentEnabled: true, AgentChatURL: next.URL, AgentToken: "fixture"}}
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.GET("/rag/sources/:id", s.agentRAGProxy)
+	base := "/rag/sources/K0123456789abcdef0123"
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, httptest.NewRequest("GET", base+"?collection=powersystem_rag_old_import&version="+strings.Repeat("a", 64), nil))
+	if w.Code != 200 || calls != 1 {
+		t.Fatalf("pin request failed: %d", w.Code)
+	}
+	w = httptest.NewRecorder()
+	router.ServeHTTP(w, httptest.NewRequest("GET", base+"?collection=unrelated_private", nil))
+	if w.Code != 400 || calls != 1 {
+		t.Fatalf("bad collection forwarded: %d", w.Code)
+	}
+}

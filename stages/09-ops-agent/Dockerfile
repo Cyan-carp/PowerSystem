@@ -5,6 +5,7 @@ COPY stages/09-ops-agent/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY stages/09-ops-agent/ops_agent ops_agent
 COPY stages/09-ops-agent/ops_contract.py stages/09-ops-agent/ops_write_contract.py ./
+COPY stages/09-ops-agent/v4_joint.py ./
 COPY stages/10-security-agent/review_contract.py ./
 COPY stages/08-agent-rag/rag_agent/business_quality.py ./
 COPY stages/09-ops-agent/deploy deploy

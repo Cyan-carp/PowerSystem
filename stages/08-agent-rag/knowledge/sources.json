@@ -1,8 +1,61 @@
 [
-  {"path": "notes/03-平台使用运维与二次开发手册/平台使用手册.md", "title": "平台使用手册.md"},
-  {"path": "notes/03-平台使用运维与二次开发手册/平台运维与二次开发手册.md", "title": "平台运维与二次开发手册.md"},
-  {"path": "notes/05-设备知识设计素材与历史归档资产/设备知识/SUN2000-100KTL-M2-仿真参考.md", "title": "设备知识/SUN2000-100KTL-M2-仿真参考.md", "applicability":{"source_type":"simulation_reference","manufacturer":"Huawei","full_model":"SUN2000-100KTL-M2","region_variant":null,"document_number":null,"document_version":"project-reference-v1","registered":true,"conditions":{"is_simulated":true}}},
-  {"path": "stages/02-backend/README.md"},
-  {"path": "stages/03-ai-prediction/README.md"},
-  {"path": "stages/08-agent-rag/README.md"}
+  {
+    "path": "notes/03-平台使用运维与二次开发手册/平台使用手册.md",
+    "title": "平台使用手册.md",
+    "sha256": "39e7982d65777e325f8f849c610ea7ad7d11fb6ad1b2b40403cd20dc39aee5f9"
+  },
+  {
+    "path": "notes/03-平台使用运维与二次开发手册/平台运维与二次开发手册.md",
+    "title": "平台运维与二次开发手册.md",
+    "sha256": "ab2b367eabf6ce478bc54b67c35777b251ab179cdfa2b55c72832c889df187b7"
+  },
+  {
+    "path": "notes/05-设备知识设计素材与历史归档资产/设备知识/SUN2000-100KTL-M2-仿真参考.md",
+    "title": "设备知识/SUN2000-100KTL-M2-仿真参考.md",
+    "applicability": {
+      "source_type": "simulation_reference",
+      "manufacturer": "Huawei",
+      "full_model": "SUN2000-100KTL-M2",
+      "region_variant": null,
+      "document_number": null,
+      "document_version": "project-reference-v1",
+      "registered": true,
+      "conditions": {
+        "is_simulated": true
+      }
+    },
+    "sha256": "45ed954f1721aba472157c0e59cec293b8362082321b444d0477b47409f79eb4"
+  },
+  {
+    "path": "stages/02-backend/README.md",
+    "sha256": "0b2535eef4819e6b70c3fb2ac4677bc62581bb0bf694a947be75d97ddd5815f0"
+  },
+  {
+    "path": "stages/03-ai-prediction/README.md",
+    "sha256": "9a088fcb65a8dfcddd200be55a4c049f178f51feae78e7c32412e08b67e01cc8"
+  },
+  {
+    "path": "stages/08-agent-rag/README.md",
+    "sha256": "eae3a2b5a9a1230ebe56f41f8d628073b2c145b990deb48cf0db8ae790372d20"
+  },
+  {
+    "path": "notes/03-平台使用运维与二次开发手册/平台运维与二次开发手册/01-平台架构部署与基础运维.md",
+    "title": "平台运维与二次开发手册/01-平台架构部署与基础运维.md",
+    "sha256": "4ae9d81f608d30936f9d95042457bb406c1c9b743c847ead8ab2c5eba9e82cf5"
+  },
+  {
+    "path": "notes/03-平台使用运维与二次开发手册/平台运维与二次开发手册/02-Agent与知识库运维.md",
+    "title": "平台运维与二次开发手册/02-Agent与知识库运维.md",
+    "sha256": "9f23440faddf2d188b28c48a0a3cda441ff93ec8d1ee74dd10e70b39d45515bf"
+  },
+  {
+    "path": "notes/03-平台使用运维与二次开发手册/平台运维与二次开发手册/03-多智能体与安全审查运维.md",
+    "title": "平台运维与二次开发手册/03-多智能体与安全审查运维.md",
+    "sha256": "646b3487598f7a6d94942453fbae027c5ad2927e19fde2d04aa84b8f57c892e5"
+  },
+  {
+    "path": "notes/03-平台使用运维与二次开发手册/平台运维与二次开发手册/04-发布恢复与补充业务维护.md",
+    "title": "平台运维与二次开发手册/04-发布恢复与补充业务维护.md",
+    "sha256": "3aaa7ce6636ad06eacb155fd5ab7bf0cb5114408ec1b03ca67f8316bac361729"
+  }
 ]

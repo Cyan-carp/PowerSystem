@@ -99,6 +99,7 @@ def applicability(device, meta):
 def build_quality(calls, historical=False):
     facts, missing, devices, latest, rules, documents = [], [], {}, {}, [], []
     device_refs = {}
+    selected_devices = set()
     evidence = []
     success = failed = 0
 
@@ -142,6 +143,7 @@ def build_quality(calls, historical=False):
                 if args.get('device_id') and args['device_id'] != device['id']:
                     missing.append('设备返回与请求目标不一致'); continue
                 devices[device['id']] = device
+                if name == 'get_device': selected_devices.add(device['id'])
                 device_refs[device['id']] = ref
                 add('device', {'device_id': device['id'], 'device_code': device.get('device_code'), 'queried_at': collected}, '台账设备 ' + text(device.get('device_code') or device['id']) + '（ID ' + str(device['id']) + '）；查询时间 ' + text(collected) + '。', [ref], device['id'])
         elif name == 'list_stations':
@@ -207,7 +209,8 @@ def build_quality(calls, historical=False):
                 compared = compare(alarm.get('metric'), alarm.get('value'), alarm.get('threshold'), alarm.get('rule_operator'), UNITS.get(alarm.get('metric')))
                 if compared and alarm.get('rule_version'):
                     compared['rule_version'] = alarm['rule_version']
-                    add('historical_threshold', compared, comparison_text(compared, '告警触发时快照'), [ref], device_id)
+                    compared['alarm_id'] = alarm.get('id')
+                    add('historical_threshold', compared, comparison_text(compared, '告警触发时快照') + '（告警 ID ' + text(alarm.get('id')) + '）', [ref], device_id)
                 else: missing.append('历史告警缺少比较符/规则版本等快照，不使用当前规则反推')
         elif name in ('search_knowledge', 'knowledge.search'):
             documents.extend((row, ref) for row in data.get('results', []) if isinstance(row, dict))
@@ -235,7 +238,7 @@ def build_quality(calls, historical=False):
     if latest and not rules:
         missing.append('未取得当前告警规则，不能据遥测自行设定现场阈值或断言整体健康')
     for row, ref in documents:
-        targets = devices.items() if devices else [(None, {})]
+        targets = [(did, devices[did]) for did in selected_devices] if selected_devices else devices.items() if devices else [(None, {})]
         for device_id, device in targets:
             state, reason = applicability(device, row.get('applicability'))
             data = {'source_id':row.get('id'), 'source_version':row.get('version'), 'applicability':row.get('applicability'), 'state':state}

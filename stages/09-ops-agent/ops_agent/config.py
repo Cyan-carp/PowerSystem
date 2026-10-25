@@ -56,6 +56,10 @@ class Config:
     security_service_token: str = field(default='', repr=False)
     security_request_key: str = field(default='', repr=False)
     security_result_key: str = field(default='', repr=False)
+    v4_joint_profile: str = ''
+    v4_actions_enabled: bool = False
+    v4_ops_enabled: bool = False
+    v4_schedules_enabled: bool = False
 
     @classmethod
     def load(cls):
@@ -65,6 +69,17 @@ class Config:
                   knowledge_token=secret("AGENT_SERVICE_TOKEN_FILE"),
                   executor_token=secret('OPS_EXECUTOR_TOKEN_FILE'),executor_grant_key=secret('OPS_EXECUTOR_GRANT_KEY_FILE'))
         cfg.executor_write_key=secret('OPS_EXECUTOR_WRITE_KEY_FILE')
+        cfg.v4_actions_enabled=os.getenv('V4_ACTIONS_ENABLED','false').lower()=='true'
+        ops_switch=os.getenv('V4_OPS_WRITE_ENABLED','false').lower()
+        if ops_switch not in ('true','false'):raise ValueError('invalid_v4_ops_switch')
+        cfg.v4_ops_enabled=ops_switch=='true'
+        schedule_switch=os.getenv('V4_SCHEDULES_ENABLED','false').lower()
+        if schedule_switch not in ('true','false'):raise ValueError('invalid_v4_schedules_switch')
+        cfg.v4_schedules_enabled=schedule_switch=='true'
+        if cfg.v4_actions_enabled or cfg.v4_ops_enabled or cfg.v4_schedules_enabled:
+            cfg.security_service_token=secret('SEC_SERVICE_TOKEN_FILE')
+            cfg.security_request_key=secret('SEC_REQUEST_KEY_FILE')
+            cfg.security_result_key=secret('SEC_RESULT_KEY_FILE')
         raw_inspection = os.getenv('OPS_INSPECTION_ENABLED','false').lower()
         if raw_inspection not in ('true','false'): raise ValueError('invalid_inspection_switch')
         cfg.inspection_enabled = raw_inspection == 'true'
@@ -89,10 +104,14 @@ class Config:
             setattr(cfg, field, int(os.getenv(name, getattr(cfg, field))))
         cfg.audit_dir = Path(os.getenv("OPS_AUDIT_DIR", str(cfg.audit_dir)))
         cfg.runtime_profile = os.getenv("OPS_RUNTIME_PROFILE", "legacy")
+        cfg.v4_joint_profile=os.getenv('V4_JOINT_PROFILE','')
         cfg.validate()
         return cfg
 
     def validate(self):
+        if self.v4_joint_profile:
+            from v4_joint import validate as validate_joint
+            validate_joint(self,'ops')
         from .runtime_profile import validate
         validate(self)
         m4 = self.runtime_profile in ("m4-local", "m4-server-readonly", "m4-restore-readonly")

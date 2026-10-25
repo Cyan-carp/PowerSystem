@@ -10,6 +10,46 @@ tags: [源网智联, Agent, RAG, 源码运行]
 
 2026-10-11 开始重建。新问答独立于阶段7旧规划器与回答审核器，使用 DeepSeek 自主调用知识库、博查及平台只读工具。首次自由版本允许普通技术和生活直接回答；BND-M2在本地及指定公网增加日常入口边界，明确生活/闲聊不进入模型，普通技术继续开放。指定公网当前发布为BND-M2。正文仍为Markdown，不恢复固定分栏或逐条审核。当前验收状态见阶段笔记。
 
+## 第四版设计与交接
+
+本模块第四版设计和后续实施按[第四版契约](../../notes/01-项目调研规划与开发建设记录/第四版-智能助手行动化重构/01-立项与总体设计/03-架构与接口契约.md)与[阶段交接](../../notes/01-项目调研规划与开发建设记录/第四版-智能助手行动化重构/03-跨对话交接/00-当前接续入口.md)接续；源码沿用本目录。当前状态见[当前系统状态](../../notes/00-当前系统状态.md)。
+
+### S02 候选配置与验证
+
+[S02测试与交付](../../notes/01-项目调研规划与开发建设记录/第四版-智能助手行动化重构/02-分阶段实施/02-S02回答质量与模型接入/02-V4-S02测试与交付.md)维护实际结果、失败与未清门槛。`V4_ASSISTANT_ENABLED=false`默认保留旧会话入口；只在隔离测试中开启新问答策略。`AGENT_MODEL_ROLE`登记模型用途，既有`AGENT_LLM_MODEL/BASE_URL/API_KEY_FILE`及`RAG_MODEL_TIMEOUT/TOTAL_TIMEOUT/MAX_TOKENS`控制接入，不自动回退。协议元数据是适配器能力，不表示候选已经验证；敏感报告继续受原目的地和安全许可约束。
+
+S02沿用原会话表，无新迁移；`conversation_context/capability_catalog/objective_quality`保存于原response JSON。关闭开关不删除历史，不改变既有审批/执行账本。文本知识摘要统一UTF-8/LF；更改清单中的资料须重新核算sha256并在隔离集合验证后导入，不能直接复制旧清单摘要。新清单对应的分卷挂载只进入候选，S09前不切生产。
+
+S02的七天单设备目标由阶段9固定`get_energy_report`读取`energy_daily`，设备按台账id ASC定位，近7天默认北京时间最近7个已结束自然日。完整性核对目标、筛选、每日记录和总和；解释统计方法不会新建取数任务。最小只读JSON接口提前适配记录于C08，文件交付仍归S05。知识来源URL可携带`collection/version`固定物理集合与导入版本；旧无参数URL仍兼容内容读取。
+
+所有角色候选登记按所有者指令使用官方`https://api.deepseek.com`、`deepseek-flash`、`RAG_MODEL_THINKING=disabled`，主助手外的候选登记由`accept-v4-candidate-roles.py`校验。该脚本只发合成连通请求，不启动角色运行服务；生产模型、敏感出站绑定与写权限按原许可保留。登记文件和各角色凭据引用保存在本批忽略产物区，不能把候选登记直接用作生产部署配置。
+
+从仓库根运行，独立批次路径不能与旧证据复用。旧Python313虚拟环境当前不可启动；测试使用单独Python3.12环境，具体测试子集锁在证据目录。S02补验的正式E5使用相同模型权重，另备CPU torch2.5.1、sentence-transformers3.3.1、transformers4.46.3隔离依赖；与生产依赖版本不同，锁与权重摘要保留于本批环境证据，不能宣称已验证生产镜像。
+
+```powershell
+$S02Python = 'artifacts/v4-assistant/s02-20261023-r1/venv/Scripts/python.exe'
+$env:PYTHONPATH = 'stages/08-agent-rag'
+& $S02Python -X utf8 -m pytest stages/08-agent-rag/tests -q -p no:cacheprovider --basetemp=artifacts/v4-assistant/<新批次>/pytest --junitxml=artifacts/v4-assistant/<新批次>/pytest.xml
+& $S02Python -X utf8 stages/08-agent-rag/scripts/knowledge.py --dry-run --report artifacts/v4-assistant/<新批次>/knowledge-dryrun.json
+& $S02Python -X utf8 stages/08-agent-rag/scripts/audit-v4-knowledge.py --skip-qdrant --report artifacts/v4-assistant/<新批次>/knowledge-files.json --strict
+```
+
+字符回退分片标记`authoritative=false`，只能检查清单/正文提取；正式集合审查需真实本地Embedding及Qdrant，去掉`--skip-qdrant`并配置实际`RAG_EMBEDDING_PATH/RAG_QDRANT_URL/RAG_COLLECTION`。审查会固定物理集合、核对完整扫描/混合摘要及别名变化，不导入、不切换别名。
+
+真实候选评测仅使用固定合成数据与模拟工具，默认不会联网；显式`--run`后才发送到既有模型目的地。配置用既有私有文件加载，不能输出文件内容。以下环境加载只供模型评测，四项真实PostgreSQL测试仍须独立测试库，不能误用普通或生产历史库。
+
+```powershell
+. stages/08-agent-rag/scripts/common.ps1
+Set-RAGEnvironment '<既有仅供评测的私有配置>.env'
+& $S02Python -X utf8 stages/08-agent-rag/scripts/accept-v4-model.py --check-only
+& $S02Python -X utf8 stages/08-agent-rag/scripts/accept-v4-model.py --run --rounds 3 --output artifacts/v4-assistant/<新批次>/model.json
+& $S02Python -X utf8 stages/08-agent-rag/scripts/accept-v4-model.py --run --cases Q02 --rounds 30 --output artifacts/v4-assistant/<新批次>/latency.json
+```
+
+每步usage累计，计价未知为null；输出正文、工具调用、三轮历史及源码摘要留在忽略证据区。`status=ok`只表示调用完成，逐题质量和问题完成度另行评分；不从一次探针推断长期质量。历史失败、夹具修订前后与最终批次必须分别保留。S02不上传、不部署、不进入S03。
+
+真实PostgreSQL测试须先新建独立库，并将`RAG_DATABASE_URL`覆盖为该库；S02补验使用独立进程/端口25432和`v4_s02_20261023_r2_test`，不能照搬私有环境文件内的历史库。Windows PostgreSQL运行时/数据目录使用单独ASCII临时路径，避免中文路径初始化编码失败。E5/Qdrant补验先固定回环隔离端口26333，再运行本批`accept-knowledge.py`，不得继承生产地址；其导入和别名切换仅发生在该隔离实例。
+
 ## 架构与目录
 
 FastAPI 接收 Go 代理注入的当前用户身份；LangGraph 组织模型与工具循环；Qdrant 保存本地 E5 向量；独立 PostgreSQL 数据库持久保存会话；Redis 保护请求与会话并发。阶段7继续承载历史自动告警解读及页面帮助来源，不导入其问答规则。
@@ -126,7 +166,7 @@ boundary-release.py prepare优先新规范/内容目录，也兼容尚未迁移�
 python -X utf8 -m unittest discover -s stages/08-agent-rag/tests -p test_repository_layout.py -v
 ```
 
-13项通过；测试只在artifacts/repository-layout-test-tmp创建并清理自身随机目录，Git与Docker调用模拟。需要Git Bash时使用本机已有安装。修复范围与实际部署限制见[[notes/04-系统部署发布备份与变更记录/部署与运维日志/02-目录重构兼容修复]]。
+13项通过；测试只在artifacts/repository-layout-test-tmp创建并清理自身随机目录，Git与Docker调用模拟。需要Git Bash时使用本机已有安装。修复范围与实际部署限制见[[notes/04-系统部署发布备份与变更记录/部署与运维日志/01-部署基线与仓库发行/02-五分区目录迁移与本地基线（原02+03）]]。
 
 ## SEC-M2本机集成
 
@@ -205,4 +245,50 @@ Supervisor保持聊天/澄清/知识和联网，对平台查询和基础设施�
 
 ## 2026-10-15 API故障恢复与现行收尾
 
-17:33基础编排重建导致API版本回退及助手配置遗漏；本次按已签收r6镜像恢复API并加载阶段7/8/9完整配置，保留当前前端、通知与模拟数据。两公网入口的会话/任务列表及详情、核心只读业务、HTTPS/WSS和一次技术模型问答已复验。完整恢复、备份及观察证据见[[notes/04-系统部署发布备份与变更记录/部署与运维日志/06-API版本回退恢复记录]]；现行待办按[[notes/04-系统部署发布备份与变更记录/部署与运维日志/09-项目收尾核对]]核对，历史阶段未勾选项不覆盖后来签收。
+17:33基础编排重建导致API版本回退及助手配置遗漏；本次按已签收r6镜像恢复API并加载阶段7/8/9完整配置，保留当前前端、通知与模拟数据。两公网入口的会话/任务列表及详情、核心只读业务、HTTPS/WSS和一次技术模型问答已复验。完整恢复、备份及观察证据见[[notes/04-系统部署发布备份与变更记录/部署与运维日志/01-部署基线与仓库发行/06-API版本回退恢复记录]]；现行待办按[[notes/04-系统部署发布备份与变更记录/部署与运维日志/01-部署基线与仓库发行/09-项目收尾核对]]核对，历史阶段未勾选项不覆盖后来签收。
+
+## S03持久任务与事件流交接
+
+后端运行协议、恢复与验收边界见[S03阶段交接](../../notes/01-项目调研规划与开发建设记录/第四版-智能助手行动化重构/03-跨对话交接/S03-阶段交接.md)。当前状态见[当前系统状态](../../notes/00-当前系统状态.md)。独立`ma-run/v1`只读绑定与旧ma/v1分开，V4_RUNS_ENABLED默认false；关闭新受理保留查询/核查，不回退重放。
+
+### S03隔离验收命令
+
+先自主准备仅监听127.0.0.1:25433的S03专用PostgreSQL，使用`v4_s03_..._test`库；验收入口`Store.open`会应用003_runs，不能只执行SQL代偿。S03接受脚本固定使用本批专用库与28931端口，端口占用会拒绝复用；同一端口串行运行。不要连接历史或生产库。
+
+```powershell
+$env:RAG_RUN_TEST_URL='postgresql://s03_test@127.0.0.1:25433/v4_s03_20261023_r1_regression_test'
+$env:PYTHONPATH=(Resolve-Path stages/08-agent-rag).Path
+python -m pytest stages/08-agent-rag/tests/test_v4_runs.py -q
+python stages/08-agent-rag/scripts/accept-v4-runs.py --output artifacts/v4-assistant/s03-20261023-r1/recovery-rerun
+python stages/08-agent-rag/scripts/accept-v4-runs.py --official --output artifacts/v4-assistant/s03-20261023-r1/model-rerun
+```
+
+官方模式从S02 candidate-registry读取stage8_assistant凭据文件引用，仅发送合成问题与夹具。每次独立output保留失败批，受理与最终完成各30样本，不统计快速失败为成功性能。依赖按requirements安装；本批实际解释器/环境锁与完整回归设置见证据run-regression.ps1。新受理要同时开启V4_ASSISTANT_ENABLED/V4_RUNS_ENABLED；生产保持默认关闭。服务加密密钥轮换前排空恢复任务，过期身份不能绕过阶段9复核。
+
+## V4-S04工作台交接导航
+
+工作台实现、隔离验收与恢复边界见 [[notes/01-项目调研规划与开发建设记录/第四版-智能助手行动化重构/03-跨对话交接/S04-阶段交接]]；当前状态见 [[notes/00-当前系统状态]]。本机复现说明：[[stages/04-frontend/deploy/v4-workbench-acceptance]]。此处不复述生产状态。
+
+S05 隔离交付与适用边界见 [S05阶段交接](../../notes/01-项目调研规划与开发建设记录/第四版-智能助手行动化重构/03-跨对话交接/S05-阶段交接.md)。当前状态以唯一状态页为准。
+
+## V4-S06安全审查与业务操作
+
+[阶段交接与验收边界](../../notes/01-项目调研规划与开发建设记录/第四版-智能助手行动化重构/03-跨对话交接/S06-阶段交接.md)提供本轮实现、必要验证、人工补验及停服清单。当前状态见 [唯一状态](../../notes/00-当前系统状态.md)。
+
+V4-S07受控运维的实现范围、必要验收与交接门槛见 [S07测试与交付](../../notes/01-项目调研规划与开发建设记录/第四版-智能助手行动化重构/02-分阶段实施/07-S07受控运维闭环/02-V4-S07测试与交付.md)。
+
+V4-S08定期任务、只读预演与验收门槛见 [S08测试与交付](../../notes/01-项目调研规划与开发建设记录/第四版-智能助手行动化重构/02-分阶段实施/08-S08定期任务与方案预演/02-V4-S08测试与交付.md)。
+
+V4-S08八项交接与接续边界见 [S08阶段交接](../../notes/01-项目调研规划与开发建设记录/第四版-智能助手行动化重构/03-跨对话交接/S08-阶段交接.md)。
+
+S08迁移为`deploy/005_schedules.sql`，沿用`Store.open`；默认`V4_SCHEDULES_ENABLED=false`。本机策略同时核验专用PG、固定后端/权威端点及原写开关关闭；持续grant为数据库记录，不是动作凭据。依赖含`tzdata`，启动身份须能读取IANA时区资料。验收脚本为`scripts/accept-v4-schedules-host.py`与`accept-v4-schedules-http.py`，仅隔离合成环境使用，不作为生产启动入口。
+
+必要相关Python检查从仓库根执行：
+
+```powershell
+python -m pytest stages/08-agent-rag/tests/test_v4_schedules.py stages/10-security-agent/tests/test_schedule_review.py stages/09-ops-agent/tests/test_business_contract.py stages/09-ops-agent/tests/test_service_contract.py -q -p no:cacheprovider
+```
+
+Go定向检查从`stages/02-backend`执行`go test ./internal/api -run '^TestS08LocalDSNGuard$' -count=1`；前端沿用阶段四类型检查及构建命令。实际批次、候选配置/费用未知项和人工及停服证据见上述正式交接，不重复运行未受影响历史验收。
+
+S09联合整改、必要验证与未发布交接见 [S09阶段交接](../../notes/01-项目调研规划与开发建设记录/第四版-智能助手行动化重构/03-跨对话交接/S09-阶段交接.md)，具体候选/备份/回退与观察提案见 [发布准备](../../stages/04-frontend/deploy/v4-release-readiness.md)。当前状态以唯一系统状态页为准。

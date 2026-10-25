@@ -43,16 +43,20 @@ class Config:
         return cfg
 
     def validate(self):
-        if self.runtime_profile not in ("legacy", "m4-local", "m4-server-readonly"): raise ValueError("unknown_security_profile")
+        if self.runtime_profile == "v4-s09-local" and os.getenv("V4_S09_LOCAL_ENABLED") != "true":raise ValueError("explicit_s09_local_profile_required")
+        if self.runtime_profile not in ("legacy", "m4-local", "m4-server-readonly", "v4-s06-local", "v4-s07-local", "v4-s08-local", "v4-s09-local"): raise ValueError("unknown_security_profile")
+        if self.runtime_profile in ('v4-s06-local','v4-s07-local','v4-s08-local','v4-s09-local'):
+            if self.llm_url != 'https://api.deepseek.com' or self.model != 'deepseek-flash' or self.model_timeout != 30 or self.acceptance_timeout_exception:
+                raise ValueError('s06_official_candidate_required')
         expected_model = "deepseek-v4.1-flash" if self.runtime_profile == "m4-server-readonly" else "deepseek-v4-flash-0731"
-        if self.runtime_profile != "legacy" and (self.model != expected_model or self.model_timeout != 30 or self.acceptance_timeout_exception): raise ValueError("m4_model_configuration_required")
+        if self.runtime_profile not in ("legacy",'v4-s06-local','v4-s07-local','v4-s08-local','v4-s09-local') and (self.model != expected_model or self.model_timeout != 30 or self.acceptance_timeout_exception): raise ValueError("m4_model_configuration_required")
         if min(map(len, (self.service_token, self.request_key, self.result_key))) < 32:
             raise ValueError('security_private_credentials_required')
         if len({self.service_token, self.request_key, self.result_key}) != 3:
             raise ValueError('independent_security_credentials_required')
         if self.enabled and (not self.model or not self.llm_key): raise ValueError('explicit_security_model_required')
         url = urlsplit(self.llm_url)
-        if self.llm_url != 'https://hgapi.dieqiyun.top/v1' or url.username or url.query or url.fragment:
+        if self.llm_url != ('https://api.deepseek.com' if self.runtime_profile in ('v4-s06-local','v4-s07-local','v4-s08-local','v4-s09-local') else 'https://hgapi.dieqiyun.top/v1') or url.username or url.query or url.fragment:
             raise ValueError('unlicensed_security_destination')
         if type(self.acceptance_timeout_exception) is not bool or (self.acceptance_timeout_exception and self.model != 'gpt-5.6-sol'):
             raise ValueError('invalid_security_timeout_exception')

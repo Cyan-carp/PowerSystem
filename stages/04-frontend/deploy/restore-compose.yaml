@@ -39,9 +39,12 @@ services:
     secrets: [restore_agent_token]
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/api/v1/ping"]
+      # A large restored business database can need more than one minute for
+      # startup migration checks. This grace applies only to the isolated API.
+      start_period: 180s
       interval: 5s
       timeout: 3s
-      retries: 12
+      retries: 36
   redis:
     image: redis:7.4.5-alpine
     command: ["redis-server", "--requirepass", "${REDIS_PASSWORD:?set REDIS_PASSWORD}"]

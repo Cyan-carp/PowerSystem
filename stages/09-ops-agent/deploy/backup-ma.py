@@ -7,6 +7,51 @@ def run(argv):
     r=subprocess.run(argv,capture_output=True)
     if r.returncode:raise RuntimeError('ma_backup_command_failed')
     return r.stdout
+
+def capture_rag_configuration(ma,info):
+    """RAG can be recreated while Ops keeps its older compose environment label.
+
+    Capture actual RAG env and /run mounts separately; never infer its new key
+    directory from the unchanged Ops container. This tree is encrypted input,
+    not credentials to activate in a recovery application.
+    """
+    labels=info['Config']['Labels']
+    if labels.get('com.docker.compose.project')!='powersystem-stage4' or labels.get('com.docker.compose.service')!='agent-rag':
+        raise ValueError('owned_rag_service_required')
+    runtime=(ROOT/'runtime').resolve()
+    def owned(value):
+        path=Path(value)
+        if not path.is_absolute() or not path.exists() or path.resolve()!=path or not path.is_relative_to(runtime):
+            raise ValueError('actual_rag_private_source_required')
+        return path
+    origin=owned(labels['com.docker.compose.project.environment_file'])
+    env=dict((k.strip(),v.strip().strip("\"'")) for k,v in (line.split('=',1) for line in origin.read_text().splitlines() if '=' in line and not line.lstrip().startswith('#')))
+    sources={origin}
+    for key in ('RAG_ENV_FILE','MA_RAG_ENV_FILE'):
+        sources.add(owned(env[key]))
+    for mount in info['Mounts']:
+        if mount['Destination'].startswith('/run/'):
+            if mount['Type']!='bind' or mount['RW']:
+                raise ValueError('readonly_rag_private_bind_required')
+            sources.add(owned(mount['Source']))
+    if not any(m['Destination']=='/run/ma-supervisor' for m in info['Mounts']):
+        raise ValueError('actual_rag_supervisor_required')
+    files={}
+    for source in sorted(sources):
+        candidates=sorted(source.rglob('*')) if source.is_dir() else [source]
+        for path in candidates:
+            if path.is_symlink():raise ValueError('rag_private_symlink_forbidden')
+            if path.is_file():
+                relative=Path('rag-runtime')/path.relative_to(ROOT)
+                target=ma/relative
+                if not target.exists():
+                    target.parent.mkdir(parents=True,mode=0o700,exist_ok=True)
+                    shutil.copyfile(path,target)
+                digest=hashlib.sha256(path.read_bytes()).hexdigest()
+                if hashlib.sha256(target.read_bytes()).hexdigest()!=digest:raise ValueError('rag_private_capture_drift')
+                files[relative.as_posix()]={'source':str(path),'sha256':digest}
+    return {'origin_environment':str(origin),'files':files,'restore_execution_forbidden':True}
+
 def main(a):
     out=a.output.resolve()
     if os.uname().nodename!='R730XD' or not out.is_relative_to(Path('/var/backups/powersystem')):raise ValueError('private_backup_staging_required')
@@ -37,6 +82,8 @@ def main(a):
         target=ma/'config'/source.name;target.parent.mkdir(mode=0o700,exist_ok=True)
         shutil.copyfile(source,target)
         configs[key]={'source':str(source),'archive':'config/'+source.name,'sha256':hashlib.sha256(source.read_bytes()).hexdigest()}
+    rag_info=json.loads(run(['docker','inspect','powersystem-stage4-agent-rag-1']))[0]
+    rag_configuration=capture_rag_configuration(ma,rag_info)
     shutil.copyfile(envpath,ma/'compose.env')
     shutil.copyfile(ROOT/'stages/09-ops-agent/deploy/production.compose.yaml',ma/'production.compose.yaml')
     for name in ('registry.json','installation.json'):shutil.copyfile(Path('/etc/powersystem-ops-read')/name,ma/('collector-'+name))
@@ -48,7 +95,7 @@ def main(a):
     images={}
     for s in ('ops-agent','security-agent','ops-executor','api','frontend','agent-rag'):
         images[s]=json.loads(run(['docker','inspect','powersystem-stage4-'+s+'-1']))[0]['Image']
-    metadata={'version':'ma-backup/v1','release':release.name,'counts':counts,'images':images,'runtime_profile':'m4-server-readonly','restore_execution_forbidden':True,'actual_private_configuration':configs}
+    metadata={'version':'ma-backup/v1','release':release.name,'counts':counts,'images':images,'runtime_profile':'m4-server-readonly','restore_execution_forbidden':True,'actual_private_configuration':configs,'actual_rag_configuration':rag_configuration}
     (ma/'manifest.json').write_text(json.dumps(metadata,indent=2));(ma/'manifest.json').chmod(0o600)
     print(json.dumps({'ma_backup_saved':True,'tables':len(counts),'tasks':counts['ma_tasks']}))
 if __name__=='__main__':

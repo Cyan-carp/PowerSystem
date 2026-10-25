@@ -83,6 +83,8 @@ def validate_catalog(assets):
             if stamp.tzinfo is None: raise ValueError('invalid_catalog')
         if a['enabled'] and a['verified_at'] is None: raise ValueError('asset_not_verified')
         expected={t for t,(kind,_) in TOOLS.items() if kind==a['kind']}
+        if a['kind']=='service' and a['criticality'] in ('support','drill') and a['environment'] in ('acceptance','fixture'):
+            expected.update(('service.diagnose','service.logs','service.evidence','service.restart'))
         if a['kind']=='container' and a['criticality']=='drill' and a['environment'] in ('acceptance','fixture'):
             expected.add('docker.restart_drill_container')
         if not isinstance(a['capabilities'],list) or len(set(a['capabilities']))!=len(a['capabilities']) or not set(a['capabilities'])<=expected: raise ValueError('invalid_catalog')

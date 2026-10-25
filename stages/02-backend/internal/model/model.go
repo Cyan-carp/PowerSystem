@@ -25,6 +25,10 @@ type Device struct {
 	ReferenceModel  string     `json:"reference_model"`
 	StationCode     string     `json:"station_code"`
 	GroupName       string     `json:"group_name"`
+	Remark          string     `json:"-" gorm:"default:''"`
+	RemarkVersion   int64      `json:"remark_version" gorm:"default:0"`
+	RemarkUpdatedBy *int64     `json:"-"`
+	RemarkUpdatedAt *time.Time `json:"-"`
 	DeletedAt       *time.Time `json:"-"`
 	CreatedAt       time.Time  `json:"created_at"`
 	UpdatedAt       time.Time  `json:"updated_at"`

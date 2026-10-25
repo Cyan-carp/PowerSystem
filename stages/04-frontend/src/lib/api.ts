@@ -89,7 +89,14 @@ export const api = {
   verifyChat: (id: string, body: VerificationInput, signal?: AbortSignal) => request<RAGChatResponse>(`/api/v1/agent/sessions/${encodeURIComponent(id)}/verify`, { method: 'POST', body: JSON.stringify(body), signal }),
   chatSession: (id: string) => request<{ session_id: string; turns: RAGTurn[] }>(`/api/v1/agent/sessions/${encodeURIComponent(id)}`),
   deleteChatSession: (id: string) => request(`/api/v1/agent/sessions/${encodeURIComponent(id)}`, { method: 'DELETE' }),
-  ragSource: (id: string) => request<{ document: string; heading: string; content: string; version: string; page?: number }>(`/api/v1/agent/rag/sources/${encodeURIComponent(id)}`),
+  ragSource: (id: string, reference?: string) => {
+    const params = new URLSearchParams()
+    if (reference) {
+      const url = new URL(reference, 'https://local.invalid')
+      for (const key of ['collection', 'version']) { const value = url.searchParams.get(key); if (value) params.set(key, value) }
+    }
+    return request<{ document: string; heading: string; content: string; version: string; page?: number }>(`/api/v1/agent/rag/sources/${encodeURIComponent(id)}${params.size ? `?${params}` : ''}`)
+  },
   knowledge: (id: string, signal?: AbortSignal) => request<KnowledgeSource>(`/api/v1/agent/knowledge/${encodeURIComponent(id)}`, { signal }),
   interpretations: (page = 1, attention = false) => request<Page<Interpretation>>(`/api/v1/agent/interpretations${query({ page, page_size: 100, attention: attention ? 'true' : undefined })}`),
   interpretation: (id: number) => request<Interpretation>(`/api/v1/agent/interpretations/${id}`),

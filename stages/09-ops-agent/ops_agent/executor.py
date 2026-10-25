@@ -1,6 +1,7 @@
 import asyncio
 import json
 import time
+from urllib.parse import urlencode
 from datetime import datetime, timezone
 import httpx
 from .platform import MODELS, DESCRIPTIONS, business_route
@@ -79,7 +80,7 @@ class Executor:
                         trace.update(status="ok", result=data)
                         if name == "knowledge.search":
                             for r in data.get("results", []):
-                                result["sources"].append({"id": r["id"], "kind": "document", "title": r["document"], "chapter": r["heading"], "version": r["version"], "url": "/api/v1/agent/rag/sources/" + r["id"], "collected_at": stamp})
+                                result["sources"].append({"id": r["id"], "kind": "document", "title": r["document"], "chapter": r["heading"], "version": r["version"], "collection":r.get('collection'),"source_hash":r.get('source_hash'), "url": "/api/v1/agent/rag/sources/" + r["id"] + ('?'+urlencode({'collection':r['collection'],'version':r['version']}) if r.get('collection') else ''), "collected_at": stamp})
                         else: result["sources"].append({"id": "B" + str(call_id), "kind": "business", "title": DESCRIPTIONS[raw_name], "url": path, "collected_at": stamp})
             except (httpx.HTTPError, TimeoutError):
                 error = {"code": "target_unreachable", "message": "平台读取连接失败或超时", "retryable": True}; retry = True

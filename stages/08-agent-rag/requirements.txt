@@ -6,6 +6,9 @@ certifi==2026.7.22
 charset-normalizer==3.5.2
 click==8.5.0
 cloudpickle==3.1.2
+cryptography==50.0.2
+cffi==2.1.1
+pycparser==3.12
 colorama==0.4.6
 distro==1.9.0
 fastapi==0.143.0
@@ -90,3 +93,4 @@ uvicorn==0.54.0
 websockets==16.1.1
 xxhash==4.0.1
 zstandard==0.25.0
+tzdata==2026.5

@@ -207,7 +207,6 @@ body:has(.icp-footer) { --site-footer-height: 28px; }
 /* 内容区 */
 .main-content { flex: 1; min-width: 0; min-height: 0; overflow-y: auto; overscroll-behavior-y: contain; padding: 22px 26px 40px; max-width: 1480px; margin: 0 auto; width: 100%; }
 .main-content:has(.rag-page) { display: flex; flex-direction: column; overflow: hidden; padding-bottom: 18px; }
-.login-screen { padding-bottom: var(--site-footer-height, 0px); }
 
 /* 表格类页面收窄：信息量少时不铺满屏幕，便于扫读与对比 */
 .page-narrow { max-width: 1080px; margin: 0 auto; width: 100%; }
@@ -496,47 +495,135 @@ body:has(.icp-footer) { --site-footer-height: 28px; }
 .risk-cell .el-progress { margin-top: 6px; max-width: 115px; }
 
 /* ==========================================================================
-   八、登录页（深色 + 微弱网格纹理，文案直述）
+   八、登录页（全屏输电走廊场景 + 居中登录卡）
+   背景由 PowerGridScene 绘制：等距城市俯瞰 + 桁架铁塔 + 沿线流动的光段。
+   表单从原来的右侧栏改为画面正中，品牌与功能说明上下夹持。
    ========================================================================== */
-.login-screen { display: grid; grid-template-columns: 1.1fr 1fr; min-height: 100dvh; }
-.login-identity {
-  position: relative; overflow: hidden;
-  display: flex; flex-direction: column; justify-content: center; align-items: flex-start;
-  padding: 8vw; background: #0b0c0e;
+.login-screen {
+  position: relative; isolation: isolate; overflow: hidden;
+  display: flex; align-items: center; justify-content: center;
+  min-height: 100dvh; padding: 30px 22px calc(30px + var(--site-footer-height, 0px));
+  background: #07090c;
 }
-.login-identity .mesh {
-  position: absolute; inset: 0;
+/* 卡片所在区域压一层极淡的暗场：背景换成黄昏天光后不需要重遮罩了 */
+.login-scrim {
+  position: absolute; inset: 0; z-index: 0; pointer-events: none;
+  background: radial-gradient(closest-side ellipse at 50% 52%, rgba(6, 8, 11, .26), rgba(6, 8, 11, .08) 70%, transparent 100%);
+}
+.login-stage {
+  position: relative; z-index: 1;
+  display: flex; flex-direction: column; align-items: center;
+  width: 100%; max-width: 404px; margin-top: 14vh;
+  animation: login-rise .62s cubic-bezier(.22, .68, .28, 1) both;
+}
+
+/* ---------- 品牌 ---------- */
+.login-brand { display: flex; flex-direction: column; align-items: center; text-align: center; margin-bottom: 24px; }
+.login-mark { display: block; width: 38px; height: 38px; margin-bottom: 13px; filter: drop-shadow(0 0 12px rgba(91, 141, 239, .5)); }
+.login-mark svg { display: block; width: 100%; height: 100%; }
+.mark-hex { fill: rgba(91, 141, 239, .1); stroke: rgba(122, 168, 246, .55); stroke-width: 1.2; }
+.mark-bolt { fill: #bcd8ff; }
+.login-brand h1 { margin: 0 0 9px; font-size: 25px; font-weight: 700; letter-spacing: 7px; text-indent: 7px; color: #edf2f9; }
+.login-brand p { margin: 0; font-size: 12.5px; letter-spacing: 3.2px; text-indent: 3.2px; color: var(--ink-3); }
+
+/* ---------- 登录卡 ---------- */
+.login-card {
+  position: relative; width: 100%;
+  padding: 26px 32px 22px; border-radius: 16px;
+  border: 1px solid rgba(120, 158, 214, .17);
   background:
-    radial-gradient(700px 500px at 85% 15%, rgba(91, 141, 239, .10), transparent 60%),
-    radial-gradient(600px 480px at 10% 90%, rgba(91, 141, 239, .07), transparent 60%);
+    radial-gradient(130% 96% at 50% -14%, rgba(91, 141, 239, .13), transparent 58%),
+    linear-gradient(168deg, rgba(24, 27, 34, .93), rgba(12, 14, 18, .95));
+  box-shadow:
+    0 34px 76px -30px rgba(0, 0, 0, .95),
+    0 0 44px -18px rgba(91, 141, 239, .4),
+    inset 0 1px 0 rgba(255, 255, 255, .055);
+  backdrop-filter: blur(16px) saturate(1.15);
 }
-.login-identity .grid-dots {
-  position: absolute; inset: 0; opacity: .5;
-  background-image: radial-gradient(circle, #232529 1px, transparent 1px);
-  background-size: 26px 26px;
-  -webkit-mask-image: radial-gradient(700px 500px at 80% 20%, #000 0%, transparent 70%);
-  mask-image: radial-gradient(700px 500px at 80% 20%, #000 0%, transparent 70%);
+/* 对角两只角标：把登录卡也纳入"图纸"的语言，与背景图框呼应 */
+.login-card::before,
+.login-card::after {
+  content: ""; position: absolute; width: 17px; height: 17px; pointer-events: none;
+  border-style: solid; border-color: rgba(95, 143, 208, .42);
 }
-.login-identity .inner { position: relative; z-index: 1; }
-.login-identity h1 { font-size: clamp(24px, 2.6vw, 36px); font-weight: 700; line-height: 1.5; letter-spacing: .5px; margin: 0 0 14px; }
-.login-identity h1 b { color: var(--brand); font-weight: 700; }
-.login-identity p { font-size: 13.5px; color: var(--ink-2); }
-.login-line { display: flex; align-items: center; gap: 12px; margin-top: 48px; color: var(--ink-3); font-size: 12px; letter-spacing: 1px; }
-.login-line::before { content: ""; width: 26px; height: 2px; background: var(--brand); }
-.login-panel { display: grid; place-items: center; padding: 40px; background: var(--bg); }
-.login-form-wrap {
-  width: min(400px, 100%); background: var(--card);
-  border: 1px solid var(--line); border-radius: var(--r-lg);
-  padding: 34px 34px 28px;
+.login-card::before { top: -7px; left: -7px; border-width: 1px 0 0 1px; }
+.login-card::after { right: -7px; bottom: -7px; border-width: 0 1px 1px 0; }
+/* 顶边一道冷光，暗示“通电” */
+.login-card::before {
+  content: ""; position: absolute; inset: 0 0 auto; height: 1px; border-radius: 16px 16px 0 0;
+  background: linear-gradient(90deg, transparent 6%, rgba(140, 190, 255, .62) 50%, transparent 94%);
 }
-.login-form-wrap h2 { font-size: 20px; font-weight: 700; color: var(--ink); margin: 0 0 4px; }
-.login-form-wrap > p { color: var(--ink-3); font-size: 12.5px; margin-bottom: 26px; }
-.login-form-wrap form { display: flex; flex-direction: column; }
-.login-form-wrap label { font-size: 12.5px; font-weight: 600; color: var(--ink-2); margin: 16px 0 8px; }
-.login-form-wrap .el-input__wrapper { padding: 6px 14px; min-height: 42px; }
-.login-submit { width: 100%; margin-top: 26px; height: 44px; font-weight: 700; letter-spacing: 2px; }
-.form-error { color: var(--danger); font-size: 12px; margin: 12px 0 0; }
-.login-footnote { border-top: 1px solid var(--line-soft); margin-top: 26px; padding-top: 14px; font-size: 11px; color: var(--ink-3); line-height: 1.8; }
+.login-status {
+  display: flex; align-items: center; gap: 8px; margin-bottom: 15px;
+  font-size: 11px; font-weight: 600; letter-spacing: 1.4px; color: #7fb2f2;
+}
+.login-status-dot {
+  width: 6px; height: 6px; border-radius: 50%; background: #5b8def;
+  box-shadow: 0 0 0 3px rgba(91, 141, 239, .15), 0 0 10px rgba(91, 141, 239, .95);
+  animation: login-pulse 2.6s ease-in-out infinite;
+}
+.login-card h2 { margin: 0 0 6px; font-size: 21px; font-weight: 700; letter-spacing: 1.2px; color: #e9eef6; }
+.card-sub { margin: 0 0 20px; font-size: 12.5px; color: var(--ink-3); }
+.login-card form { display: flex; flex-direction: column; }
+.login-field { display: flex; flex-direction: column; }
+.login-field + .login-field { margin-top: 15px; }
+.login-card label { margin-bottom: 7px; font-size: 12px; font-weight: 600; letter-spacing: .5px; color: var(--ink-2); }
+
+.login-card .el-input__wrapper {
+  min-height: 46px; padding: 4px 14px; border-radius: 10px;
+  background: rgba(10, 13, 18, .78);
+  box-shadow: inset 0 0 0 1px rgba(120, 158, 214, .17);
+  transition: box-shadow .18s ease, background .18s ease;
+}
+.login-card .el-input__wrapper:hover { box-shadow: inset 0 0 0 1px rgba(120, 158, 214, .32); }
+.login-card .el-input.is-focus .el-input__wrapper,
+.login-card .el-input__wrapper:focus-within {
+  background: rgba(12, 16, 22, .92);
+  box-shadow: inset 0 0 0 1px rgba(91, 141, 239, .78), 0 0 0 4px rgba(91, 141, 239, .11);
+}
+.login-card .el-input__inner { font-size: 13.5px; letter-spacing: .6px; }
+
+.login-card .login-submit {
+  width: 100%; height: 46px; margin-top: 22px;
+  border: 0; border-radius: 10px;
+  font-weight: 700; font-size: 14px; letter-spacing: 5px; text-indent: 5px;
+  color: #f4f8ff;
+  background: linear-gradient(116deg, #4a7cd8 0%, #6b9bf5 58%, #83b2ff 100%);
+  box-shadow: 0 12px 26px -12px rgba(91, 141, 239, .95), inset 0 1px 0 rgba(255, 255, 255, .22);
+  transition: transform .16s ease, box-shadow .16s ease, filter .16s ease;
+}
+.login-card .login-submit:hover {
+  filter: brightness(1.08);
+  transform: translateY(-1px);
+  box-shadow: 0 16px 32px -12px rgba(91, 141, 239, 1), inset 0 1px 0 rgba(255, 255, 255, .28);
+}
+.login-card .login-submit:active { transform: translateY(0); }
+
+.form-error { margin: 12px 0 0; font-size: 12px; color: var(--danger); }
+.login-footnote {
+  margin-top: 18px; padding-top: 13px; border-top: 1px solid rgba(120, 158, 214, .1);
+  font-size: 11px; line-height: 1.8; color: var(--ink-3);
+}
+
+/* ---------- 底部能力标签 ---------- */
+.login-meta {
+  display: flex; flex-wrap: wrap; justify-content: center; gap: 6px 16px;
+  margin-top: 22px; font-size: 11px; letter-spacing: 1.4px; color: #6f7681;
+}
+.login-meta span { position: relative; }
+.login-meta span + span::before {
+  content: ""; position: absolute; left: -9px; top: 50%; width: 2px; height: 2px;
+  border-radius: 50%; background: #4b515a; transform: translateY(-50%);
+}
+
+@keyframes login-rise {
+  from { opacity: 0; transform: translateY(14px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes login-pulse {
+  0%, 100% { opacity: .45; box-shadow: 0 0 0 3px rgba(91, 141, 239, .1), 0 0 8px rgba(91, 141, 239, .7); }
+  50% { opacity: 1; box-shadow: 0 0 0 4px rgba(91, 141, 239, .18), 0 0 14px rgba(91, 141, 239, 1); }
+}
 
 /* ==========================================================================
    九、Element Plus 控件覆写（深色直角化 + 青蓝主色）
@@ -641,13 +728,14 @@ body:has(.icp-footer) { --site-footer-height: 28px; }
   .toolbar-actions { width: 100%; flex-wrap: wrap; }
   .chart-controls .el-date-editor { max-width: 100%; width: 100% !important; }
   .page-narrow { max-width: 100%; }
-  .login-screen { grid-template-columns: 1fr; }
-  .login-identity { min-height: 210px; padding: 30px; }
-  .login-line { display: none; }
-  .login-identity h1 { font-size: 22px; margin: 0 0 10px; }
-  .login-panel { padding: 28px 18px; }
-  .login-form-wrap { padding: 26px 22px 22px; }
-  .login-form-wrap > p { margin-bottom: 18px; }
+  .login-screen { padding: 22px 16px calc(22px + var(--site-footer-height, 0px)); }
+  .login-brand { margin-bottom: 18px; }
+  .login-brand h1 { font-size: 21px; letter-spacing: 5px; text-indent: 5px; }
+  .login-brand p { font-size: 11.5px; letter-spacing: 2px; text-indent: 2px; }
+  .login-card { padding: 22px 20px 18px; border-radius: 14px; }
+  .login-card h2 { font-size: 19px; }
+  .card-sub { margin-bottom: 16px; }
+  .login-meta { gap: 4px 12px; margin-top: 18px; }
 }
 
 /* 发电监测：实时数字与全天统计分层，保留现有深空值班台视觉。 */

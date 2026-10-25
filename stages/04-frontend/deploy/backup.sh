@@ -47,6 +47,16 @@ failed_line=""
 exit_status=0
 staging_bytes=0
 archive_bytes=0
+parallel_upload_pid=""
+parallel_uploads=${POWERSYSTEM_BACKUP_PARALLEL_UPLOADS:-0}
+gzip_threads=${POWERSYSTEM_BACKUP_GZIP_THREADS:-1}
+case "$parallel_uploads" in 0|1) ;; *) echo 'Invalid backup upload mode' >&2; exit 2 ;; esac
+case "$gzip_threads" in 1|2|4) ;; *) echo 'Invalid backup gzip thread count' >&2; exit 2 ;; esac
+if [ "$gzip_threads" != 1 ]; then command -v pigz >/dev/null; fi
+if [ "$parallel_uploads" = 1 ]; then
+  test -f "$project_dir/stages/04-frontend/deploy/backup-upload.py"
+  test -n "$secondary_target"
+fi
 
 bytes_of() {
   local total=0 path size
@@ -80,12 +90,64 @@ cleanup() {
   rm -rf -- "$staging"
 }
 
+# Resume only the writers that were actually running before the pause.
+v4_state_file="$staging/v4-writer-state.json"
+v4_resume() {
+  [ -f "$v4_state_file" ] || return 0
+  local writer writers expected actual ready attempt state
+  writers=$(python3 "$project_dir/stages/04-frontend/deploy/v4-backup-integration.py" resume --state "$v4_state_file") || return 1
+  for writer in $writers; do
+    expected=$(python3 -c 'import json,sys;s=json.load(open(sys.argv[1]));print(next(v["id"] for v in (s["rag"],s["ops"]) if v["container"]==sys.argv[2]))' "$v4_state_file" "$writer") || return 1
+    actual=$(docker inspect --format '{{.Id}}' "$writer") || return 1
+    [ "$actual" = "$expected" ] || { echo 'V4 writer identity changed; not restarted' >&2; return 1; }
+    docker start "$writer" >/dev/null 2>&1 || return 1
+    ready=0
+    for attempt in $(seq 1 60); do
+      state=$(docker inspect --format '{{.State.Running}} {{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$writer") || return 1
+      case "$state" in
+        'true healthy'|'true none') ready=1; break ;;
+        'false '*) return 1 ;;
+      esac
+      sleep 2
+    done
+    [ "$ready" = 1 ] || return 1
+  done
+  mv -- "$v4_state_file" "$staging/v4-writer-state.resumed.json"
+}
+
 finish() {
   local rc=$?
-  trap - EXIT ERR
+  local preserve_staging=0
+  trap - EXIT ERR INT TERM
   set +e
+  if [ -n "$parallel_upload_pid" ]; then
+    kill -TERM "$parallel_upload_pid" 2>/dev/null
+    for attempt in $(seq 1 150); do
+      kill -0 "$parallel_upload_pid" 2>/dev/null || break
+      sleep 0.2
+    done
+    if kill -0 "$parallel_upload_pid" 2>/dev/null; then
+      preserve_staging=1
+      printf '{"helper_pid":%s,"archive":"%s.tar.gz.gpg","status":"recovery_required"}\n' \
+        "$parallel_upload_pid" "$run_id" > "$backup_dir/$run_id.upload-recovery-required.json"
+      chmod 600 "$backup_dir/$run_id.upload-recovery-required.json"
+      echo 'Upload helper did not exit; owned recovery identity retained, backup failed' >&2
+    else
+      wait "$parallel_upload_pid"
+    fi
+    parallel_upload_pid=""
+    rc=1
+  fi
   if [ "$rc" -eq 0 ] && [ "${exit_status:-0}" -ne 0 ]; then
     rc=1
+  fi
+  if ! v4_resume; then
+    rc=1
+    preserve_staging=1
+    stage_name=v4_resume
+    cp -p -- "$v4_state_file" "$backup_dir/$run_id.v4-resume-required.json"
+    chmod 600 "$backup_dir/$run_id.v4-resume-required.json"
+    echo 'V4 writer resume failed; recovery identity retained' >&2
   fi
   local status=ok
   local failed_stage=""
@@ -104,13 +166,19 @@ finish() {
     echo "Backup timing helper missing at $timing_helper; no timing record" >&2
   fi
   rm -f -- "$stage_log"
-  cleanup
+  if [ "$preserve_staging" = 0 ]; then
+    cleanup
+  else
+    echo 'Backup staging retained for verified writer or upload recovery' >&2
+  fi
   exit "$rc"
 }
 trap 'failed_line=$LINENO; exit_status=1' ERR
 trap finish EXIT
+trap 'exit_status=1; exit 130' INT TERM
 
 stage_begin preflight
+rag_vectors_done=0
 test -f "$env_file"
 test -r "$passphrase_file"
 test -r "$backup_key"
@@ -133,6 +201,84 @@ if [ -z "$available_kb" ] || [ "$available_kb" -lt "$minimum_kb" ]; then
 fi
 stage_end "$(( available_kb * 1024 ))"
 dc=(docker compose --env-file "$env_file" -f "$compose_file")
+
+# V4 writers (RAG and Ops) must be paused for every dump/copy below. Vectors are
+# taken first while RAG is still running, then both writers stop, and the pause
+# evidence is written only after inspecting the real stopped state.
+v4_container=powersystem-stage4-agent-rag-1
+v4_ops_container=powersystem-stage4-ops-agent-1
+v4_helper="$project_dir/stages/04-frontend/deploy/v4-backup-integration.py"
+v4_active=0
+v4_artifact_root=""
+: > "$staging/v4-rag-before.json"
+: > "$staging/v4-ops-before.json"
+if docker inspect "$v4_ops_container" >/dev/null 2>&1; then
+  docker inspect "$v4_ops_container" > "$staging/v4-ops-before.json"
+fi
+if docker inspect "$v4_container" >/dev/null 2>&1; then
+  docker inspect "$v4_container" > "$staging/v4-rag-before.json"
+  v4_probe=$(python3 "$v4_helper" probe --inspect "$staging/v4-rag-before.json" --project-dir "$project_dir")
+  v4_active=$(printf '%s' "$v4_probe" | python3 -c 'import json,sys;print(1 if json.load(sys.stdin).get("active") else 0)')
+  if [ "$v4_active" = 1 ]; then
+    v4_artifact_root=$(printf '%s' "$v4_probe" | python3 -c 'import json,sys;print(json.load(sys.stdin)["artifact_root"])')
+  fi
+fi
+python3 "$v4_helper" compatible --rag-inspect "$staging/v4-rag-before.json" \
+  --ops-inspect "$staging/v4-ops-before.json" >/dev/null
+if [ "$v4_active" = 1 ]; then
+  # Bind the planned pause to this exact accepted release before touching writers.
+  python3 - "$project_dir" "$staging/v4-maintenance.json" <<'PY'
+import importlib.util,pathlib,sys
+sys.dont_write_bytecode=True
+spec=importlib.util.spec_from_file_location('production_stack_backup',pathlib.Path(sys.argv[1])/'stages/04-frontend/deploy/production-stack.py')
+module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
+module.backup_maintenance_snapshot(sys.argv[2])
+PY
+  stage_begin v4_rag_vectors
+  docker exec -i "$v4_container" python - < "$project_dir/stages/08-agent-rag/deploy/backup-rag.py" > "$staging/rag-vectors.tar"
+  rag_vectors_done=1
+  stage_end "$(bytes_of "$staging/rag-vectors.tar")"
+
+  stage_begin v4_pause
+  : > "$staging/v4-ops-before.json"
+  if docker inspect "$v4_ops_container" >/dev/null 2>&1; then
+    docker inspect "$v4_ops_container" > "$staging/v4-ops-before.json"
+  fi
+  python3 "$v4_helper" state --rag-inspect "$staging/v4-rag-before.json" \
+    --ops-inspect "$staging/v4-ops-before.json" --output "$v4_state_file" >/dev/null
+  for v4_writer in $(python3 "$v4_helper" resume --state "$v4_state_file"); do
+    docker stop "$v4_writer" >/dev/null
+  done
+  docker inspect "$v4_container" > "$staging/v4-rag-after.json"
+  : > "$staging/v4-ops-after.json"
+  if docker inspect "$v4_ops_container" >/dev/null 2>&1; then
+    docker inspect "$v4_ops_container" > "$staging/v4-ops-after.json"
+  fi
+  python3 "$v4_helper" evidence --rag-inspect "$staging/v4-rag-after.json" \
+    --ops-inspect "$staging/v4-ops-after.json" --state "$v4_state_file" \
+    --output "$staging/v4-pause-evidence.json" --run-id "$run_id" >/dev/null
+  stage_end 0
+
+  stage_begin v4_artifacts
+  mkdir -m 700 "$staging/v4-artifacts"
+  cp -a "$v4_artifact_root/." "$staging/v4-artifacts/"
+  stage_end "$(bytes_of "$staging/v4-artifacts")"
+
+  stage_begin v4_rows
+  "${dc[@]}" exec -T postgres psql -U powersystem -d powersystem_agent_rag -Atqc \
+    "SELECT json_build_object('database', current_database(), 'rows', COALESCE(json_agg(to_jsonb(t)), '[]'::json)) FROM public.assistant_artifacts AS t" \
+    > "$staging/v4-artifacts.rows.json"
+  chmod 600 "$staging/v4-artifacts.rows.json"
+  stage_end "$(bytes_of "$staging/v4-artifacts.rows.json")"
+
+  stage_begin v4_capture
+  python3 "$project_dir/stages/04-frontend/deploy/v4-backup.py" capture \
+    --rows-file "$staging/v4-artifacts.rows.json" --artifact-dir "$staging/v4-artifacts" \
+    --pause-evidence "$staging/v4-pause-evidence.json" --expect-database powersystem_agent_rag \
+    --output "$staging/v4-manifest" > "$staging/v4-capture-result.json"
+  chmod 600 "$staging/v4-capture-result.json"
+  stage_end 0
+fi
 
 stage_begin postgres_dump
 "${dc[@]}" exec -T postgres pg_dump -U powersystem -d powersystem -Fc > "$staging/postgres.dump"
@@ -210,9 +356,11 @@ if [ -s /etc/powersystem/agent-service-token ]; then
   stage_end "$(bytes_of "$staging/manuals" "$staging/manuals-manifest.json")"
 fi
 if docker inspect powersystem-stage4-agent-rag-1 >/dev/null 2>&1; then
-  stage_begin rag_vectors
-  docker exec -i powersystem-stage4-agent-rag-1 python - < "$project_dir/stages/08-agent-rag/deploy/backup-rag.py" > "$staging/rag-vectors.tar"
-  stage_end "$(bytes_of "$staging/rag-vectors.tar")"
+  if [ "$rag_vectors_done" = 0 ]; then
+    stage_begin rag_vectors
+    docker exec -i powersystem-stage4-agent-rag-1 python - < "$project_dir/stages/08-agent-rag/deploy/backup-rag.py" > "$staging/rag-vectors.tar"
+    stage_end "$(bytes_of "$staging/rag-vectors.tar")"
+  fi
 
   stage_begin rag_postgres
   "${dc[@]}" exec -T postgres pg_dump -U powersystem -d powersystem_agent_rag -Fc > "$staging/rag-postgres.dump"
@@ -255,6 +403,19 @@ if [ -d "$production_state" ]; then
   cp "$project_dir/stages/04-frontend/deploy/production-stack.py" "$staging/production-stack/controller.py"
   stage_end "$(bytes_of "$staging/production-stack")"
 fi
+v4_resume
+if [ "$v4_active" = 1 ]; then
+  python3 - "$project_dir" "$staging/v4-maintenance.json" <<'PY'
+import importlib.util,pathlib,sys
+sys.dont_write_bytecode=True
+spec=importlib.util.spec_from_file_location('production_stack_backup',pathlib.Path(sys.argv[1])/'stages/04-frontend/deploy/production-stack.py')
+module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
+module.backup_maintenance_snapshot(sys.argv[2],after=True)
+PY
+  # A failed compression/upload must still leave exact resume proof for the
+  # controller's parent rollback. This draft cannot authorize acceptance.
+  cp -p -- "$staging/v4-maintenance.json" "$backup_dir/$run_id.tar.gz.gpg.v4-maintenance.json"
+fi
 
 stage_begin staging_permissions
 find "$staging/config" -type f -exec chmod 600 {} +
@@ -267,7 +428,11 @@ staging_bytes=$(bytes_of "$staging")
 stage_end "$staging_bytes"
 
 stage_begin compress
-tar -C "$backup_dir" -czf "$backup_dir/$run_id.tar.gz" "$run_id"
+if [ "$gzip_threads" = 1 ]; then
+  tar -C "$backup_dir" -czf "$backup_dir/$run_id.tar.gz" "$run_id"
+else
+  tar -C "$backup_dir" -I "pigz -p $gzip_threads" -cf "$backup_dir/$run_id.tar.gz" "$run_id"
+fi
 stage_end "$(bytes_of "$backup_dir/$run_id.tar.gz")"
 
 stage_begin encrypt
@@ -282,6 +447,20 @@ stage_end "$archive_bytes"
 upload_failed=0
 if [ "${POWERSYSTEM_BACKUP_LOCAL_ONLY:-0}" = "1" ]; then
   echo 'Local-only encrypted backup retained; no upload performed'
+elif [ "$parallel_uploads" = 1 ]; then
+  stage_begin upload_parallel
+  python3 "$project_dir/stages/04-frontend/deploy/backup-upload.py" \
+    --archive "$backup_dir/$run_id.tar.gz.gpg" --key "$backup_key" \
+    --primary "$backup_target" --secondary "$secondary_target" \
+    --stages "$stage_log" --script-start-ns "$script_start" &
+  parallel_upload_pid=$!
+  if wait "$parallel_upload_pid"; then
+    echo 'Both backup uploads succeeded'
+  else
+    upload_failed=1
+    echo 'Parallel backup upload failed; local encrypted archive retained' >&2
+  fi
+  parallel_upload_pid=""
 else
   stage_begin upload_primary
   if scp -o BatchMode=yes -o StrictHostKeyChecking=yes -i "$backup_key" "$backup_dir/$run_id.tar.gz.gpg" "$backup_dir/$run_id.tar.gz.gpg.sha256" "$backup_target"; then
@@ -292,7 +471,7 @@ else
   fi
   stage_end "$archive_bytes"
 fi
-if [ "${POWERSYSTEM_BACKUP_LOCAL_ONLY:-0}" != "1" ] && [ -n "$secondary_target" ]; then
+if [ "${POWERSYSTEM_BACKUP_LOCAL_ONLY:-0}" != "1" ] && [ "$parallel_uploads" != 1 ] && [ -n "$secondary_target" ]; then
   stage_begin upload_secondary
   if scp -o BatchMode=yes -o StrictHostKeyChecking=yes -i "$backup_key" "$backup_dir/$run_id.tar.gz.gpg" "$backup_dir/$run_id.tar.gz.gpg.sha256" "$secondary_target"; then
     echo 'Secondary backup upload succeeded'
@@ -304,6 +483,15 @@ if [ "${POWERSYSTEM_BACKUP_LOCAL_ONLY:-0}" != "1" ] && [ -n "$secondary_target" 
 fi
 if [ "$upload_failed" -ne 0 ]; then
   exit 1
+fi
+if [ "$v4_active" = 1 ]; then
+  python3 - "$project_dir" "$staging/v4-maintenance.json" "$backup_dir/$run_id.tar.gz.gpg" <<'PY'
+import importlib.util,pathlib,sys
+sys.dont_write_bytecode=True
+spec=importlib.util.spec_from_file_location('production_stack_backup',pathlib.Path(sys.argv[1])/'stages/04-frontend/deploy/production-stack.py')
+module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
+module.backup_maintenance_snapshot(sys.argv[2],archive=sys.argv[3])
+PY
 fi
 
 stage_begin retention

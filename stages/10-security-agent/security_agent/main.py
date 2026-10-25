@@ -26,6 +26,7 @@ def create_app(config=None, provider=None):
         app.state.users = set()
         app.state.seen = {}
         client = httpx.AsyncClient(trust_env=False, follow_redirects=False)
+        app.state.action_client = client
         app.state.provider = provider or Provider(cfg, client)
         try: yield
         finally: await client.aclose()
@@ -124,6 +125,12 @@ def create_app(config=None, provider=None):
         finally:
             app.state.active.discard(body.review_id); app.state.users.discard(body.actor.user_id)
 
+    from .action_review import routes as action_routes
+    action_routes(app)
+    from .ops_review import routes as ops_routes
+    ops_routes(app)
+    from .schedule_review import routes as schedule_routes
+    schedule_routes(app)
     return app
 
 

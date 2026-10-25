@@ -1,0 +1,23 @@
+{
+  "proposal_version": "v4-s07-production-scope/proposed-1",
+  "enabled": false,
+  "production_write_window": "closed",
+  "production_policy": "R0",
+  "targets": [],
+  "candidate_scope": [
+    {"capability": "service.diagnose", "risk": "R0", "data_class": "internal", "scope": "individually registered, verified noncritical support service"},
+    {"capability": "service.logs", "risk": "R0", "data_class": "sensitive", "scope": "review before collection; bounded event whitelist; platform client only"},
+    {"capability": "service.evidence", "risk": "R0", "data_class": "sensitive", "scope": "reviewed observation; authenticated owner download only"},
+    {"capability": "service.restart", "risk": "R2", "data_class": "internal", "scope": "one verified noncritical support service; explicit admin intent and one-shot five-minute approval"}
+  ],
+  "activation_requirements": [
+    "S09 separate owner authorization and existing production release gates",
+    "explicit per-target immutable registry, adapter identity, service version and recovery limits",
+    "separately reviewed production policy and scope; current local policy cannot be used in production",
+    "least-privilege production adapter and real target acceptance; local demo adapter cannot target production",
+    "current identity, target, parameters, destination and policy rechecked before each execution"
+  ],
+  "never_allowed": ["arbitrary_shell", "arbitrary_sql", "physical_device_control", "bulk_change", "scheduled_maintenance", "permission_self_modification", "audit_disable", "production_data_or_backup_delete", "secret_export"],
+  "outbound_sensitive_content": "not_authorized",
+  "note": "This is an unactivated future scope proposal. No production target is authorized by S07."
+}

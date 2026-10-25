@@ -48,6 +48,10 @@ class Store(ApprovalStore):
                 await c.execute((Path(__file__).resolve().parents[1] / 'deploy/004_approvals.sql').read_text(encoding='utf-8'))
                 await c.execute((Path(__file__).resolve().parents[1] / 'deploy/007_runtime_context.sql').read_text(encoding='utf-8'))
                 await c.execute((Path(__file__).resolve().parents[1] / 'deploy/008_task_deletion.sql').read_text(encoding='utf-8'))
+                await c.execute((Path(__file__).resolve().parents[1] / 'deploy/009_run_binding.sql').read_text(encoding='utf-8'))
+                if getattr(cfg,'v4_actions_enabled',False) or getattr(cfg,'v4_ops_enabled',False) or getattr(cfg,'v4_schedules_enabled',False):
+                    await c.execute((Path(__file__).resolve().parents[1] / 'deploy/010_business_actions.sql').read_text(encoding='utf-8'))
+                    await c.execute((Path(__file__).resolve().parents[1] / 'deploy/005_security_reviews.sql').read_text(encoding='utf-8'))
                 if cfg.security_enabled:
                     for migration in ('005_security_reviews.sql', '006_security_gates.sql'):
                         await c.execute((Path(__file__).resolve().parents[1] / 'deploy' / migration).read_text(encoding='utf-8'))
@@ -67,6 +71,7 @@ class Store(ApprovalStore):
         value = task.model_dump(mode="json")
         material = {k: value[k] for k in ("session_id", "intent", "targets", "constraints", "user_request", "operation")}
         if task.task_kind != "ops": material["task_kind"] = task.task_kind
+        if task.run_id is not None:material.update(run_id=str(task.run_id),parent_turn_id=task.parent_turn_id)
         from .runtime_profile import context
         runtime = context(self.cfg)
         if runtime is not None: material["runtime_context"] = runtime
@@ -87,6 +92,8 @@ class Store(ApprovalStore):
             await c.execute("INSERT INTO ma_tasks(task_id,trace_id,session_id,user_id,parent_turn_id,idempotency_key,request_hash,envelope,status,deadline) VALUES($1,$2,$3,$4,$5,$6,$7,$8::jsonb,'queued',now()+$9*interval '1 second')", task.task_id, task.trace_id, task.session_id, task.actor.user_id, task.parent_turn_id, task.idempotency_key, hashed, encode(value), min(task.constraints.timeout_sec, self.cfg.task_timeout))
             if runtime is not None:
                 await c.execute("UPDATE ma_tasks SET runtime_context=$2::jsonb WHERE task_id=$1", task.task_id, encode(runtime))
+            if task.run_id is not None:
+                await c.execute('UPDATE ma_tasks SET run_id=$2,link_pending=false WHERE task_id=$1',task.task_id,task.run_id)
             await c.execute("INSERT INTO ma_outbox(task_id) VALUES($1)", task.task_id)
             await c.execute("INSERT INTO ma_task_events(task_id,to_status,execution_epoch,reason) VALUES($1,'queued',0,'accepted')", task.task_id)
         return task.task_id, True
@@ -109,7 +116,7 @@ class Store(ApprovalStore):
                 if isinstance(r.get(k), str): r[k] = json.loads(r[k])
             return r
         result = row["result"]
-        report = {"protocol": "ma/v1", "task_id": str(tid), "trace_id": str(row["trace_id"]), "session_id": str(row["session_id"]),
+        report = {"protocol": row['envelope'].get('protocol','ma/v1'), "task_id": str(tid), "trace_id": str(row["trace_id"]), "session_id": str(row["session_id"]),
                 "parent_turn_id": row["parent_turn_id"], "intent": display_intent(row["envelope"]["intent"]), "status": row["status"],
                 "steps": [unpack(r) for r in steps], "calls": [unpack(r) for r in calls],
                 "evidence_refs": ["call:" + str(r["call_id"]) for r in calls],
@@ -119,6 +126,7 @@ class Store(ApprovalStore):
                 "model_calls": row["model_calls"], "link_pending": row["link_pending"], "evidence": build_evidence(result.get("tool_calls", []), self.cfg),
                 "created_at": row["created_at"], "finished_at": row["finished_at"]}
         report['task_kind']=row['envelope'].get('task_kind','ops')
+        report['run_id']=str(row['run_id']) if row.get('run_id') else None
         report['business_quality'] = result.get('business_quality')
         report['inspection_report']=result.get('inspection_report')
         report['infrastructure_evidence']=result.get('infrastructure_evidence',[])
@@ -130,10 +138,12 @@ class Store(ApprovalStore):
         if self.security_tables:
             from .runtime_reviews import public_reviews
             report.update(await public_reviews(self.pool, tid, user))
-        return ResultEnvelope.model_validate(report).model_dump(mode='json', exclude_none=False)
+        output=ResultEnvelope.model_validate(report).model_dump(mode='json', exclude_none=False)
+        if output['protocol']=='ma/v1':output.pop('run_id',None)
+        return output
 
     async def listing(self, user, sid=None, status=None, offset=0, limit=20):
-        where = "user_id=$1 AND ($2::uuid IS NULL OR session_id=$2) AND ($3::text IS NULL OR status=$3)"
+        where = "envelope->>'protocol' IS DISTINCT FROM 'ma-action/v1' AND envelope->>'protocol' IS DISTINCT FROM 'ma-ops/v1' AND user_id=$1 AND ($2::uuid IS NULL OR session_id=$2) AND ($3::text IS NULL OR status=$3)"
         if self.task_tombstone: where += " AND deleted_at IS NULL"
         rows = await self.pool.fetch("SELECT task_id,status,session_id,parent_turn_id,created_at,finished_at,envelope->>'intent' AS intent FROM ma_tasks WHERE " + where + " ORDER BY created_at DESC,task_id DESC OFFSET $4 LIMIT $5", user, sid, status, offset, limit)
         return {"list": [{**dict(r),'intent':display_intent(r['intent'])} for r in rows], "offset": offset, "page_size": limit}
@@ -143,7 +153,7 @@ class Store(ApprovalStore):
             await c.execute("SELECT pg_advisory_xact_lock(90901)")
             running = await c.fetchval("SELECT count(*) FROM ma_tasks WHERE status=ANY($1::text[])", ["planning", "executing"])
             if running >= self.cfg.global_concurrency: return None
-            row = await c.fetchrow("UPDATE ma_tasks SET status='planning',execution_epoch=execution_epoch+1,worker_id=$2,lease_until=now()+$3*interval '1 second',updated_at=now() WHERE task_id=$1 AND status='queued' AND NOT cancel_requested AND deadline>now() RETURNING *", tid, worker, self.cfg.lease_seconds)
+            row = await c.fetchrow("UPDATE ma_tasks SET status='planning',execution_epoch=execution_epoch+1,worker_id=$2,lease_until=now()+$3*interval '1 second',updated_at=now() WHERE task_id=$1 AND envelope->>'protocol' IS DISTINCT FROM 'ma-action/v1' AND envelope->>'protocol' IS DISTINCT FROM 'ma-ops/v1' AND status='queued' AND NOT cancel_requested AND deadline>now() RETURNING *", tid, worker, self.cfg.lease_seconds)
             if row:
                 await c.execute("INSERT INTO ma_task_events(task_id,from_status,to_status,execution_epoch,reason) VALUES($1,'queued','planning',$2,'claimed')", tid, row["execution_epoch"])
                 return dict(row)
@@ -228,7 +238,7 @@ class Store(ApprovalStore):
     async def recover(self, startup=False, task_id=None):
         async with self.pool.acquire() as c, c.transaction():
             await c.execute("SELECT pg_advisory_xact_lock(90901)")
-            rows = await c.fetch("SELECT * FROM ma_tasks WHERE status=ANY($1::text[]) AND ($2 OR deadline<=now() OR lease_until<=now()) AND ($3::uuid IS NULL OR task_id=$3) FOR UPDATE", list(ACTIVE), startup,task_id)
+            rows = await c.fetch("SELECT * FROM ma_tasks WHERE envelope->>'protocol' IS DISTINCT FROM 'ma-action/v1' AND envelope->>'protocol' IS DISTINCT FROM 'ma-ops/v1' AND status=ANY($1::text[]) AND ($2 OR deadline<=now() OR lease_until<=now()) AND ($3::uuid IS NULL OR task_id=$3) FOR UPDATE", list(ACTIVE), startup,task_id)
             for r in rows:
                 a=await c.fetchrow('SELECT * FROM ma_approvals WHERE task_id=$1',r['task_id'])
                 if r['status']=='awaiting_approval':

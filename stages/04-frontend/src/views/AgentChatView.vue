@@ -4,6 +4,11 @@ import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { ArrowLeft, ArrowRight, Delete, Promotion } from '@element-plus/icons-vue'
 import { api } from '../lib/api'
+import { currentUser, token } from '../lib/auth'
+import { createRun, getRun, cancelRun, consumeRun } from '../lib/agent-runs'
+import type { RunSnapshot, RunInput } from '../lib/agent-runs'
+import type { RAGSource } from '../types'
+import RunAnswer from '../components/RunAnswer.vue'
 import { renderAnswer, sourceLink, programReplyLabel, canVerify } from '../lib/rag-chat'
 import { hasBusinessEvidence } from '../lib/task-presentation'
 import { dateTime, sessionRecency } from '../lib/format'
@@ -46,7 +51,8 @@ async function refreshTasks(sid?: string, append = false): Promise<void> {
     if (version !== taskListVersion || mine !== generation || sessionID.value !== sid || disposed) return
     const represented = new Set(turns.value.flatMap(turn => (turn.response?.task_cards || []).map(card => card.task_id)))
     const unique = new Map(recoveredTasks.value.map(task => [task.task_id, task]))
-    for (const task of data.list) if (task.session_id === sid && !represented.has(task.task_id)) unique.set(task.task_id, task)
+    const runTurns = new Set(turns.value.filter(turn => turn.run_id).map(turn => turn.id))
+    for (const task of data.list) if (task.session_id === sid && !represented.has(task.task_id) && !runTurns.has(task.parent_turn_id ?? undefined)) unique.set(task.task_id, task)
     recoveredTasks.value = [...unique.values()]
     sessionTasksOffset += data.list.length
     sessionTasksMore.value = data.list.length === data.page_size
@@ -116,7 +122,58 @@ function trackConversationScroll(): void {
 function pauseFollowing(event: WheelEvent): void {
   if (event.deltaY < 0) followLatest.value = false
 }
-const turns = ref<(Partial<RAGTurn> & { question: string; error?: string; historical?: boolean })[]>([])
+type WorkspaceTurn = Omit<Partial<RAGTurn>, 'id'> & { id?: string | number; question: string; error?: string; historical?: boolean; run_id?: string | null; localID?: string; admission?: { key: string; input: RunInput }; run?: RunSnapshot; connection?: string; cancelling?: boolean }
+const turns = ref<WorkspaceTurn[]>([])
+const subscriptions = new Map<string, AbortController>()
+const terminalRun = (run: RunSnapshot) => ['succeeded', 'partial', 'failed', 'cancelled'].includes(run.status)
+const workspaceKey = () => `v4-workspace:${currentUser.value?.id || 'anonymous'}`
+const mountedOwnerID = currentUser.value?.id || 'anonymous'
+const admissionKey = () => `v4-admissions:${currentUser.value?.id || 'anonymous'}`
+function rememberSession(id?: string): void { try { id ? sessionStorage.setItem(workspaceKey(), id) : sessionStorage.removeItem(workspaceKey()) } catch { /* tab storage optional */ } }
+function savedAdmissions(): { key: string; input: RunInput }[] { try { return JSON.parse(sessionStorage.getItem(admissionKey()) || '[]') } catch { return [] } }
+function rememberAdmission(item: { key: string; input: RunInput }, remove = false): void {
+  try { const rows = savedAdmissions().filter(row => row.key !== item.key); if (!remove) rows.push(item); sessionStorage.setItem(admissionKey(), JSON.stringify(rows)) } catch { /* retry remains available in memory */ }
+}
+function stopRun(turn: WorkspaceTurn): void { if (turn.run_id) { subscriptions.get(turn.run_id)?.abort(); subscriptions.delete(turn.run_id) }; turn.connection = 'stopped' }
+function applyActionSnapshot(turn: WorkspaceTurn, snapshot: RunSnapshot): void {
+  if (!turns.value.includes(turn) || snapshot.run_id !== turn.run_id || snapshot.session_id !== sessionID.value || String(snapshot.turn_id) !== String(turn.id)) return
+  if (turn.run && BigInt(snapshot.last_seq) < BigInt(turn.run.last_seq)) return
+  turn.run = snapshot
+  if (turn.connection === 'stopped' && !terminalRun(snapshot)) void hydrateRun(turn)
+}
+function stopSubscriptions(): void { subscriptions.forEach(controller => controller.abort()); subscriptions.clear() }
+async function hydrateRun(turn: WorkspaceTurn, mine = generation): Promise<void> {
+  const rid = turn.run_id, sid = sessionID.value, identity = token.value
+  if (!rid) return
+  stopRun(turn)
+  const subscription = new AbortController(); subscriptions.set(rid, subscription)
+  const valid = () => !disposed && mine === generation && sessionID.value === sid && token.value === identity && !subscription.signal.aborted && turns.value.includes(turn)
+  const update = (snapshot: RunSnapshot) => { if (valid() && snapshot.run_id === rid && String(snapshot.turn_id) === String(turn.id) && (!turn.run || BigInt(snapshot.last_seq) >= BigInt(turn.run.last_seq))) { turn.run = snapshot; turn.error = '' } }
+  const metadata = async () => {
+    const data = await api.chatSession(sid!)
+    if (!valid()) return
+    const original = data.turns.find(row => String(row.id) === String(turn.id))
+    if (original) turn.response = original.response
+  }
+  try {
+    turn.connection = 'connecting'
+    const snapshot = await getRun(rid, subscription.signal)
+    if (!valid()) return
+    if (snapshot.run_id !== rid || String(snapshot.turn_id) !== String(turn.id) || snapshot.session_id !== sid) throw new Error('运行绑定不一致，已停止显示')
+    update(snapshot)
+    if (!terminalRun(snapshot)) await consumeRun(rid, snapshot, update, subscription.signal, state => { if (valid()) turn.connection = state })
+    if (valid() && turn.run && terminalRun(turn.run)) { turn.connection = 'stopped'; await metadata(); void refreshSessions() }
+  } catch (e) { if (valid()) { turn.connection = 'stopped'; turn.error = e instanceof Error ? e.message : '运行读取失败'; if ((e as { status?: number }).status === 403 || (e as { status?: number }).status === 404) { turn.run = undefined; turn.response = undefined } } }
+  finally { if (subscriptions.get(rid) === subscription) subscriptions.delete(rid) }
+}
+async function requestCancellation(turn: WorkspaceTurn): Promise<void> {
+  if (!turn.run_id || turn.cancelling) return
+  const mine = generation, identity = token.value
+  turn.cancelling = true
+  try { const result = await cancelRun(turn.run_id); if (mine === generation && identity === token.value && turns.value.includes(turn)) { if (String(result.turn_id) !== String(turn.id) || result.session_id !== sessionID.value) throw new Error('取消状态绑定不一致，请重新核查'); turn.run = result; await hydrateRun(turn, mine) } }
+  catch (e) { if (mine === generation) turn.error = e instanceof Error ? e.message : '取消请求未确认，请重试核查' }
+  finally { turn.cancelling = false }
+}
 const sessionID = ref<string>()
 const draft = ref('')
 const route = useRoute()
@@ -169,11 +226,12 @@ async function removeSelectedSessions(): Promise<void> {
   if (failed) ElMessage.error(`${failed} 段会话删除失败，请刷新后重试`)
   else ElMessage.success(`已删除 ${ids.length} 段会话`)
 }
-function cancel(): void { if (pending.value) { const waiting = [...turns.value].reverse().find(turn => !turn.response && !turn.error); if (waiting) waiting.error = '已取消等待；已受理的任务继续运行，可刷新恢复任务状态。' } generation++; controller?.abort(); controller = undefined; pending.value = false }
-function newChat(): void { cancel(); clearSessionTasks(); tasksOpen.value = false; followLatest.value = true; verifyTarget.value = undefined; sessionID.value = undefined; turns.value = []; draft.value = ''; source.value = undefined; loading.value = false; void nextTick(() => { conversation.value?.scrollTo({ top: 0 }); previousScrollTop = 0 }); void refreshActiveNotice() }
+function cancel(): void { stopSubscriptions(); generation++; controller?.abort(); controller = undefined; pending.value = false }
+function newChat(): void { cancel(); rememberSession(); clearSessionTasks(); tasksOpen.value = false; followLatest.value = true; verifyTarget.value = undefined; sessionID.value = undefined; turns.value = []; draft.value = ''; source.value = undefined; loading.value = false; void nextTick(() => { conversation.value?.scrollTo({ top: 0 }); previousScrollTop = 0 }); void refreshActiveNotice() }
 async function openSession(id: string): Promise<void> {
   cancel(); clearSessionTasks(); verifyTarget.value = undefined; const mine = generation; loading.value = true
-  try { const data = await api.chatSession(id); if (mine === generation) { sessionID.value = id; turns.value = data.turns.map(turn => ({ ...turn, historical: true })); await refreshTasks(id); scrollToLatest(true) } }
+  turns.value = []; source.value = undefined; sourceError.value = ''; sessionID.value = id
+  try { const data = await api.chatSession(id); if (mine === generation) { rememberSession(id); turns.value = data.turns.map(turn => ({ ...turn, historical: true })); for (const turn of turns.value) if (turn.run_id) void hydrateRun(turn, mine); await refreshTasks(id); scrollToLatest(true) } }
   catch (e) { ElMessage.error(e instanceof Error ? e.message : '会话读取失败') }
   finally { if (mine === generation) loading.value = false }
 }
@@ -184,27 +242,49 @@ async function removeSession(id: string): Promise<void> {
 }
 async function send(): Promise<void> {
   if (pending.value || !draft.value.trim() || chars.value > 32000) return
-  const question = draft.value.trim(); draft.value = ''; pending.value = true
-  const index = turns.value.push({ question }) - 1
+  const question = draft.value.trim(); draft.value = ''
+  const admission = { key: crypto.randomUUID(), input: { message: question, ...(sessionID.value ? { session_id: sessionID.value } : {}) } }
+  const localID = crypto.randomUUID()
+  turns.value.push({ question, localID, admission })
+  const turn = turns.value.find(row => row.localID === localID)!
+  rememberAdmission(admission)
   scrollToLatest(true)
-  const mine = ++generation; controller = new AbortController()
+  await submitTurn(turn)
+}
+async function submitTurn(turn: WorkspaceTurn): Promise<void> {
+  if (!turn.admission || pending.value) return
+  if (turn.admission.input.session_id && turn.admission.input.session_id !== sessionID.value) return
+  const mine = generation, identity = token.value, admission = turn.admission
+  pending.value = true; turn.error = ''
   try {
-    const response = await api.chat(question, sessionID.value, controller.signal)
-    if (mine !== generation) return
-    sessionID.value = response.session_id; turns.value[index]!.id = response.turn_id; turns.value[index]!.response = response; await refreshSessions(); await refreshTasks(response.session_id); void refreshActiveNotice()
-  } catch (e) { if (mine === generation) turns.value[index]!.error = e instanceof Error ? e.message : '服务不可用' }
-  finally { if (mine === generation) { pending.value = false; controller = undefined } }
+    let receipt
+    try { receipt = await createRun(admission.input, admission.key) }
+    catch (e) { if (identity !== token.value || ((e as { status?: number }).status || 0) >= 400 && ((e as { status?: number }).status || 0) < 500) throw e; receipt = await createRun(admission.input, admission.key) }
+    if (identity !== token.value) return
+    rememberAdmission(admission, true)
+    if (mine !== generation) { void refreshSessions(); return }
+    sessionID.value = receipt.session_id; rememberSession(receipt.session_id)
+    const existing = turns.value.find(row => row !== turn && row.run_id === receipt.run_id)
+    if (existing) { turns.value = turns.value.filter(row => row !== turn); void hydrateRun(existing, mine) }
+    else { turn.id = receipt.turn_id; turn.run_id = receipt.run_id; turn.admission = undefined; void hydrateRun(turn, mine) }
+    void refreshSessions(); void refreshActiveNotice()
+  } catch (e) { if (mine === generation && identity === token.value) turn.error = (e instanceof Error ? e.message : '服务不可用') + '。受理尚未确认，重试沿用同一编号。' }
+  finally { if (mine === generation) pending.value = false }
 }
 async function copy(text: string): Promise<void> {
   try { await navigator.clipboard.writeText(text); ElMessage.success('已复制') } catch { ElMessage.error('当前浏览器无法复制，请手动选择文本') }
 }
-async function showSource(id: string): Promise<void> {
+async function showSource(id: string | RAGSource): Promise<void> {
   sourceError.value = ''
-  try { source.value = await api.ragSource(id) } catch (e) { sourceError.value = e instanceof Error ? e.message : '来源读取失败' }
+  const mine = generation
+  try {
+    const row = await api.ragSource(typeof id === 'string' ? id : id.id, typeof id === 'string' ? undefined : id.url)
+    if (mine === generation && !disposed) source.value = row
+  } catch (e) { if (mine === generation) sourceError.value = e instanceof Error ? e.message : '来源读取失败' }
 }
-async function openVerify(turn: Partial<RAGTurn>): Promise<void> {
+async function openVerify(turn: WorkspaceTurn): Promise<void> {
   const id = turn.id ?? turn.response?.turn_id
-  if (!sessionID.value || !id || pending.value) return
+  if (!sessionID.value || typeof id !== 'number' || !id || pending.value) return
   verifyTarget.value = { session: sessionID.value, turn: id }; verifyError.value = ''; deviceWarning.value = ''
   verifyDevices.value = []; verifyDevice.value = undefined; verifyChecks.value = ['latest_telemetry', 'current_alarms']; deviceLoading.value = true
   const target = verifyTarget.value
@@ -230,7 +310,7 @@ async function runVerify(): Promise<void> {
   const signature = JSON.stringify({ ...target, device: verifyDevice.value, checks })
   const vid = retryIDs.get(signature) || crypto.randomUUID(); retryIDs.set(signature, vid)
   verifying.value = true; pending.value = true; verifyError.value = ''
-  const mine = ++generation; controller = new AbortController()
+  const mine = generation; controller = new AbortController()
   try {
     const response = await api.verifyChat(target.session, { parent_turn_id: target.turn, device_id: verifyDevice.value, checks, verification_id: vid }, controller.signal)
     if (mine !== generation || sessionID.value !== target.session) return
@@ -242,6 +322,20 @@ async function runVerify(): Promise<void> {
 watch([turns, recoveredTasks], () => scrollToLatest(), { deep: true, flush: 'post' })
 onMounted(() => {
   void refreshSessions(); void refreshActiveNotice()
+  const saved = sessionStorage.getItem(workspaceKey())
+  const restoreIdentity = token.value, restoreGeneration = generation + (saved ? 1 : 0)
+  void (async () => {
+    if (saved) await openSession(saved)
+    if (disposed || token.value !== restoreIdentity || generation !== restoreGeneration || (saved && sessionID.value !== saved)) return
+    const restoreSession = sessionID.value
+    const recover = savedAdmissions().filter(item => item.input.session_id ? item.input.session_id === restoreSession : !restoreSession)
+    for (const admission of recover) {
+      if (disposed || token.value !== restoreIdentity || generation !== restoreGeneration || sessionID.value !== restoreSession) return
+      const localID = crypto.randomUUID(); turns.value.push({ question: admission.input.message, admission, localID })
+      await submitTurn(turns.value.find(turn => turn.localID === localID)!)
+      if (!restoreSession) break // Each unknown-session receipt owns a separate conversation.
+    }
+  })()
   document.addEventListener('visibilitychange', noticeVisibility)
   sessionClockTimer = setInterval(() => { sessionClock.value = Date.now() }, 60_000)
   previousScrollTop = conversation.value?.scrollTop || 0
@@ -249,6 +343,7 @@ onMounted(() => {
   if (conversationContent.value) conversationObserver.observe(conversationContent.value)
   if (conversation.value) conversationObserver.observe(conversation.value)
 })
+watch(token, (value, old) => { if (value !== old) { cancel(); turns.value = []; sessions.value = []; recoveredTasks.value = []; sessionID.value = undefined; source.value = undefined; sourceError.value = ''; draft.value = ''; verifyTarget.value = undefined; tasksOpen.value = false; sessionStorage.removeItem(`v4-admissions:${mountedOwnerID}`); sessionStorage.removeItem(`v4-workspace:${mountedOwnerID}`) } })
 onUnmounted(() => {
   disposed = true; cancel(); clearSessionTasks(); noticeController?.abort(); clearTimeout(noticeTimer)
   document.removeEventListener('visibilitychange', noticeVisibility)
@@ -263,6 +358,7 @@ onUnmounted(() => {
       <div><h1>智能助手</h1><p>技术问答 · 内部资料 · 联网搜索 · 平台查询</p></div>
       <div class="rag-page-actions">
         <el-button @click="openTaskRecords()">任务记录</el-button>
+        <router-link to="/agent/schedules"><el-button>定期任务与预演</el-button></router-link>
         <el-button type="primary" @click="newChat">新会话</el-button>
       </div>
     </section>
@@ -276,20 +372,32 @@ onUnmounted(() => {
           <div class="chat-empty-inner">
             <p class="chat-empty-eyebrow">值班问答 · 已接入平台数据</p>
             <h2>有什么想了解的？</h2>
-            <p class="chat-empty-desc">可以询问技术、新能源设备和平台问题，也可以查项目资料与最新技术信息。生活与闲聊问题暂不提供内容回答。</p>
+            <p class="chat-empty-desc">提问、查资料或查询平台。运行状态与结果保存在原问题下，离开页面后任务仍可继续。</p>
             <div class="chat-examples">
               <button v-for="item in examples" :key="item" type="button" class="chat-example" @click="draft = item">{{ item }}</button>
             </div>
           </div>
         </section>
-        <article v-for="(turn, index) in turns" :id="`turn-${turn.id ?? turn.response?.turn_id ?? index}`" :key="index" class="chat-turn" :class="{ verification: turn.kind === 'verification', task: !!turn.response?.task_cards?.length }">
+        <article v-for="(turn, index) in turns" :id="`turn-${turn.id ?? turn.response?.turn_id ?? index}`" :key="turn.run_id || turn.localID || turn.id || index" class="chat-turn" :class="{ verification: turn.kind === 'verification', task: !!turn.response?.task_cards?.length }">
           <header class="chat-turn-user">
             <span class="chat-q-label">{{ turn.kind === 'verification' ? '主动核验' : '你' }}</span>
             <span v-if="turn.response?.status === 'degraded'" class="chat-error">{{ turn.kind === 'verification' ? '核验含错误或缺失' : '服务故障' }}</span>
             <p class="chat-question">{{ turn.question }}</p>
           </header>
           <p v-if="turn.error" class="chat-error" role="alert">{{ turn.error }}</p>
-          <div v-if="turn.response" class="chat-turn-answer">
+          <el-button v-if="turn.admission && turn.error" text :disabled="pending" @click="submitTurn(turn)">同编号重试受理</el-button>
+          <el-button v-if="turn.run_id && turn.error" text @click="hydrateRun(turn)">重新核对运行</el-button>
+          <RunAnswer v-if="turn.run" :run="turn.run" :response="turn.response" :connection="turn.connection" :cancelling="turn.cancelling" @stop="stopRun(turn)" @resume="hydrateRun(turn)" @cancel="requestCancellation(turn)" @source="showSource" @updated="applyActionSnapshot(turn, $event)" />
+          <div v-if="turn.run && terminalRun(turn.run)" class="chat-turn-actions">
+            <el-button v-if="turn.response && canVerify(turn.response) && typeof turn.id === 'number'" size="small" :disabled="pending" @click="openVerify(turn)">补查实时数据</el-button>
+            <el-button v-if="turn.run.final_answer" text size="small" @click="copy(turn.run.final_answer)">复制回答</el-button>
+          </div>
+          <section v-if="!turn.run && turn.run_id" class="chat-turn-answer">
+            <p class="chat-waiting">{{ turn.error ? '暂时无法核对本轮运行。此前保存的正文仅供历史阅读，当前状态待核查。' : '正在读取本轮运行状态…' }}</p>
+            <div v-if="turn.response?.answer_markdown" class="rag-markdown run-primary" v-html="renderAnswer(turn.response.answer_markdown)" />
+            <el-button text size="small" @click="hydrateRun(turn)">重新读取</el-button>
+          </section>
+          <div v-else-if="!turn.run && turn.response" class="chat-turn-answer">
             <template v-if="turn.kind === 'verification'">
               <p class="chat-verify-intro">程序只读核验 · {{ turn.response.device?.device_code || '设备台账未取得' }}。本记录展示接口实际结果，不代表完整诊断。</p>
               <a :href="`#turn-${turn.parent_turn_id}`">查看原回答 #{{ turn.parent_turn_id }}</a>
@@ -310,11 +418,10 @@ onUnmounted(() => {
               <el-button v-if="turn.response.answer_markdown" text size="small" @click="copy(turn.response.answer_markdown)">{{ turn.response.task_cards?.length && !turn.response.business_quality ? '复制原始回执' : '复制回答' }}</el-button>
             </div>
             <p v-for="warning in turn.response.warnings" :key="warning" class="chat-limit">{{ warning }}</p>
-            <details v-if="turn.response.sources.length" class="rag-details"><summary>参考来源 · {{ turn.response.sources.length }}</summary><div v-for="item in turn.response.sources" :key="item.id" class="rag-source"><span>{{ item.kind === 'web' ? '网页' : item.kind === 'document' ? '知识库' : '平台数据' }} · {{ item.title }}{{ item.chapter ? ` / ${item.chapter}` : '' }}</span><el-button v-if="item.kind === 'document'" text @click="showSource(item.id)">阅读章节</el-button><a v-if="item.kind === 'web' && sourceLink(item.url)" :href="sourceLink(item.url)!" target="_blank" rel="noopener noreferrer">打开网页</a><small>{{ dateTime(item.collected_at) }}{{ item.published_at ? ` · 发布 ${dateTime(item.published_at)}` : '' }}</small></div></details>
-            <details v-if="turn.response.tool_calls.length" class="rag-details"><summary>工具调用 · {{ turn.response.tool_calls.length }}</summary><div v-for="(call, callIndex) in turn.response.tool_calls" :key="callIndex"><p>{{ call.name }} · {{ call.status }}</p><pre>{{ JSON.stringify({ arguments: call.arguments, result: call.result, error: call.error }, null, 2) }}</pre></div></details>
+            <details v-if="turn.response.sources?.length" class="rag-details"><summary>参考来源 · {{ turn.response.sources.length }}</summary><div v-for="item in turn.response.sources" :key="item.id" class="rag-source"><span>{{ item.kind === 'web' ? '网页' : item.kind === 'document' ? '知识库' : '平台数据' }} · {{ item.title }}{{ item.chapter ? ` / ${item.chapter}` : '' }}</span><el-button v-if="item.kind === 'document'" text @click="showSource(item)">阅读章节</el-button><a v-if="item.kind === 'web' && sourceLink(item.url)" :href="sourceLink(item.url)!" target="_blank" rel="noopener noreferrer">打开网页</a><small>{{ dateTime(item.collected_at) }}{{ item.published_at ? ` · 发布 ${dateTime(item.published_at)}` : '' }}</small></div></details>
             <footer class="chat-turn-foot">{{ programReplyLabel(turn.response) || turn.response.model }} · {{ turn.response.request_id }}</footer>
           </div>
-          <p v-else-if="!turn.error" class="chat-waiting">{{ pending && index === turns.length - 1 ? '正在思考，按需查询资料与工具…' : '等待已取消，可以继续提问。' }}</p>
+          <p v-else-if="!turn.run && !turn.error" class="chat-waiting">受理确认中…</p>
         </article>
         <template v-if="sessionID">
           <OpsTaskCard v-for="task in recoveredTasks" :key="`${sessionID}:${task.task_id}`" :initial="task" historical @explain="explainTask" @source="showSource" />
@@ -329,7 +436,7 @@ onUnmounted(() => {
           <section class="rag-compose">
             <el-input v-model="draft" type="textarea" :autosize="{ minRows: 2, maxRows: 10 }" placeholder="输入问题，Ctrl / ⌘ + Enter 发送" @keydown.ctrl.enter.prevent="send" @keydown.meta.enter.prevent="send" />
             <div class="rag-compose-actions">
-              <el-button v-if="pending" @click="cancel">取消等待</el-button>
+              <span v-if="pending" class="rag-muted">正在确认受理</span>
               <el-button class="rag-send" type="primary" circle :disabled="pending || !draft.trim() || chars > 32000" aria-label="发送" @click="send"><el-icon><Promotion /></el-icon></el-button>
             </div>
           </section>

@@ -6,6 +6,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"io"
 	"net/http"
+	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -43,6 +45,19 @@ func (s *Server) agentRAGProxy(c *gin.Context) {
 			return
 		}
 		path = "/internal/agent/rag/sources/" + id
+		query := url.Values{}
+		for key, pattern := range map[string]string{"collection": `^powersystem_rag_[A-Za-z0-9_-]{1,140}$`, "version": `^[a-f0-9]{64}$`} {
+			if value := c.Query(key); value != "" {
+				if !regexp.MustCompile(pattern).MatchString(value) {
+					fail(c, 400, 40001, "invalid source reference")
+					return
+				}
+				query.Set(key, value)
+			}
+		}
+		if len(query) > 0 {
+			path += "?" + query.Encode()
+		}
 	} else {
 		if id != "" {
 			if !validSessionID(id) {

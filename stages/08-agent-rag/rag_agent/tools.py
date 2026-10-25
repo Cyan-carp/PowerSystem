@@ -2,7 +2,7 @@ import asyncio
 import json
 from datetime import datetime, timezone
 from typing import Literal
-from urllib.parse import urlsplit
+from urllib.parse import urlsplit, urlencode
 from pydantic import BaseModel, ConfigDict, Field
 
 
@@ -153,8 +153,9 @@ class Tools:
                     data = {"results": rows}
                     for row in rows:
                         result["sources"].append({"id": row["id"], "kind": "document", "title": row["document"],
-                            "chapter": row["heading"], "url": f"/api/v1/agent/rag/sources/{row['id']}",
-                            "version": row["version"], "page": row.get("page"), "collected_at": stamp})
+                            "chapter": row["heading"], "url": f"/api/v1/agent/rag/sources/{row['id']}" + ('?'+urlencode({'collection':row['collection'],'version':row['version']}) if row.get('collection') else ''),
+                            "version": row["version"], "page": row.get("page"), "collected_at": stamp,
+                            "source_hash": row.get("source_hash"), "collection": row.get("collection")})
                 elif name == "web_search":
                     if not self.config.search_key:
                         raise ValueError("博查未配置密钥")

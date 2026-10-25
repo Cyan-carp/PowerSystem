@@ -32,6 +32,32 @@ def create_app(config=None, store=None, redis=None, provider=None, run_worker=Tr
             raise RuntimeError("ops_single_process_required")
         client = httpx.AsyncClient(follow_redirects=False, trust_env=False)
         app.state.worker = Worker(cfg, app.state.store, app.state.redis, client, app.state.contexts, provider)
+        from .business_actions import BusinessAuthority
+        app.state.business_authority=BusinessAuthority(app,client)
+        from .service_actions import ServiceAuthority
+        app.state.service_authority=ServiceAuthority(app,client)
+        from .schedule_actions import ScheduleAuthority
+        app.state.schedule_authority=ScheduleAuthority(app,client)
+        if getattr(cfg,'v4_schedules_enabled',False):
+            await app.state.schedule_authority.guard()
+            await app.state.store.pool.execute("UPDATE ma_execution_attempts SET status='execution_uncertain' WHERE status='started' AND task_id IN (SELECT task_id FROM ma_tasks WHERE envelope->>'protocol'='ma-schedule/v1')")
+            for row in await app.state.store.pool.fetch("SELECT t.* FROM ma_tasks t LEFT JOIN ma_approvals a USING(task_id) WHERE t.envelope->>'protocol'='ma-schedule/v1' AND (t.status='planning' OR t.status='queued' AND a.consumed_at IS NULL)"):
+                async with app.state.store.pool.acquire() as c,c.transaction():await app.state.schedule_authority.invalidate(c,dict(row),'worker_interrupted')
+        if getattr(cfg,'v4_ops_enabled',False):
+            await app.state.service_authority.guard()
+            await app.state.store.pool.execute("UPDATE ma_execution_attempts SET status='execution_uncertain' WHERE status='started' AND task_id IN (SELECT task_id FROM ma_tasks WHERE envelope->>'protocol'='ma-ops/v1')")
+            rows=await app.state.store.pool.fetch("SELECT t.* FROM ma_tasks t LEFT JOIN ma_approvals a USING(task_id) WHERE t.envelope->>'protocol'='ma-ops/v1' AND (t.status='planning' OR t.status='queued' AND a.consumed_at IS NULL)")
+            for row in rows:
+                async with app.state.store.pool.acquire() as c,c.transaction():
+                    await app.state.service_authority.invalidate(c,dict(row),'worker_interrupted')
+        if getattr(cfg,'v4_actions_enabled',False):
+            await app.state.business_authority.guard()
+            # In-flight writes are reconciled by receipt only; no startup resend.
+            await app.state.store.pool.execute("UPDATE ma_execution_attempts SET status='execution_uncertain' WHERE status='started' AND task_id IN (SELECT task_id FROM ma_tasks WHERE envelope->>'protocol'='ma-action/v1')")
+            rows=await app.state.store.pool.fetch("SELECT t.* FROM ma_tasks t LEFT JOIN ma_approvals a USING(task_id) WHERE t.envelope->>'protocol'='ma-action/v1' AND (t.status='planning' OR t.status='queued' AND a.consumed_at IS NULL)")
+            for row in rows:
+                async with app.state.store.pool.acquire() as c,c.transaction():
+                    await app.state.business_authority.invalidate(c,dict(row),'worker_interrupted')
         restore = cfg.runtime_profile == "m4-restore-readonly"
         if not restore:
             if app.state.store.security_gates:
@@ -42,6 +68,12 @@ def create_app(config=None, store=None, redis=None, provider=None, run_worker=Tr
         finally:
             if loop: loop.cancel(); await asyncio.gather(loop, return_exceptions=True)
             await app.state.worker.stop()
+            for task in list(app.state.schedule_authority.tasks):task.cancel()
+            await asyncio.gather(*list(app.state.schedule_authority.tasks),return_exceptions=True)
+            for task in list(app.state.business_authority.tasks):task.cancel()
+            await asyncio.gather(*list(app.state.business_authority.tasks),return_exceptions=True)
+            for task in list(app.state.service_authority.tasks):task.cancel()
+            await asyncio.gather(*list(app.state.service_authority.tasks),return_exceptions=True)
             await client.aclose()
             await singleton.execute("SELECT pg_advisory_unlock(90902)")
             await app.state.store.pool.release(singleton)
@@ -58,6 +90,12 @@ def create_app(config=None, store=None, redis=None, provider=None, run_worker=Tr
         if req.url.path in ('/internal/ma/v1/execution-grants/claim','/internal/ma/v1/write-grants/claim','/internal/ma/v1/security-snapshots/claim'):
             if not cfg.infra_enabled or not cfg.executor_token or not hmac.compare_digest(req.headers.get('X-MA-Executor-Token','').encode(),cfg.executor_token.encode()):
                 return JSONResponse(status_code=403,content={'detail':'invalid_adapter_token'})
+        elif req.url.path=='/internal/ma-ops/v1/claims':
+            if not cfg.executor_token or not hmac.compare_digest(req.headers.get('X-MA-Executor-Token','').encode(),cfg.executor_token.encode()):
+                return JSONResponse(status_code=401,content={'detail':'invalid_adapter_identity'})
+        elif req.url.path in ('/internal/ma-action/v1/claims','/internal/ma-schedule/v1/claims'):
+            if not hmac.compare_digest(req.headers.get('X-PowerSystem-Token','').encode(),cfg.service_token.encode()):
+                return JSONResponse(status_code=401,content={'detail':'invalid_service_token'})
         elif req.url.path.startswith("/internal/"):
             if not hmac.compare_digest(req.headers.get("X-PowerSystem-Token", "").encode(), cfg.service_token.encode()):
                 return JSONResponse(status_code=401, content={"detail": "invalid_service_token"})
@@ -203,7 +241,14 @@ def create_app(config=None, store=None, redis=None, provider=None, run_worker=Tr
         return await app.state.store.report(tid, owner(req))
 
     @app.post("/internal/ma/v1/tasks", status_code=202)
-    async def create(body: Task, req: Request): return await accept(body, req)
+    async def create(body: Task, req: Request):
+        if body.protocol!='ma/v1':raise HTTPException(400,'invalid_protocol')
+        return await accept(body, req)
+
+    @app.post('/internal/ma/v1/run-tasks',status_code=202)
+    async def create_run_task(body:Task,req:Request):
+        if body.protocol!='ma-run/v1':raise HTTPException(400,'invalid_protocol')
+        return await accept(body,req)
 
     @app.get("/internal/ma/v1/tasks")
     async def listing(req: Request, session_id: UUID | None = None, status: str | None = None, offset: int = Query(0, ge=0), limit: int = Query(20, ge=1, le=100)):
@@ -320,6 +365,12 @@ def create_app(config=None, store=None, redis=None, provider=None, run_worker=Tr
         if payload.session_id != body.session_id or payload.parent_turn_id != body.parent_turn_id or payload.verification_id != body.idempotency_key: raise HTTPException(400, "invalid_verification")
         return await accept(body, req, payload)
 
+    from .business_actions import routes as business_routes
+    business_routes(app)
+    from .service_actions import routes as service_routes
+    service_routes(app)
+    from .schedule_actions import routes as schedule_routes
+    schedule_routes(app)
     return app
 
 

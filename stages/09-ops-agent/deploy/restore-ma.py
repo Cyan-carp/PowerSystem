@@ -8,6 +8,20 @@ def run(argv,**kw):
     return r.stdout
 def sql(container,db,value):
     return run(['docker','exec','-i',container,'psql','-U','powersystem','-d',db,'-v','ON_ERROR_STOP=1','-Atq'],input=value.encode()).decode().strip()
+
+def verify_rag_configuration(source,manifest):
+    configuration=manifest.get('actual_rag_configuration')
+    if configuration is None:return 0  # Historical archives predate this capture.
+    files=configuration.get('files',{})
+    if configuration.get('restore_execution_forbidden') is not True or not files:
+        raise ValueError('restored_rag_configuration_invalid')
+    for name,item in files.items():
+        path=source/name
+        if not path.resolve().is_relative_to((source/'rag-runtime').resolve()) or not path.is_file() or path.is_symlink():
+            raise ValueError('restored_rag_private_path_invalid')
+        if hashlib.sha256(path.read_bytes()).hexdigest()!=item['sha256']:
+            raise ValueError('restored_rag_private_hash_mismatch')
+    return len(files)
 def main(a):
     if os.uname().nodename!='R730XD':raise ValueError('specified_host_required')
     source=a.source.resolve()
@@ -16,13 +30,14 @@ def main(a):
     project=pg['Config']['Labels'].get('com.docker.compose.project','')
     if not re.fullmatch('powersystem-restore-[0-9]+',project) or pg['Config']['Labels'].get('com.docker.compose.service')!='postgres':raise ValueError('fresh_restore_project_required')
     if time.time()-int(project.rsplit('-',1)[1])>900:raise ValueError('old_restore_project_blocked')
+    manifest=json.loads((source/'manifest.json').read_text())
+    rag_private_files=verify_rag_configuration(source,manifest)
     private=source.parent/'ma-restore-runtime';private.mkdir(mode=0o700,exist_ok=False);os.chown(private,10003,10003)
     db='ma_m4_restore_'+project.rsplit('-',1)[1]
     password=secrets.token_urlsafe(36)
     sql(a.postgres_container,'postgres','CREATE DATABASE '+db+';')
     run(['docker','cp',str(source/'ma_ops.dump'),a.postgres_container+':/tmp/ma_ops.dump'])
     run(['docker','exec',a.postgres_container,'pg_restore','-U','powersystem','-d',db,'--no-owner','--no-privileges','/tmp/ma_ops.dump'])
-    manifest=json.loads((source/'manifest.json').read_text())
     restored={t:int(sql(a.postgres_container,db,'SELECT count(*) FROM '+t+';')) for t in manifest['counts']}
     if restored!=manifest['counts']:raise ValueError('restore_counts_mismatch')
     baseline=json.loads((source/'task-baseline.json').read_text())
@@ -71,6 +86,6 @@ print(json.dumps({'fixture_readable':report['status']=='queued','restore_post_bl
     checks.update(no_new_attempts=counts_after['ma_execution_attempts']==manifest['counts']['ma_execution_attempts'],no_tool_replay=counts_after['ma_tool_calls']==manifest['counts']['ma_tool_calls'],no_model_replay=counts_after['ma_security_reviews']==manifest['counts']['ma_security_reviews'],no_outbox_replay=counts_after['ma_outbox']==manifest['counts']['ma_outbox']+1,facts_equal=True,counts_equal=True,production_credentials=False)
     (private/'checks.json').write_text(json.dumps(checks,indent=2));(private/'checks.json').chmod(0o600)
     if not all(v for k,v in checks.items() if k not in ('can_decide','production_credentials')) or checks['can_decide']:raise ValueError('restore_safety_failed')
-    print(json.dumps({'ma_restore_passed':True,'checks':checks,'project':project}))
+    print(json.dumps({'ma_restore_passed':True,'checks':checks,'project':project,'rag_private_files_verified':rag_private_files}))
 if __name__=='__main__':
     p=argparse.ArgumentParser();p.add_argument('--source',type=Path,required=True);p.add_argument('--postgres-container',required=True);main(p.parse_args())

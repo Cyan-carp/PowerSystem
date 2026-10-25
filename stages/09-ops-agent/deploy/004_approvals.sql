@@ -1,5 +1,5 @@
 ALTER TABLE ma_task_steps DROP CONSTRAINT IF EXISTS ma_task_steps_risk_class_check;
-ALTER TABLE ma_task_steps ADD CONSTRAINT ma_task_steps_risk_class_check CHECK(risk_class IN ('R0','R2'));
+ALTER TABLE ma_task_steps ADD CONSTRAINT ma_task_steps_risk_class_check CHECK(risk_class IN ('R0','R1','R2'));
 CREATE TABLE IF NOT EXISTS ma_policy_versions (
  version text PRIMARY KEY, snapshot jsonb NOT NULL, activated_at timestamptz NOT NULL DEFAULT now()
 );

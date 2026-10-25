@@ -1,6 +1,6 @@
 import asyncio
 import json
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from typing import Literal
 from urllib.parse import urlsplit
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -96,11 +96,28 @@ class Rules(Page):
     device_id: int | None = Field(default=None, gt=0)
 
 
+class Energy(ScopeFilter):
+    device_id: int | None = Field(default=None, gt=0)
+    start_date: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
+    end_date: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
+
+    @model_validator(mode="after")
+    def valid_window(self):
+        try:
+            days = (date.fromisoformat(self.end_date)-date.fromisoformat(self.start_date)).days
+            if not 1 <= days <= 31: raise ValueError()
+        except ValueError:
+            raise ValueError("energy requires 1..31 Beijing calendar days, end exclusive") from None
+        return self
+
+
 MODELS = {"search_knowledge": KnowledgeQuery, "web_search": WebQuery, "list_devices": Devices, "get_device": Device,
     "get_telemetry": Telemetry, "get_prediction": Device, "list_alarms": Alarms,
     "get_alarm_statistics": Statistics, "get_alarm_detail": Alarm, "get_dashboard_summary": Args,
-    "list_stations": Stations, "get_dashboard_overview": Overview, "get_alarm_rules": Rules}
+    "list_stations": Stations, "get_dashboard_overview": Overview, "get_alarm_rules": Rules,
+    "get_energy_report": Energy}
 DESCRIPTIONS = {
+    "get_energy_report": "读取energy_daily逐日发电量及汇总kWh。start_date含/end_date不含，北京时间，最多31自然日；近7天默认最近7个已结束自然日，不含今天，并说明窗口。scope/station_code/device_id筛选取交集。序号设备先list_devices按id ASC定位。缺测/无有效段不是零，complete=false不得声称全窗口完成。禁止用功率或24小时遥测代偿。",
     "search_knowledge": "语义向量检索内部项目资料，返回相关章节与来源。",
     "web_search": "博查联网搜索普通问题、最新信息和技术资料，返回网页摘要、发布时间与URL。",
     "list_devices": "查询平台设备台账，按ID升序分页（page/page_size，单页最多100条）；第二台指ID升序第二项。名称或编码可以用keyword检索。scope=all|business|baseline，station_code可限定单个场站。返回含total：只取一页时仅覆盖该页，不能声称已检查全部设备；要全量结论必须按total继续翻页。",
@@ -119,6 +136,7 @@ DESCRIPTIONS = {
 
 def business_route(name, args):
     args = dict(args)
+    if name == "get_energy_report": return "/api/v1/reports/energy", args
     if name == "list_devices": return "/api/v1/devices", args
     if name == "list_alarms": return "/api/v1/alarms", args
     if name == "get_alarm_statistics": return "/api/v1/alarms/statistics", args

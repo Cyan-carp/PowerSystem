@@ -28,12 +28,13 @@ class Target(Strict):
 
 
 class Task(Strict):
-    protocol: Literal["ma/v1"]
+    protocol: Literal["ma/v1", "ma-run/v1"]
     task_id: UUID
     trace_id: UUID
     idempotency_key: UUID
     session_id: UUID
     parent_turn_id: int | None = Field(default=None, gt=0, strict=True)
+    run_id: UUID | None = None
     actor: Actor
     intent: str = Field(min_length=1, max_length=4000)
     user_request: str = Field(min_length=1, max_length=32000)
@@ -45,6 +46,9 @@ class Task(Strict):
 
     @model_validator(mode='after')
     def operation_risk(self):
+        if (self.protocol=='ma-run/v1') != (self.run_id is not None):raise ValueError('run_binding_protocol_required')
+        if self.protocol=='ma-run/v1' and self.operation!='read_only':raise ValueError('run_tasks_read_only_required')
+        if self.run_id is not None and self.parent_turn_id is None:raise ValueError('run_requires_parent_turn')
         if self.task_kind=='security_inspection' and (self.operation!='read_only' or self.constraints.max_risk_class!='R0'):
             raise ValueError('inspection_read_only_required')
         if (self.operation=='restart_drill_container') != (self.constraints.max_risk_class=='R2'):
@@ -122,10 +126,11 @@ class ToolCall(Strict):
 
 
 class ResultEnvelope(Strict):
+    run_id: UUID | None = None
     business_quality: dict | None = None
     task_kind: Literal['ops','security_inspection'] = 'ops'
     inspection_report: dict | None = None
-    protocol: Literal['ma/v1']
+    protocol: Literal['ma/v1','ma-run/v1']
     task_id: UUID
     trace_id: UUID
     session_id: UUID

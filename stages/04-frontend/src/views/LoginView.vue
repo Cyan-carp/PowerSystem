@@ -5,6 +5,7 @@ import { ElMessage } from 'element-plus'
 import { api } from '../lib/api'
 import { saveSession } from '../lib/auth'
 import { errorMessage } from '../lib/format'
+import PowerGridScene from '../components/PowerGridScene.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -28,29 +29,51 @@ async function submit(): Promise<void> {
 
 <template>
   <div class="login-screen">
-    <div class="login-identity">
-      <div class="mesh" aria-hidden="true" />
-      <div class="grid-dots" aria-hidden="true" />
-      <div class="inner">
-        <h1>源网智联<br />新能源设备<b>智能运维平台</b></h1>
-        <p>每一台设备的状态，都值得被及时看见。</p>
-        <div class="login-line"><span />遥测接入 · 实时告警 · 故障预测 · 值班问答</div>
-      </div>
-    </div>
-    <div class="login-panel">
-      <div class="login-form-wrap">
+    <PowerGridScene />
+    <div class="login-scrim" aria-hidden="true" />
+
+    <div class="login-stage">
+      <header class="login-brand">
+        <span class="login-mark" aria-hidden="true">
+          <svg viewBox="0 0 40 40">
+            <path class="mark-hex" d="M20 2.6 34.9 11.3v17.4L20 37.4 5.1 28.7V11.3Z" />
+            <path class="mark-bolt" d="M22 11.6 13.8 22.1h4.8l-1.7 6.7 7.9-10.3h-4.9Z" />
+          </svg>
+        </span>
+        <h1>源网智联</h1>
+        <p>新能源设备智能运维平台</p>
+      </header>
+
+      <section class="login-card">
+        <div class="login-status">
+          <span class="login-status-dot" />
+          输电走廊数据链路正常
+        </div>
         <h2>登录平台</h2>
-        <p>使用已注册的运维账号进入系统。</p>
+        <p class="card-sub">使用已注册的运维账号进入系统。</p>
+
         <form @submit.prevent="submit">
-          <label for="username">账号</label>
-          <el-input id="username" v-model="form.username" autocomplete="username" size="large" placeholder="输入账号" />
-          <label for="password">密码</label>
-          <el-input id="password" v-model="form.password" type="password" autocomplete="current-password" show-password size="large" placeholder="输入密码" />
+          <div class="login-field">
+            <label for="username">账号</label>
+            <el-input id="username" v-model="form.username" autocomplete="username" size="large" placeholder="输入账号" />
+          </div>
+          <div class="login-field">
+            <label for="password">密码</label>
+            <el-input id="password" v-model="form.password" type="password" autocomplete="current-password" show-password size="large" placeholder="输入密码" />
+          </div>
           <p v-if="error" class="form-error" role="alert">{{ error }}</p>
           <el-button native-type="submit" type="primary" size="large" :loading="busy" class="login-submit">进入工作台</el-button>
         </form>
+
         <div class="login-footnote">平台业务接口使用 JWT 鉴权 · 登录有效期 8 小时</div>
-      </div>
+      </section>
+
+      <footer class="login-meta">
+        <span>遥测接入</span>
+        <span>实时告警</span>
+        <span>故障预测</span>
+        <span>值班问答</span>
+      </footer>
     </div>
   </div>
 </template>

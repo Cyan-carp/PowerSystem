@@ -57,6 +57,13 @@ export POWERSYSTEM_BACKUP_DIR="$backup_dir"
 dc=(docker compose --project-name "$project_name" --env-file "$env_file" -f "$compose_file")
 "${dc[@]}" up -d --wait
 pg_container=$("${dc[@]}" ps -q postgres)
+
+# Ops restores into its own database and requires a genuinely fresh isolated
+# project. Run it before the large business dump so that its 15-minute safety
+# boundary does not depend on business index restoration time.
+if [ -f "$restore_root/$run_id/ma/ma_ops.dump" ]; then
+  python3 "$project_dir/stages/09-ops-agent/deploy/restore-ma.py" --source "$restore_root/$run_id/ma" --postgres-container "$pg_container"
+fi
 docker cp "$restore_root/$run_id/postgres.dump" "$pg_container:/tmp/postgres.dump"
 "${dc[@]}" exec -T postgres pg_restore -U powersystem -d powersystem --no-owner --no-privileges /tmp/postgres.dump
 "${dc[@]}" exec -T tdengine sh -c 'taosdump -p"$TAOS_ROOT_PASSWORD" -i "$1"' sh "/backup/$restore_name/$run_id/tdengine"
@@ -66,6 +73,30 @@ printf 'postgres_inbox_rows='
 business_outbox_present=$("${dc[@]}" exec -T postgres psql -U powersystem -d powersystem -Atqc "SELECT to_regclass('public.business_notification_outbox') IS NOT NULL")
 test "$business_outbox_present" = t
 printf 'business_outbox_present=%s\n' "$business_outbox_present"
+# V4 check runs before any worker/restore-api start: restore the independent RAG
+# database, export the same full-row metadata shape, and compare it offline with
+# the captured manifest and the actual restored artifact files. No V4 worker,
+# scheduler or writer is started here.
+if [ -f "$restore_root/$run_id/v4-manifest/manifest.json" ]; then
+  test -f "$restore_root/$run_id/v4-artifacts.rows.json"
+  test -d "$restore_root/$run_id/v4-artifacts"
+  test -s "$restore_root/$run_id/rag-postgres.dump"
+  rag_db_present=$("${dc[@]}" exec -T postgres psql -U powersystem -d postgres -Atqc "SELECT 1 FROM pg_database WHERE datname='powersystem_agent_rag'")
+  test -z "$rag_db_present"
+  "${dc[@]}" exec -T postgres psql -U powersystem -d postgres -v ON_ERROR_STOP=1 -qc 'CREATE DATABASE powersystem_agent_rag'
+  docker cp "$restore_root/$run_id/rag-postgres.dump" "$pg_container:/tmp/rag-postgres.dump"
+  "${dc[@]}" exec -T postgres pg_restore -U powersystem -d powersystem_agent_rag --no-owner --no-privileges /tmp/rag-postgres.dump
+  "${dc[@]}" exec -T postgres psql -U powersystem -d powersystem_agent_rag -Atqc \
+    "SELECT json_build_object('database', current_database(), 'rows', COALESCE(json_agg(to_jsonb(t)), '[]'::json)) FROM public.assistant_artifacts AS t" \
+    > "$restore_root/$run_id/v4-artifacts.restored.rows.json"
+  chmod 600 "$restore_root/$run_id/v4-artifacts.restored.rows.json"
+  python3 "$project_dir/stages/04-frontend/deploy/v4-backup.py" verify --offline \
+    --rows-file "$restore_root/$run_id/v4-artifacts.restored.rows.json" \
+    --artifact-dir "$restore_root/$run_id/v4-artifacts" \
+    --expected "$restore_root/$run_id/v4-manifest/manifest.json" \
+    --output "$restore_root/$run_id/v4-verify.json"
+  printf 'v4_offline_verify=ok\n'
+fi
 if [ -f "$restore_root/$run_id/redis.rdb" ]; then
   for agent_file in agent-service-token agent-monitor-token agent-model-key; do
     test -f "$restore_root/$run_id/config/agent/$agent_file"
@@ -104,7 +135,4 @@ printf 'tdengine_rows='
 snapshot_queues=$(find "$restore_root/$run_id/queues" -maxdepth 1 -name '*.sqlite' -type f | wc -l)
 test "$snapshot_queues" -ge 2
 printf 'snapshot_queues=%s\n' "$snapshot_queues"
-if [ -f "$restore_root/$run_id/ma/ma_ops.dump" ]; then
-  python3 "$project_dir/stages/09-ops-agent/deploy/restore-ma.py" --source "$restore_root/$run_id/ma" --postgres-container "$pg_container"
-fi
 printf 'restore_files=%s\n' "$restore_root/$run_id"
