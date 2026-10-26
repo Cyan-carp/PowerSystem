@@ -2,7 +2,7 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElNotification } from 'element-plus'
-import { Bell, ChatDotSquare, DataAnalysis, DataBoard, Monitor, TrendCharts, Files } from '@element-plus/icons-vue'
+import { Bell, Calendar, ChatDotSquare, DataAnalysis, DataBoard, Monitor, TrendCharts, Files } from '@element-plus/icons-vue'
 import { clearSession, currentUser } from '../lib/auth'
 import { realtime } from '../lib/realtime'
 import { api } from '../lib/api'
@@ -26,6 +26,7 @@ const navItems = [
   { to: '/alarms', match: (path: string) => path === '/alarms', icon: Bell, label: '告警中心' },
   { to: '/predictions', match: (path: string) => path === '/predictions', icon: DataAnalysis, label: '故障预测' },
   { to: '/agent', match: (path: string) => path === '/agent', icon: ChatDotSquare, label: '智能助手' },
+  { to: '/agent/schedules', match: (path: string) => path.startsWith('/agent/schedules'), icon: Calendar, label: '定期任务' },
 ]
 
 const userName = computed(() => currentUser.value?.real_name || currentUser.value?.username || '值班员')

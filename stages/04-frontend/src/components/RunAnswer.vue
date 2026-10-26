@@ -13,6 +13,8 @@ const phases: Record<string, string> = { accepted: '已持久受理', queued: '�
 const terminal = computed(() => ['succeeded', 'partial', 'failed', 'cancelled'].includes(props.run.status))
 const records = computed(() => props.run.result_refs as Record<string, unknown>[])
 const actions = computed(() => props.run.actions as Record<string, unknown>[])
+/** 有待批准动作时默认展开审批区，配合自动弹窗给出可核对的上下文。 */
+const pendingApproval = computed(() => !terminal.value && actions.value.some(item => item.status === 'pending' && !item.stale))
 const artifacts = computed(() => props.run.artifacts as Record<string, unknown>[])
 const downloading = ref(''), downloadError = ref('')
 function ready(item: Record<string, unknown>): boolean { return item.status === 'ready' && typeof item.expires_at === 'string' && Date.parse(item.expires_at) > Date.now() }
@@ -53,7 +55,7 @@ function state(row: Record<string, unknown>): string { const value = field(row, 
         <a v-else-if="item.kind === 'web' && sourceLink(item.url)" :href="sourceLink(item.url)!" target="_blank" rel="noopener noreferrer">打开网页</a>
       </div>
     </details>
-    <details v-if="actions.length" class="run-details"><summary>审批与动作状态 · {{ actions.length }}</summary>
+    <details v-if="actions.length" class="run-details" :open="pendingApproval"><summary>审批与动作状态 · {{ actions.length }}{{ pendingApproval ? ' · 待批准' : '' }}</summary>
       <div v-for="(item, i) in actions" :key="i" class="run-meta"><span>{{ field(item, 'effect_summary') || field(item, 'capability') || field(item, 'action_id') }}</span><span>{{ state(item) }}{{ item.stale ? ' · 状态待刷新核查' : '' }}</span><small v-if="item.expires_at">有效期 {{ dateTime(field(item, 'expires_at')) }}</small><small v-if="item.observed_at">核对于 {{ dateTime(field(item, 'observed_at')) }}</small></div>
       <div v-for="item in actions" :key="field(item, 'action_id')"><ActionApproval v-if="item.status === 'pending' && !terminal" :run="run" :action-id="field(item, 'action_id')" @updated="$emit('updated', $event)" /><p v-if="item.error_code" class="run-warning">{{ field(item, 'error_code') }}</p><p v-if="item.health_check" class="run-notice">执行后健康检查：{{ field(item, 'health_check') }}</p><p v-if="item.recovery_limit" class="run-notice">恢复边界：{{ field(item, 'recovery_limit') }}</p><pre v-if="item.display_result != null" class="run-notice">{{ field(item, 'capability').startsWith('service.') ? '登记服务观察（仅站内）' : '设备备注' }}：{{ field(item, 'display_result') || '（空）' }}</pre></div>
       <p class="run-empty">批准与执行以服务器当前身份和权威状态为准；结果不明时先对账，不重复操作。</p>

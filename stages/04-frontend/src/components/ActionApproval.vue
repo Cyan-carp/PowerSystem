@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onUnmounted, ref, watch } from 'vue'
 import { getRun, decideAction, type RunSnapshot } from '../lib/agent-runs'
+import { claimAutoApproval, releaseAutoApproval } from '../lib/approval-auto'
 import { token } from '../lib/auth'
 import { dateTime } from '../lib/format'
 const props = defineProps<{ run: RunSnapshot; actionId: string }>()
@@ -8,6 +9,20 @@ const emit = defineEmits<{ updated: [value: RunSnapshot] }>()
 const open = ref(false), busy = ref(false), error = ref('')
 const current = ref<Record<string, unknown>>()
 const binding = ref<RunSnapshot>()
+const gateKey = computed(() => `${props.run.run_id}:${props.actionId}`)
+/** 只有服务端仍列为待批准、且未被标记过期的动作才值得自动弹窗。 */
+const stillPending = computed(() => (props.run.actions as Record<string, unknown>[] || [])
+  .some(item => String(item.action_id) === props.actionId && item.status === 'pending' && !item.stale))
+/** 自动弹窗：待批准动作一出现就自己打开，用户关掉后不重复打扰。 */
+function autoOpen(): void {
+  if (open.value || busy.value || !stillPending.value) return
+  if (!claimAutoApproval(gateKey.value)) return
+  void inspect()
+}
+watch([() => props.actionId, () => props.run.actions, stillPending], autoOpen, { immediate: true })
+watch(open, (value) => { if (!value) releaseAutoApproval(gateKey.value) })
+onUnmounted(() => releaseAutoApproval(gateKey.value))
+
 const schedule = computed<Record<string, unknown> | undefined>(() => {
   if (!String(current.value?.capability || '').startsWith('schedule.')) return undefined
   let args = current.value?.typed_args as Record<string, unknown> | undefined
@@ -28,7 +43,7 @@ async function inspect() {
     if (!action || action.status !== 'pending' || !action.approval_id || !action.plan_hash || action.stale || Date.parse(action.expires_at || '') <= Date.now()) throw new Error('批准已失效或状态尚待核查，请刷新')
     current.value = action; binding.value = fresh; open.value = true
   } catch (e) { error.value = e instanceof Error ? e.message : '读取失败，请刷新核查' }
-  finally { busy.value = false }
+  finally { busy.value = false; if (!open.value) releaseAutoApproval(gateKey.value) }
 }
 async function decide(decision: 'approve' | 'reject') {
   if (!current.value || !binding.value || busy.value) return
@@ -50,7 +65,7 @@ async function decide(decision: 'approve' | 'reject') {
   <el-dialog v-model="open" title="核对本次动作" width="min(540px, 94vw)" :close-on-click-modal="false">
     <p>{{ current?.effect_summary }}</p>
     <p>目标：{{ current?.target_summary }} · 版本 {{ current?.target_version }}</p>
-    <p v-if="current?.parameters_summary">参数：{{ current?.parameters_summary }}</p>
+    <p v-if="current?.parameters_summary && !schedule">参数：{{ current?.parameters_summary }}</p>
     <template v-if="schedule"><p>任务：{{ schedule.task_type === 'daily_report' ? '本人日报' : '本人巡检' }} · 时区：{{ schedule.timezone }} · {{ schedule.mode === 'daily' ? schedule.daily_time : `${schedule.interval_minutes}分钟` }}</p><p>范围：{{ schedule.scope }} · 场站 {{ schedule.station_code || '全部' }} · 设备 {{ schedule.device_id || '全部' }} · 原配置版本 {{ schedule.expected_version }}</p><p>持续只读授权：本次配置生效后 {{ schedule.grant_days }} 天，到期暂停，不自动续批；目的地仅本站本人（v1）。暂停/取消撤销授权，恢复须重新批准。</p></template>
     <p>有效期：{{ dateTime(String(current?.expires_at || '')) }}</p>
     <p v-if="current?.policy_version">策略：{{ current?.policy_version }} · 目的地：{{ current?.destination_id }}</p>
