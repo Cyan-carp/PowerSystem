@@ -12,13 +12,14 @@ describe('visible date and time format', () => {
 })
 
 describe('report durations', () => {
-  it('shows hours/minutes/seconds and drops zero leading units', () => {
-    expect(durationText(3_723_000)).toBe('1时2分3秒')
-    expect(durationText(3_600_000)).toBe('1时0秒')
-    expect(durationText(300_000)).toBe('5分0秒')
-    expect(durationText(45_000)).toBe('45秒')
-    expect(durationText(999)).toBe('<1秒')
-    expect(durationText(0)).toBe('0秒')
+  it('formats durations as zero-padded HH:MM:SS', () => {
+    expect(durationText(3_723_000)).toBe('01:02:03')
+    expect(durationText(3_600_000)).toBe('01:00:00')
+    expect(durationText(300_000)).toBe('00:05:00')
+    expect(durationText(45_000)).toBe('00:00:45')
+    expect(durationText(999)).toBe('<00:00:01')
+    expect(durationText(0)).toBe('00:00:00')
+    expect(durationText(494_228_000)).toBe('137:17:08')
   })
 
   it('keeps unknown durations out of numeric display', () => {

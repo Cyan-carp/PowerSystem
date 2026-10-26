@@ -23,19 +23,19 @@ function draw(): void {
   chart.setOption({
     animationDurationUpdate: 250,
     grid: { left: 54, right: 24, top: 24, bottom: crossDay ? 48 : 32 },
-    tooltip: { trigger: 'axis', confine: true, backgroundColor: '#1e2024', borderColor: '#35383e', textStyle: { color: '#d9dbe0' }, axisPointer: { type: 'line' }, formatter: (params: unknown) => {
+    tooltip: { trigger: 'axis', confine: true, backgroundColor: '#ffffff', borderColor: '#e5e6eb', textStyle: { color: '#1d2129' }, axisPointer: { type: 'line' }, formatter: (params: unknown) => {
       const item = (Array.isArray(params) ? params[0] : params) as { data?: unknown }
       const point = item?.data
       if (!Array.isArray(point) || point.length < 2) return ''
       return `${dateTime(Number(point[0]))}<br/>${metricLabels[props.metric]}：${Number(point[1]).toFixed(2)} ${metricUnits[props.metric]}`
     } },
-    xAxis: { type: 'time', splitNumber: Math.max(2, Math.min(5, Math.floor(width / 120))), axisLine: { lineStyle: { color: '#2b2d33' } }, axisTick: { show: false }, axisLabel: { color: '#787d85', fontSize: 11, hideOverlap: true, margin: 12, formatter: (value: number) => {
+    xAxis: { type: 'time', splitNumber: Math.max(2, Math.min(5, Math.floor(width / 120))), axisLine: { lineStyle: { color: '#c9cdd4' } }, axisTick: { show: false }, axisLabel: { color: '#86909c', fontSize: 11, hideOverlap: true, margin: 12, formatter: (value: number) => {
       const [day, time] = dateTime(value).split(' ')
       const clock = span >= 5 * 60_000 ? time?.slice(0, 5) : time
       return crossDay ? `${day}\n${clock}` : clock || ''
     } }, splitLine: { show: false } },
-    yAxis: { type: 'value', name: metricUnits[props.metric], minInterval: .01, splitNumber: 4, nameTextStyle: { color: '#787d85' }, axisLabel: { color: '#787d85', fontSize: 11, formatter: (value: number) => value.toFixed(2) }, splitLine: { lineStyle: { color: '#26282d' } } },
-    series: [{ name: metricLabels[props.metric], type: 'line', smooth: false, showSymbol: false, data: props.points, lineStyle: { color: '#5b8def', width: 2 }, itemStyle: { color: '#5b8def' }, areaStyle: { color: 'rgba(91,141,239,0.12)' } }],
+    yAxis: { type: 'value', name: metricUnits[props.metric], minInterval: .01, splitNumber: 4, nameTextStyle: { color: '#86909c' }, axisLabel: { color: '#86909c', fontSize: 11, formatter: (value: number) => value.toFixed(2) }, splitLine: { lineStyle: { color: '#f2f3f5' } } },
+    series: [{ name: metricLabels[props.metric], type: 'line', smooth: false, showSymbol: false, data: props.points, lineStyle: { color: '#006eff', width: 2 }, itemStyle: { color: '#006eff' }, areaStyle: { color: 'rgba(0,110,255,0.12)' } }],
   }, true)
 }
 

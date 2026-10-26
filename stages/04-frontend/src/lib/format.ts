@@ -28,17 +28,19 @@ export function toMilliseconds(value: number | string): number {
 }
 
 /**
- * Human-readable duration. Zero hours/minutes are dropped, seconds are always
- * shown, so 3_723_000 ms → "1时2分3秒", 300_000 ms → "5分0秒", 45_000 ms → "45秒".
+ * Human-readable duration in HH:MM:SS. Hours are not capped at 24 and every
+ * segment is zero-padded, so 3_723_000 ms → "01:02:03", 300_000 ms → "00:05:00",
+ * 45_000 ms → "00:00:45". Sub-second values stay distinguishable as "<00:00:01".
  */
 export function durationText(value: number | null | undefined): string {
   if (value == null || !Number.isFinite(value) || value < 0) return '—'
-  if (value > 0 && value < 1000) return '<1秒'
+  if (value > 0 && value < 1000) return '<00:00:01'
   const total = Math.round(value / 1000)
   const hours = Math.floor(total / 3600)
   const minutes = Math.floor((total % 3600) / 60)
   const seconds = total % 60
-  return `${hours ? `${hours}时` : ''}${minutes ? `${minutes}分` : ''}${seconds}秒`
+  const pad = (part: number) => String(part).padStart(2, '0')
+  return `${pad(hours)}:${pad(minutes)}:${pad(seconds)}`
 }
 
 /** Compact session activity time; full Beijing time stays available in the tooltip. */export function sessionRecency(value: string | null | undefined, now = Date.now()): string {

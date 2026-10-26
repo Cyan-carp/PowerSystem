@@ -26,7 +26,7 @@ function draw(): void {
     grid: { left: 52, right: 18, top: 22, bottom: 32 },
     tooltip: {
       trigger: 'axis', axisPointer: { type: power ? 'line' : 'shadow' },
-      backgroundColor: '#1e2024', borderColor: '#35383e', textStyle: { color: '#d9dbe0' },
+      backgroundColor: '#ffffff', borderColor: '#e5e6eb', textStyle: { color: '#1d2129' },
       formatter: (params: unknown) => {
         const item = (Array.isArray(params) ? params[0] : params) as { data?: DailyPoint }
         const point = item?.data
@@ -39,22 +39,22 @@ function draw(): void {
     },
     xAxis: {
       type: 'value', min: 0, max: 24, interval: 4,
-      axisLine: { lineStyle: { color: '#35383e' } },
-      axisLabel: { color: '#787d85', fontSize: 11, formatter: (value: number) => `${value}点`, showMinLabel: true, showMaxLabel: true },
+      axisLine: { lineStyle: { color: '#e5e6eb' } },
+      axisLabel: { color: '#86909c', fontSize: 11, formatter: (value: number) => `${value}点`, showMinLabel: true, showMaxLabel: true },
       axisTick: { show: false }, splitLine: { show: false },
     },
     yAxis: {
       type: 'value', min: 0, max: Math.ceil(maximum / step) * step, interval: step, minInterval: 1,
-      name: power ? 'kW' : 'kWh', nameTextStyle: { color: '#787d85', fontSize: 10 },
-      axisLabel: { color: '#787d85', fontSize: 11, formatter: (value: number) => integer.format(value) },
-      axisLine: { show: false }, axisTick: { show: false }, splitLine: { lineStyle: { color: '#26282d' } },
+      name: power ? 'kW' : 'kWh', nameTextStyle: { color: '#86909c', fontSize: 10 },
+      axisLabel: { color: '#86909c', fontSize: 11, formatter: (value: number) => integer.format(value) },
+      axisLine: { show: false }, axisTick: { show: false }, splitLine: { lineStyle: { color: '#f2f3f5' } },
     },
     series: [{
       type: power ? 'line' : 'bar', data: props.points,
-      ...(power ? { smooth: false, showSymbol: false, connectNulls: false, lineStyle: { color: '#5b8def', width: 2 }, areaStyle: { color: 'rgba(91,141,239,.10)' } }
-        : { barWidth: '65%', barMaxWidth: 22, itemStyle: { color: '#5b8def', borderRadius: [2, 2, 0, 0] } }),
+      ...(power ? { smooth: false, showSymbol: false, connectNulls: false, lineStyle: { color: '#006eff', width: 2 }, areaStyle: { color: 'rgba(0,110,255,.10)' } }
+        : { barWidth: '65%', barMaxWidth: 22, itemStyle: { color: '#006eff', borderRadius: [2, 2, 0, 0] } }),
     }],
-    graphic: values.length ? [] : [{ type: 'text', left: 'center', top: 'middle', style: { text: '今日暂无历史采样', fill: '#787d85', fontSize: 12 } }],
+    graphic: values.length ? [] : [{ type: 'text', left: 'center', top: 'middle', style: { text: '今日暂无历史采样', fill: '#86909c', fontSize: 12 } }],
   }, true)
 }
 onMounted(() => {

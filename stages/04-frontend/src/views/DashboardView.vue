@@ -195,23 +195,24 @@ onUnmounted(() => { disposed = true; unsubscribe?.(); if (periodic) clearInterva
         <p class="trend-note">全天 0–24 点，每 4 小时一个刻度。基于 ST-01 三台设备当日历史采样，缺测和未到时段留空；发电量按有效功率片段积分。<span v-if="dailyUpdated"> 数据截至 {{ dateTime(dailyUpdated) }}，每 5 分钟更新。</span></p>
       </template>
     </section>
+    <div class="dash-split">
     <section class="surface station-compare" aria-label="场站对比">
       <div class="surface-head"><h2>场站对比</h2><span>{{ rangeLabel }} · {{ stations.length }} 个场站</span></div>
       <el-table :data="stations" class="data-table" empty-text="当前范围暂无场站">
-        <el-table-column label="场站" min-width="210">
+        <el-table-column label="场站" min-width="140">
           <template #default="{ row }"><strong>{{ row.station_name }}</strong><span class="cell-sub">{{ row.station_code }} · {{ row.scope === 'baseline' ? '基线' : '业务' }}</span></template>
         </el-table-column>
-        <el-table-column label="登记 / 期望" width="120"><template #default="{ row }">{{ row.registered_device_count }} / {{ row.expected_device_count }}</template></el-table-column>
-        <el-table-column label="已观测" width="90"><template #default="{ row }">{{ row.observed_device_count }}</template></el-table-column>
-        <el-table-column label="在线" width="80"><template #default="{ row }">{{ row.online }}</template></el-table-column>
-        <el-table-column label="活动告警" width="100"><template #default="{ row }">{{ row.active_alarms }}</template></el-table-column>
-        <el-table-column label="当前功率" width="125"><template #default="{ row }">{{ integer(row.current_power_kw) }} <small>kW</small></template></el-table-column>
-        <el-table-column label="健康度" width="95"><template #default="{ row }">{{ row.health_score_percent != null ? row.health_score_percent.toFixed(0) : '—' }}<span v-if="row.health_score_percent != null"> 分</span></template></el-table-column>
-        <el-table-column label="完整性" width="100"><template #default="{ row }"><el-tag v-if="row.partial" type="warning" size="small">部分</el-tag><el-tag v-else type="success" size="small">完整</el-tag></template></el-table-column>
+        <el-table-column label="登记 / 期望" min-width="84"><template #default="{ row }">{{ row.registered_device_count }} / {{ row.expected_device_count }}</template></el-table-column>
+        <el-table-column label="在线" min-width="54"><template #default="{ row }">{{ row.online }}</template></el-table-column>
+        <el-table-column label="活动告警" min-width="74"><template #default="{ row }">{{ row.active_alarms }}</template></el-table-column>
+        <el-table-column label="当前功率" min-width="96"><template #default="{ row }">{{ integer(row.current_power_kw) }} <small>kW</small></template></el-table-column>
+        <el-table-column label="健康度" min-width="62"><template #default="{ row }">{{ row.health_score_percent != null ? row.health_score_percent.toFixed(0) : '—' }}<span v-if="row.health_score_percent != null"> 分</span></template></el-table-column>
+        <el-table-column label="完整性" min-width="62"><template #default="{ row }"><el-tag v-if="row.partial" type="warning" size="small">部分</el-tag><el-tag v-else type="success" size="small">完整</el-tag></template></el-table-column>
       </el-table>
-      <p class="trend-note">登记为台账设备数，期望为共享清单设备数，已观测为当前 15 秒窗口内有有效遥测的设备数。partial 表示登记少于期望，或有效观测少于已登记数；缺失的功率、电量或健康度显示为 —。</p>
+      <details class="panel-note panel-note--footer"><summary>数据口径</summary><p>登记为台账设备数，期望为共享清单设备数。partial 表示登记少于期望，或当前 15 秒窗口内有有效遥测的设备少于已登记数；缺失的功率、电量或健康度显示为 —。</p></details>
     </section>
-    <section class="surface dashboard-alarm"><div class="surface-head"><h2>最新告警</h2><el-button link type="primary" @click="router.push('/alarms')">查看全部 →</el-button></div><div v-if="alarms.length" class="alarm-feed"><button v-for="alarm in alarms" :key="alarm.id" class="alarm-feed-row" @click="router.push({ path: '/alarms', query: { id: String(alarm.id) } })"><span class="severity-dot" :class="alarm.level" /><span class="feed-main"><strong>{{ alarm.metric === 'ai_failure_risk' ? 'AI 故障风险' : alarm.metric + ' 越限' }}</strong><small>设备 #{{ alarm.device_id }} · {{ dateTime(alarm.triggered_at) }}</small></span><span class="feed-status">{{ levelLabels[alarm.level] }}</span></button></div><div v-else class="empty-box">当前范围没有告警记录。</div></section>
+    <section class="surface dashboard-alarm"><div class="surface-head"><h2>最新告警</h2><el-button link type="primary" @click="router.push('/alarms')">查看全部 →</el-button></div><div v-if="alarms.length" class="alarm-feed"><button v-for="alarm in alarms" :key="alarm.id" class="alarm-feed-row" @click="router.push({ path: '/alarms', query: { id: String(alarm.id) } })"><span class="severity-dot" :class="alarm.level" /><span class="feed-main"><strong>{{ alarm.metric === 'ai_failure_risk' ? 'AI 故障风险' : alarm.metric + ' 越限' }}</strong><small>设备 #{{ alarm.device_id }} · {{ dateTime(alarm.triggered_at) }}</small></span><span class="feed-status" :class="alarm.level">{{ levelLabels[alarm.level] }}</span></button></div><div v-else class="empty-box">当前范围没有告警记录。</div></section>
+    </div>
     <section class="surface device-overview"><div class="surface-head"><h2>设备速览</h2><span>{{ rangeLabel }} · 前 12 台</span><el-button link type="primary" @click="router.push('/devices')">设备列表 →</el-button></div><div v-if="devices.length" class="device-chip-grid"><button v-for="device in devices.slice(0, 12)" :key="device.id" class="device-chip" @click="router.push(`/devices/${device.id}`)"><span class="device-chip-icon">{{ device.device_code.slice(-2) }}</span><span><strong>{{ device.name }}</strong><small>{{ device.device_code }} · {{ device.station_code }}</small></span><span class="chip-arrow">→</span></button></div><div v-else class="empty-box">当前范围尚无已登记设备。</div></section>
   </div>
 </template>

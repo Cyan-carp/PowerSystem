@@ -35,6 +35,20 @@ const detailError = ref('')
 let unsubscribe: (() => void) | null = null
 let periodic: ReturnType<typeof setInterval> | null = null
 
+const QUERY_STATUSES: AlarmStatus[] = ['unhandled', 'acked', 'recovered']
+const QUERY_LEVELS: AlarmLevel[] = ['urgent', 'major', 'minor']
+// 深层入口带参进入时把查询参数当初始筛选；参数被清空也要同步回来，避免筛选与地址不一致
+function applyQueryFilters(): boolean {
+  const query = route.query
+  const nextStatus = typeof query.status === 'string' && (QUERY_STATUSES as string[]).includes(query.status) ? query.status as AlarmStatus : ''
+  const nextLevel = typeof query.level === 'string' && (QUERY_LEVELS as string[]).includes(query.level) ? query.level as AlarmLevel : ''
+  if (status.value === nextStatus && level.value === nextLevel) return false
+  status.value = nextStatus
+  level.value = nextLevel
+  page.value = 1
+  return true
+}
+
 async function loadStations(): Promise<void> {
   stationsLoading.value = true
   stationError.value = ''
@@ -128,7 +142,9 @@ async function changeScope(next: Scope): Promise<void> {
   await load()
 }
 watch(() => route.query.id, (id) => { const parsed = Number(id); if (Number.isInteger(parsed) && parsed > 0) void openAlarm(parsed) }, { immediate: true })
+watch(() => [route.query.status, route.query.level], () => { if (applyQueryFilters()) void load() })
 onMounted(() => {
+  applyQueryFilters()
   void loadStations()
   void load()
   unsubscribe = realtime.subscribe((event) => {
@@ -145,11 +161,11 @@ onUnmounted(() => { unsubscribe?.(); if (periodic) clearInterval(periodic) })
 <template>
   <div class="page-narrow">
   <section class="page-head"><div><h1>告警中心</h1><p>按级别、状态查找告警，并完成确认闭环。</p></div><div class="head-stat">筛选结果 <strong>{{ total }}</strong></div></section>
-  <section class="surface"><div class="toolbar"><div class="toolbar-title">告警记录 <span>{{ scopeLabels[scope] }} · 新事件会实时同步</span></div><div class="toolbar-actions"><el-button-group><el-button v-for="item in scopeOptions" :key="item.value" size="small" :type="scope === item.value ? 'primary' : 'default'" @click="changeScope(item.value)">{{ item.label }}</el-button></el-button-group><el-select v-model="station" placeholder="全部场站" clearable :loading="stationsLoading" style="width: 190px" @change="filter"><el-option label="全部场站" value="" /><el-option v-for="item in stations" :key="item.station_code" :label="`${item.station_name}（${item.station_code}）`" :value="item.station_code" /></el-select><el-button :disabled="!checked.length || archiving" :loading="archiving" @click="archiveSelected">批量归档{{ checked.length ? ` (${checked.length})` : '' }}</el-button><el-select v-model="level" placeholder="全部级别" style="width: 135px" @change="filter"><el-option label="全部级别" value="" /><el-option v-for="(label, value) in levelLabels" :key="value" :label="label" :value="value" /></el-select><el-select v-model="status" placeholder="全部状态" style="width: 135px" @change="filter"><el-option label="全部状态" value="" /><el-option v-for="(label, value) in statusLabels" :key="value" :label="label" :value="value" /></el-select></div></div>
-    <div class="toolbar"><span>规则告警由设备遥测越限自动生成，来源可能是合成车队设备或真实设备。{{ normalAlarmSamplingNote }}历史演示记录保留，可按来源筛选。</span><el-select v-model="origin" style="width:150px" @change="filter"><el-option label="全部来源" value="" /><el-option label="自然规则告警" value="normal" /><el-option label="历史演示告警" value="simulation" /></el-select></div>
+  <section class="surface"><div class="toolbar"><div class="toolbar-title">告警记录 <span>{{ scopeLabels[scope] }} · 新事件会实时同步</span></div><div class="toolbar-actions"><el-button-group><el-button v-for="item in scopeOptions" :key="item.value" size="small" :type="scope === item.value ? 'primary' : 'default'" @click="changeScope(item.value)">{{ item.label }}</el-button></el-button-group><el-select v-model="station" placeholder="全部场站" clearable :loading="stationsLoading" style="width: 190px" @change="filter"><el-option label="全部场站" value="" /><el-option v-for="item in stations" :key="item.station_code" :label="`${item.station_name}（${item.station_code}）`" :value="item.station_code" /></el-select><el-select v-model="origin" placeholder="全部来源" clearable style="width: 145px" @change="filter"><el-option label="全部来源" value="" /><el-option label="自然规则告警" value="normal" /><el-option label="历史演示告警" value="simulation" /></el-select><el-select v-model="level" placeholder="全部级别" style="width: 125px" @change="filter"><el-option label="全部级别" value="" /><el-option v-for="(label, value) in levelLabels" :key="value" :label="label" :value="value" /></el-select><el-select v-model="status" placeholder="全部状态" style="width: 125px" @change="filter"><el-option label="全部状态" value="" /><el-option v-for="(label, value) in statusLabels" :key="value" :label="label" :value="value" /></el-select><el-button :disabled="!checked.length || archiving" :loading="archiving" @click="archiveSelected">批量归档{{ checked.length ? ` (${checked.length})` : '' }}</el-button></div></div>
+    <details class="panel-note"><summary>数据口径</summary><p>规则告警由设备遥测越限自动生成，来源可能是合成车队设备或真实设备。{{ normalAlarmSamplingNote }}历史演示记录保留，可按来源筛选。</p></details>
     <el-alert v-if="stationError" :title="stationError" type="warning" show-icon :closable="false" class="content-alert" />
     <el-alert v-if="error" :title="error" type="error" show-icon :closable="false" class="content-alert" />
-    <el-table v-loading="loading" :data="rows" stripe empty-text="暂无符合条件的告警" class="data-table" @row-click="onRowClick" @selection-change="(rows: Alarm[]) => (checked = rows)"><el-table-column type="selection" width="46" align="center" header-align="center" /><el-table-column label="级别" width="95" align="center" header-align="center"><template #default="{ row }"><span class="severity-label" :class="row.level"><span class="severity-dot" :class="row.level" />{{ levelLabels[row.level as AlarmLevel] }}</span></template></el-table-column><el-table-column label="告警内容" min-width="200" align="center" header-align="center"><template #default="{ row }"><strong>{{ isLegacySimulationMetric(row.metric) ? alarmMetricLabel(row.metric) : row.metric === 'ai_failure_risk' ? 'AI 故障风险' : alarmMetricLabel(row.metric) + ' 越限' }}</strong><small class="alarm-origin">{{ alarmOriginLabel(row.origin) }}</small></template></el-table-column><el-table-column label="触发值 / 阈值" width="155" align="center" header-align="center"><template #default="{ row }"><span v-if="isLegacySimulationMetric(row.metric)" class="alarm-values-missing">—</span><span v-else class="alarm-values">{{ fixedNumber(row.value) }}{{ metricUnits[row.metric as Metric] || '' }} / {{ fixedNumber(row.threshold) }}{{ metricUnits[row.metric as Metric] || '' }}</span></template></el-table-column><el-table-column label="设备 ID" prop="device_id" width="110" align="center" header-align="center" /><el-table-column label="触发时间" min-width="175" align="center" header-align="center"><template #default="{ row }">{{ dateTime(row.triggered_at) }}</template></el-table-column><el-table-column label="状态" width="100" align="center" header-align="center"><template #default="{ row }"><span class="alarm-status" :class="row.status">{{ statusLabels[row.status as AlarmStatus] }}</span></template></el-table-column><el-table-column label="" width="96" align="center" header-align="center"><template #default="{ row }"><div class="row-actions"><el-button link title="查看详情" aria-label="查看详情" @click.stop="openAlarm(row.id)"><el-icon><View /></el-icon></el-button><el-button link title="归档" aria-label="归档" :loading="acting" @click.stop="archive(row)"><el-icon><FolderAdd /></el-icon></el-button></div></template></el-table-column></el-table>
+    <el-table v-loading="loading" :data="rows" stripe empty-text="暂无符合条件的告警" class="data-table" @row-click="onRowClick" @selection-change="(rows: Alarm[]) => (checked = rows)"><el-table-column type="selection" width="46" align="center" header-align="center" /><el-table-column label="级别" width="95" align="center" header-align="center"><template #default="{ row }"><span class="severity-label" :class="row.level"><span class="severity-dot" :class="row.level" />{{ levelLabels[row.level as AlarmLevel] }}</span></template></el-table-column><el-table-column label="告警内容" min-width="210" align="left" header-align="left"><template #default="{ row }"><strong>{{ isLegacySimulationMetric(row.metric) ? alarmMetricLabel(row.metric) : row.metric === 'ai_failure_risk' ? 'AI 故障风险' : alarmMetricLabel(row.metric) + ' 越限' }}</strong><small class="alarm-origin">{{ alarmOriginLabel(row.origin) }}</small></template></el-table-column><el-table-column label="触发值 / 阈值" width="155" align="center" header-align="center"><template #default="{ row }"><span v-if="isLegacySimulationMetric(row.metric)" class="alarm-values-missing">—</span><span v-else class="alarm-values">{{ fixedNumber(row.value) }}{{ metricUnits[row.metric as Metric] || '' }} / {{ fixedNumber(row.threshold) }}{{ metricUnits[row.metric as Metric] || '' }}</span></template></el-table-column><el-table-column label="设备 ID" prop="device_id" width="110" align="center" header-align="center" /><el-table-column label="触发时间" min-width="175" align="center" header-align="center"><template #default="{ row }">{{ dateTime(row.triggered_at) }}</template></el-table-column><el-table-column label="状态" width="100" align="center" header-align="center"><template #default="{ row }"><span class="alarm-status" :class="row.status">{{ statusLabels[row.status as AlarmStatus] }}</span></template></el-table-column><el-table-column label="" width="96" align="center" header-align="center"><template #default="{ row }"><div class="row-actions"><el-button link title="查看详情" aria-label="查看详情" @click.stop="openAlarm(row.id)"><el-icon><View /></el-icon></el-button><el-button link title="归档" aria-label="归档" :loading="acting" @click.stop="archive(row)"><el-icon><FolderAdd /></el-icon></el-button></div></template></el-table-column></el-table>
     <div class="table-footer"><span>共 {{ total }} 条记录</span><el-pagination v-model:current-page="page" :page-size="20" :total="total" layout="prev, pager, next" @current-change="load" /></div>
   </section>
   </div>
@@ -165,7 +181,7 @@ onUnmounted(() => { unsubscribe?.(); if (periodic) clearInterval(periodic) })
 <style scoped>
 .data-table :deep(.severity-label){justify-content:center}
 .alarm-status{display:inline-flex;align-items:center;gap:7px;font-size:12.5px;font-weight:600}
-.alarm-status::before{content://;flex:none;width:7px;height:7px;border-radius:2px;background:var(--ink-3)}
+.alarm-status::before{content:'';flex:none;width:7px;height:7px;border-radius:2px;background:var(--ink-3)}
 .alarm-status.unhandled{color:var(--danger)}
 .alarm-status.unhandled::before{background:var(--danger)}
 .alarm-status.acked{color:var(--warning)}

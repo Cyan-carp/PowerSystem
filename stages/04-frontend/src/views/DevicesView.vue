@@ -84,12 +84,12 @@ onMounted(() => { void loadStations(); void load() })
       <el-alert v-if="stationError" :title="stationError" type="warning" show-icon :closable="false" class="content-alert" />
       <el-alert v-if="error" :title="error" type="error" show-icon :closable="false" class="content-alert" />
       <el-table v-loading="loading" :data="rows" stripe empty-text="暂无符合条件的设备" class="data-table" @row-click="(row: Device) => router.push(`/devices/${row.id}`)">
-        <el-table-column label="设备编号" min-width="170"><template #default="{ row }"><DeviceCode :code="row.device_code" :station="row.station_code" /></template></el-table-column>
-        <el-table-column label="设备名称" min-width="200"><template #default="{ row }"><DeviceName :name="row.name" /></template></el-table-column>
-        <el-table-column label="类型" prop="dev_type" min-width="120" />
-        <el-table-column label="仿真参考型号" min-width="215"><template #default="{ row }">{{ row.is_simulated ? `${row.reference_vendor} ${row.reference_model}` : '—' }}</template></el-table-column>
-        <el-table-column label="场站" min-width="130"><template #default="{ row }"><StationCode :code="row.station_code" /></template></el-table-column>
-        <el-table-column label="分组" prop="group_name" min-width="130"><template #default="{ row }">{{ row.group_name || '未分组' }}</template></el-table-column>
+        <el-table-column label="设备编号" min-width="160"><template #default="{ row }"><DeviceCode :code="row.device_code" :station="row.station_code" /></template></el-table-column>
+        <el-table-column label="设备名称" min-width="260"><template #default="{ row }"><DeviceName :name="row.name" /></template></el-table-column>
+        <el-table-column label="类型" prop="dev_type" min-width="105" />
+        <el-table-column label="仿真参考型号" min-width="205"><template #default="{ row }">{{ row.is_simulated ? `${row.reference_vendor} ${row.reference_model}` : '—' }}</template></el-table-column>
+        <el-table-column label="场站" min-width="110"><template #default="{ row }"><StationCode :code="row.station_code" /></template></el-table-column>
+        <el-table-column label="分组" prop="group_name" min-width="115"><template #default="{ row }">{{ row.group_name || '未分组' }}</template></el-table-column>
         <el-table-column label="操作" width="115"><template #default="{ row }"><el-button link type="primary" @click.stop="router.push(`/devices/${row.id}`)">查看详情 →</el-button></template></el-table-column>
       </el-table>
       <div class="table-footer"><span>共 {{ total }} 台设备</span><el-pagination v-model:current-page="page" :page-size="pageSize" :total="total" layout="prev, pager, next" @current-change="load" /></div>

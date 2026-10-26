@@ -357,6 +357,7 @@ onUnmounted(() => {
     <section class="page-head">
       <div><h1>智能助手</h1><p>技术问答 · 内部资料 · 联网搜索 · 平台查询</p></div>
       <div class="rag-page-actions">
+        <el-button class="rag-history-toggle" @click="toggleHistory()">{{ historyOpen ? '收起会话' : '历史会话' }}</el-button>
         <el-button @click="openTaskRecords()">任务记录</el-button>
         <router-link to="/agent/schedules"><el-button>定期任务与预演</el-button></router-link>
         <el-button type="primary" @click="newChat">新会话</el-button>
@@ -444,10 +445,10 @@ onUnmounted(() => {
       </main>
       <div class="rag-history-wrap">
         <button type="button" class="rag-history-handle" :aria-label="historyOpen ? '收起历史会话' : '展开历史会话'" :title="historyOpen ? '收起历史会话' : '展开历史会话'" @click="toggleHistory()"><el-icon><ArrowRight v-if="historyOpen" /><ArrowLeft v-else /></el-icon></button>
-      <aside class="surface rag-sidebar" :class="{ 'is-collapsed': !historyOpen }">
+      <aside class="rag-sidebar" :class="{ 'is-collapsed': !historyOpen }" aria-label="历史会话">
         <div class="rag-sidebar-inner">
         <div class="rag-sidebar-head">
-          <strong>历史会话</strong>
+          <div class="rag-sidebar-title"><strong>历史会话</strong><span class="rag-count">{{ sessions.length }}</span></div>
           <div v-if="!selectMode" class="rag-sidebar-tools">
             <el-button text size="small" @click="refreshAll()">刷新</el-button>
             <el-button text size="small" :disabled="!sessions.length" @click="selectMode = true">管理</el-button>
@@ -493,10 +494,11 @@ onUnmounted(() => {
 .chat-page{display:flex;flex-direction:column;gap:20px}
 .rag-page-actions{display:flex;flex-wrap:wrap;gap:8px;align-items:center}.rag-page-actions .el-button+.el-button{margin-left:0}
 .rag-page-actions .el-button{border-radius:10px}
+.rag-history-toggle{display:none}
 .rag-page{flex:1;min-height:0;gap:14px;overflow:hidden}
-.rag-page>.page-head{flex-shrink:0;margin-bottom:0}
-.rag-layout{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:16px;align-items:stretch;flex:1;min-height:0;min-width:0;grid-template-rows:minmax(0,1fr)}
-.rag-conversation{display:flex;flex-direction:column;min-width:0;min-height:0;position:relative}
+.rag-page>.page-head{flex-shrink:0;margin-bottom:0;padding-right:26px}
+.rag-layout{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:0;align-items:stretch;flex:1;min-height:0;min-width:0;grid-template-rows:minmax(0,1fr)}
+.rag-conversation{display:flex;flex-direction:column;min-width:0;min-height:0;position:relative;padding-right:26px}
 .rag-message-list{flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;overscroll-behavior-y:contain;scrollbar-gutter:stable;scrollbar-width:thin;scrollbar-color:var(--line-strong) transparent;padding-right:4px}
 .rag-message-list:focus-visible{outline:1px solid var(--brand-line);outline-offset:-1px}
 
@@ -557,30 +559,32 @@ onUnmounted(() => {
 .rag-jump-latest:hover{border-color:var(--brand);color:var(--brand)}
 .rag-jump-latest:focus-visible{outline:2px solid var(--brand);outline-offset:2px}
 
-/* ---------- 历史会话侧栏（抽屉式：边缘箭头收起/展开） ---------- */
-.rag-history-wrap{position:relative;min-height:0;display:flex}
-.rag-history-handle{position:absolute;left:-12px;top:50%;transform:translateY(-50%);z-index:6;display:grid;place-items:center;width:24px;height:52px;padding:0;border:1px solid var(--line-strong);border-right:0;border-radius:12px 0 0 12px;background:var(--card-2);color:var(--ink-3);transition:color .15s,border-color .15s,background .15s}
-.rag-history-handle:hover{color:var(--ink);border-color:var(--line-strong);background:var(--hover)}
+/* ---------- 历史会话：贴右边缘的固定栏（不是浮动卡片） ---------- */
+.rag-history-wrap{position:relative;min-height:0;display:flex;margin:0 0 -16px}
+.rag-history-handle{position:absolute;left:0;top:50%;transform:translate(-100%,-50%);z-index:6;display:grid;place-items:center;width:22px;height:56px;padding:0;border:1px solid var(--line-strong);border-right:0;border-radius:10px 0 0 10px;background:var(--card);color:var(--ink-3);transition:color .15s,background .15s}
+.rag-history-handle:hover{color:var(--ink);background:var(--hover)}
 .rag-history-handle:focus-visible{outline:2px solid var(--brand);outline-offset:2px}
-.rag-history-handle .el-icon{font-size:13px}
-.rag-sidebar{position:static;display:flex;flex-direction:column;min-height:0;max-height:none;width:280px;padding:0;border-width:1px;border-radius:12px;overflow:hidden;transition:width .22s ease,border-color .22s ease}
-.rag-sidebar.is-collapsed{width:10px;border-radius:0;border-color:transparent;border-left:1px solid var(--line-strong)}
-.rag-sidebar-inner{display:flex;flex-direction:column;min-height:0;width:280px;flex:1 1 auto;padding:12px 10px}
+.rag-history-handle .el-icon{font-size:12px}
+.rag-sidebar{position:relative;display:flex;flex-direction:column;min-height:0;max-height:none;width:278px;padding:0;border:0;border-left:1px solid var(--line);border-radius:0;background:var(--card);overflow:hidden;transition:width .22s ease,border-color .22s ease}
+.rag-sidebar.is-collapsed{width:0;border-left-color:transparent}
+.rag-sidebar-inner{display:flex;flex-direction:column;min-height:0;width:278px;flex:1 1 auto;padding:0}
 .chat-turn :deep(.ops-task){border-radius:12px}
-.rag-sidebar-head{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:10px;padding:0 4px;flex-shrink:0;min-width:0}
-.rag-sidebar-head strong{font-size:13px;font-weight:700;letter-spacing:.5px;flex:none}
+.rag-sidebar-head{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-shrink:0;min-width:0;padding:13px 10px 12px 16px;border-bottom:1px solid var(--line-soft)}
+.rag-sidebar-title{display:flex;align-items:baseline;gap:6px;min-width:0}
+.rag-sidebar-head strong{font-size:13px;font-weight:600;letter-spacing:0;flex:none}
+.rag-count{font-size:10.5px;font-weight:500;color:var(--ink-3);font-variant-numeric:tabular-nums}
 .rag-sidebar-tools{display:flex;align-items:center;gap:2px;min-width:0;font-size:12px}
 .rag-sidebar-tools .el-button+.el-button{margin-left:0}
 .rag-sidebar-tools .el-button{font-size:12px;border-radius:8px}
 .rag-sidebar-tools .el-checkbox{height:auto;margin:0;display:inline-flex;align-items:center;font-size:12px}
 .rag-sidebar-tools .el-checkbox__label{padding-left:4px;font-size:12px}
-.rag-sidebar-empty{padding:0 6px}
-.rag-session-list{flex:1 1 auto;min-height:0;overflow-y:auto;overflow-x:hidden;overscroll-behavior-y:contain;scrollbar-gutter:stable;scrollbar-width:thin;scrollbar-color:var(--line-strong) transparent;padding:0 2px}
+.rag-sidebar-empty{padding:10px 8px}
+.rag-session-list{flex:1 1 auto;min-height:0;overflow-y:auto;overflow-x:hidden;overscroll-behavior-y:contain;scrollbar-gutter:stable;scrollbar-width:thin;scrollbar-color:var(--line-strong) transparent;padding:8px 8px 14px}
 .rag-session-list:focus-visible{outline:1px solid var(--brand-line);outline-offset:-1px}
-.rag-session{display:flex;align-items:center;gap:8px;position:relative;min-height:38px;padding:0 8px;border-radius:9px;margin-bottom:2px;color:var(--ink-2);transition:background .15s}
+.rag-session{display:flex;align-items:center;gap:8px;position:relative;min-height:38px;padding:0 8px;border-radius:8px;margin-bottom:2px;color:var(--ink-2);transition:background .15s}
 .rag-session:hover{background:var(--hover)}
 .rag-session.active{background:var(--brand-soft)}
-.rag-session.active::before{content:"";position:absolute;left:-2px;top:9px;bottom:9px;width:3px;border-radius:2px;background:var(--brand)}
+.rag-session.active::before{content:"";position:absolute;left:0;top:10px;bottom:10px;width:2px;border-radius:2px;background:var(--brand)}
 .rag-session.selecting{cursor:pointer}
 .rag-session.selecting .rag-session-title{color:var(--ink-2)}
 .rag-session.checked{background:var(--brand-soft)}
@@ -600,12 +604,23 @@ onUnmounted(() => {
 .verify-checks{margin-top:16px;border:1px solid var(--line);display:flex;flex-wrap:wrap;gap:16px}.verify-checks label{display:flex;align-items:center;gap:6px}.verification-result{margin-top:12px}.verification-result pre{max-height:360px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px}
 
 /* ---------- 响应式 ---------- */
+@media(max-width:960px){
+  .rag-page>.page-head,.rag-conversation{padding-right:16px}
+}
 @media(max-width:900px){
   .rag-layout{grid-template-columns:1fr;grid-template-rows:minmax(0,1fr) auto}
-  .rag-sidebar{position:static;max-height:min(240px,32dvh)}
+  .rag-history-wrap{margin:0;padding-top:10px}
+  .rag-sidebar{width:100%;border-left:0;border-top:1px solid var(--line);max-height:min(240px,32dvh)}
+  .rag-sidebar.is-collapsed{width:100%;height:0;border-top-color:transparent}
+  .rag-sidebar-inner{width:auto}
+  .rag-history-handle{display:none}
+  .rag-history-toggle{display:inline-flex}
   .rag-thread{padding:4px 2px 14px}
   .chat-question{max-width:100%}
   .rag-compose-actions{flex-wrap:wrap}
+}
+@media(max-width:720px){
+  .rag-page>.page-head,.rag-conversation{padding-right:12px}
 }
 @media(hover:none){
   .rag-session-delete{opacity:1;visibility:visible;pointer-events:auto}

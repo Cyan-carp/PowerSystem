@@ -27,4 +27,9 @@ notes/.obsidian/
 node_modules/
 dist/
 !deploy/tdengine/*.sql
+# 备份归档：实际备份包不入库，只保留说明与登记表
+backups/*
+!backups/README.md
+# 前端本地假后端与启动脚本（只服务本机联调，不入库）
+stages/04-frontend/dev/
 

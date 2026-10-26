@@ -67,7 +67,7 @@ onMounted(async () => {
       <el-button type="primary" :loading="loading" @click="load">查询</el-button>
     </section>
     <el-alert v-if="error" :title="error" type="error" show-icon :closable="false" />
-    <p class="report-note">观测可用率＝覆盖的非故障时长 ÷ 覆盖时长。停机计入非故障，不表示正在发电；样本最多延续 15 秒，超出记未知。按设备存在时段计算有效窗口，按当前台账归组，不还原历史场站归属。覆盖率低于 90% 标记数据不足，不参加排行。</p>
+    <details class="page-note"><summary>统计口径</summary><p>观测可用率＝覆盖的非故障时长 ÷ 覆盖时长。停机计入非故障，不表示正在发电；样本最多延续 15 秒，超出记未知。按设备存在时段计算有效窗口，按当前台账归组，不还原历史场站归属。覆盖率低于 90% 标记数据不足，不参加排行。</p></details>
     <section class="surface"><div class="surface-head"><h2>设备可用率</h2><el-button :disabled="!availabilityLoaded || !!exporting" :loading="exporting === 'availability'" @click="download('availability')">导出可用率 CSV</el-button></div>
       <p class="report-note in-panel" v-if="availabilityPanel.data.value">计算时间：{{ dateTime(availabilityPanel.data.value.computed_at) }}</p>
       <el-alert v-if="availabilityError" :title="availabilityError" type="error" :closable="false" />
@@ -101,7 +101,7 @@ onMounted(async () => {
       </el-table>
       <p v-if="timeliness" class="report-note in-panel">事件 {{ timeliness.event_count }}；未确认 {{ timeliness.pending_ack }}（含未确认即结束）；未恢复 {{ timeliness.pending_recover }}；管理关闭 {{ timeliness.managed_recover }}；历史或原因未知 {{ timeliness.unknown_recover }}；异常生命周期 {{ timeliness.invalid_lifecycle }}。按窗口内触发的告警统计截至结束时间的状态，未完成不按零耗时计算；这些指标不是维修时长或 MTTR。</p>
     </section>
-    <p class="report-note">CSV 使用最近一次成功查询的筛选范围，重新计算并记录其计算时间；数据在查询后更新时，导出数值可能随之变化。</p>
+    <details class="page-note"><summary>导出说明</summary><p>CSV 使用最近一次成功查询的筛选范围，重新计算并记录其计算时间；数据在查询后更新时，导出数值可能随之变化。</p></details>
   </div>
 </template>
-<style scoped>.report-controls{display:flex;flex-wrap:wrap;align-items:center;gap:12px;padding:16px}.report-controls .el-select{width:180px}.report-note{font-size:13px;color:var(--ink-3);line-height:1.8;margin:16px 0}.in-panel{padding:0 18px 16px}.report-page>.surface{margin-bottom:18px}</style>
+<style scoped>.report-controls{display:flex;flex-wrap:wrap;align-items:center;gap:12px;padding:16px}.report-controls .el-select{width:180px}.report-controls :deep(.el-date-editor){width:430px;flex:none}.report-note{color:var(--ink-3)}.report-note.in-panel{padding:0 16px 12px;margin:0;font-family:var(--font-num);font-size:10.5px;letter-spacing:.02em;color:var(--ink-3)}.report-page>.surface{margin-bottom:14px}</style>
