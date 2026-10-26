@@ -63,7 +63,7 @@ An integrated operations platform for renewable-energy assets — monitoring, al
 | 前端 | Vue 3 · Vite · TypeScript · Element Plus · ECharts |
 | 后端 | Go 1.24 · Gin · GORM · WebSocket |
 | 智能体 | Python 3.12 · 大模型 API · 检索增强（RAG）· FastAPI（模型服务） |
-| 数据 | TDengine 3.4 · PostgreSQL · Redis · EMQX 5.8 |
+| 数据 | TDengine · PostgreSQL · Redis · EMQX |
 | 运维 | Docker Compose · Nginx · Prometheus + Alertmanager · FRP · 飞书机器人 |
 
 ## 快速开始
@@ -120,21 +120,16 @@ Vite 把 `/api` 与 `/ws` 代理到 `127.0.0.1:8080`。本地跨端口调试需�
 
 ## 疑难解答
 
-**前端能打开但所有接口 404。** 后端没起，或不在 8080。先 `curl http://127.0.0.1:8080/api/v1/summary`，再查 Vite 代理目标。
-
-**`npm run dev` 报 Node 版本不支持。** Vite 要求 Node 20.19+ / 22.12+，18 与 22.11 都不行。
-
-**预检脚本在中文路径下失败。** 少数 Python 虚拟环境在含中文的路径下创建失败。把仓库放到纯 ASCII 路径，或改用已装好依赖的解释器。
-
-**设备显示"离线"或"健康未知"，是不是坏了？** 不是。离线按最后上报时间判定，健康未知表示样本不足或遥测故障，页面用 `?state=offline|unknown` 可单独筛，二者都不等于设备故障。
-
-**登录后刷新还在，关掉标签页就掉线。** JWT 存在 `sessionStorage`，按标签页生命周期；这是有意的，避免共用电脑留登录态。
-
-**能不能 `docker compose down -v` 清一下？** 不要。`-v` 会连阶段一、阶段二的 TDengine / PostgreSQL / Redis 数据卷一起删。停止用 `stop-stage2.ps1`。
-
-**报表日期对不上。** 报表按北京时间自然日聚合，`end_date` 不含当日；跨时区看数据前先把时区对齐。
-
-**端口被占但 `netstat` 查不到。** Windows 上 Hyper-V / WSL 会预留动态端口段，落在区间内的端口 bind 直接失败。`netsh interface ipv4 show excludedportrange protocol=tcp` 可确认。
+| 现象 | 处理 |
+| --- | --- |
+| 前端能打开，接口全 404 | 后端没起，或不在 8080。先 `curl http://127.0.0.1:8080/api/v1/summary`，再查 Vite 代理目标 |
+| `npm run dev` 报 Node 版本不支持 | Vite 要求 Node 20.19+ / 22.12+，18 与 22.11 都不行 |
+| 预检脚本在中文路径下失败 | 少数 Python 虚拟环境在含中文的路径下创建失败。把仓库放到纯 ASCII 路径，或改用已装好依赖的解释器 |
+| 设备显示"离线"或"健康未知"，是不是坏了 | 不是。离线按最后上报时间判定，健康未知表示样本不足或遥测故障，页面用 `?state=offline` 或 `?state=unknown` 可单独筛，二者都不等于设备故障 |
+| 登录后刷新还在，关掉标签页就掉线 | JWT 存在 `sessionStorage`，按标签页生命周期，这是有意的，避免共用电脑留登录态 |
+| 能不能 `docker compose down -v` 清一下 | 不要。`-v` 会连阶段一、阶段二的 TDengine / PostgreSQL / Redis 数据卷一起删。停止用 `stop-stage2.ps1` |
+| 报表日期对不上 | 报表按北京时间自然日聚合，`end_date` 不含当日；跨时区看数据前先把时区对齐 |
+| 端口被占但 `netstat` 查不到 | Windows 上 Hyper-V / WSL 会预留动态端口段，落在区间内的端口 bind 直接失败。`netsh interface ipv4 show excludedportrange protocol=tcp` 可确认 |
 
 ## 开发文档
 
