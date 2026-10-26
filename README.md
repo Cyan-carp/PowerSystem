@@ -84,24 +84,30 @@ An integrated operations platform for renewable-energy assets — monitoring, al
 # 1. 克隆并准备本机配置（.env 已被 Git 忽略，密码只留本机）
 git clone https://github.com/Cyan-carp/PowerSystem.git
 cd PowerSystem
-Copy-Item .env.example .env      # 至少填 TDENGINE_ROOT_PASSWORD
+Copy-Item .env.example .env       # 至少填 TDENGINE_ROOT_PASSWORD
 
 # 2. 起数据链路：EMQX + TDengine + 模拟器 + 网关（预检约 2 分钟）
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\stages\01-data-chain\scripts\preflight-stage1.ps1
+cd stages\01-data-chain
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\preflight-stage1.ps1
+cd ..\..
 
 # 3. 起后端：PostgreSQL / Redis / API / WebSocket
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\stages\02-backend\scripts\preflight-stage2.ps1
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\stages\02-backend\scripts\start-stage2.ps1 -SkipPreflight
+cd stages\02-backend
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\preflight-stage2.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\start-stage2.ps1 -SkipPreflight
+cd ..\..
 
 # 4. 起前端
 cd stages\04-frontend
 npm ci
-npm run dev                      # http://127.0.0.1:5173
+npm run dev                       # http://127.0.0.1:5173
 ```
 
 Vite 把 `/api` 与 `/ws` 代理到 `127.0.0.1:8080`。本地跨端口调试需在 `.env` 设 `WS_ALLOWED_ORIGINS=http://127.0.0.1:5173`（精确 Origin）。
 
 ### 常用命令
+
+以下命令均在仓库根目录执行。
 
 | 目的 | 命令 |
 | --- | --- |
@@ -202,8 +208,10 @@ Devices publish over MQTT into EMQX; a Go gateway writes TDengine and fans out t
 git clone https://github.com/Cyan-carp/PowerSystem.git
 cd PowerSystem
 Copy-Item .env.example .env
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\stages\02-backend\scripts\preflight-stage2.ps1
-cd stages\04-frontend; npm ci; npm run dev
+cd stages\02-backend
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\preflight-stage2.ps1
+cd ..\..\stages\04-frontend
+npm ci; npm run dev
 ```
 
 Requires Windows PowerShell 5.1+, Docker Desktop, Go 1.24+, Python 3.12 and Node 20.19+/22.12+. The console runs at `http://127.0.0.1:5173` and proxies `/api` and `/ws` to `127.0.0.1:8080`.
