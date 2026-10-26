@@ -1,95 +1,213 @@
----
-tags: [源网智联, 项目导航]
----
+<div align="center">
 
-# PowerSystem · 新能源设备智能运维平台
+# 源网智联 · 新能源设备智能运维平台
 
-> **当前状态（唯一事实源）**：[当前系统状态](notes/00-当前系统状态.md) — 活动指针 `task-delete-20261023-r1`（2026-10-23 01:03 发布，`pending=false`）。发布批次、镜像摘要、阶段状态、设备口径与已知限制一律以该页为准，本 README 不复制明细；历史批次见 [部署与运维日志索引](notes/04-系统部署发布备份与变更记录/部署与运维日志/00-索引·部署与运维日志.md)。
+新能源场站的设备监测、告警解读与受控运维一体化平台
 
-本仓库将笔记与代码工作区物理隔离：唯一 Obsidian Vault 为 `notes/`，其中按项目记录、工程治理、使用手册、部署记录、知识资产和代码导航划分六个编号分区。代码统一在 `stages/`，边缘部署脚本位于 `deploy/edge-server/`，私有运行证据位于被忽略的 `artifacts/`；根目录只保留仓库导航与项目配置。请在 Obsidian 中只打开 `PowerSystem/notes`，不要打开仓库根目录。
+An integrated operations platform for renewable-energy assets — monitoring, alarm interpretation and guarded automation.
 
-首次接手请按 [平台使用手册](notes/03-平台使用运维与二次开发手册/平台使用手册.md) → [项目边界与协作红线](notes/02-工程规范边界与验收治理/项目边界与协作红线.md) → [平台运维与二次开发手册](notes/03-平台使用运维与二次开发手册/平台运维与二次开发手册.md) → [项目验收与收尾清单](notes/02-工程规范边界与验收治理/项目验收与收尾清单.md) 阅读。运行证据位置见 [运行产物说明](notes/02-工程规范边界与验收治理/运行产物说明.md)，各阶段命令从下表的源码 README 进入。自己的 Linux 服务器首次部署见 [本地服务器部署笔记](notes/04-系统部署发布备份与变更记录/部署与运维日志/01-部署基线与仓库发行/14-本地服务器部署笔记.md)；本次 R730xd 业务不变、增设第二云入口与双份备份的独立步骤见 [独立云服务器部署](notes/04-系统部署发布备份与变更记录/独立云服务器部署/00-索引·独立云服务器部署.md)。公开仓库和服务器的发布门禁见 [仓库公开与服务器安全要求](notes/02-工程规范边界与验收治理/仓库公开与服务器安全要求.md)；以后每次上传和上线先按 [上传服务器规范](notes/02-工程规范边界与验收治理/项目工程规范/05-上传服务器规范.md) 定位目标并更新目录卡，具体命令见 [阶段四部署说明](stages/04-frontend/deploy/README.md)。
+<p><i>合成数据演示 · 生产以受限只读档运行 · 全部发布证据可回溯</i></p>
 
-本仓库公开的是源码、配置模板和笔记；`artifacts/` 中的模型、测试账本和截图，以及服务器私有 `.env` 与数据卷，不随 Git 提供。首次部署前须先生成模型并准备私有配置。当前演示使用合成设备数据，不作为真实场站运维依据。
+[English](#english) | 中文说明
 
-> 智能助手自 2026-10-11 起由阶段 8 接管，生活/闲聊由程序拦截、技术与平台问答开放；该边界与阶段 7 告警解读的分工现状见 [当前系统状态](notes/00-当前系统状态.md)，服务器判定证据见 [阶段2测试与交付](notes/01-项目调研规划与开发建设记录/第二版-智能体升级/问答及调度业务主智能体/智能体边界建设/04-功能开发与阶段交付/02-日常问题调用边界/03-阶段2测试与交付.md)。
+![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux-495057?style=flat-square)
+![Stack](https://img.shields.io/badge/stack-Vue%203%20%C2%B7%20Go%20%C2%B7%20Python-1c7ed6?style=flat-square)
+![Devices](https://img.shields.io/badge/fleet-143%20devices-2f9e44?style=flat-square)
+[![Release](https://img.shields.io/github/v/release/Cyan-carp/PowerSystem?style=flat-square&color=e8590c)](https://github.com/Cyan-carp/PowerSystem/releases)
+[![notes-check](https://img.shields.io/github/actions/workflow/status/Cyan-carp/PowerSystem/notes-check.yml?style=flat-square&label=notes-check)](https://github.com/Cyan-carp/PowerSystem/actions/workflows/notes-check.yml)
 
-下表只记录各阶段的**验收里程碑**（通过即固定，不再随发布变化）；任一阶段的现行部署状态、镜像与运行结论统一见 [当前系统状态](notes/00-当前系统状态.md)。
+</div>
 
-| 阶段 | 代码与运行说明 | Obsidian 笔记 | 验收结果 |
-| --- | --- | --- | --- |
-| 阶段一：数据链路 | [stages/01-data-chain/README.md](stages/01-data-chain/README.md) | [阶段一索引](notes/01-项目调研规划与开发建设记录/第一版-平台主体/05-功能开发与阶段交付/01-数据链路/00-索引·开发阶段1-数据链路.md) | M1 已通过，一小时 2160/2160 对账 |
-| 阶段二：后端主体 | [stages/02-backend/README.md](stages/02-backend/README.md) | [阶段二索引](notes/01-项目调研规划与开发建设记录/第一版-平台主体/05-功能开发与阶段交付/02-后端主体/00-索引·开发阶段2-后端主体.md) | M2 已通过，两小时 4320/4320 对账、短回归 38/38 |
-| 阶段三：AI 预测 | [stages/03-ai-prediction/README.md](stages/03-ai-prediction/README.md) | [阶段三索引](notes/01-项目调研规划与开发建设记录/第一版-平台主体/05-功能开发与阶段交付/03-AI预测模块/00-索引·开发阶段3-AI预测模块.md) | M3 自动验收已通过；公开数据已审计，真实场站预测尚未验证 |
-| 阶段四：前端、上线与沉淀 | [stages/04-frontend/README.md](stages/04-frontend/README.md) | [阶段四索引](notes/01-项目调研规划与开发建设记录/第一版-平台主体/05-功能开发与阶段交付/04-前端、上线与沉淀/00-索引·开发阶段4-前端、上线与沉淀.md) | M4 容量、响应、补传及 Chrome/Edge 154 核心路径已测试 |
-| 阶段五：飞书告警通知 | [stages/05-feishu-notification/README.md](stages/05-feishu-notification/README.md) | [阶段五索引](notes/01-项目调研规划与开发建设记录/第一版-平台主体/05-功能开发与阶段交付/05-飞书告警通知/00-索引·开发阶段5-飞书告警通知.md) | 第一版主业务；设备事件、失败重试及 AI 风险/恢复已在服务器验证，群内可见 |
-| 阶段六：公网安全与恢复能力 | [stages/06-security-recovery/README.md](stages/06-security-recovery/README.md) | [阶段六索引](notes/01-项目调研规划与开发建设记录/第一版-平台主体/05-功能开发与阶段交付/06-公网安全与恢复能力/00-索引·开发阶段6-公网安全与恢复能力.md) | 第一版主要亮点；HTTPS、最小暴露、异地备份、隔离恢复、口令交接已完成 |
-| 第二版阶段一：智能体基础服务 | [stages/07-agent/README.md](stages/07-agent/README.md) | [阶段一索引](notes/01-项目调研规划与开发建设记录/第二版-智能体升级/问答及调度业务主智能体/废案-旧智能体方案/02-功能开发与阶段交付/01-基础服务与只读工具链/00-索引·基础服务与只读工具链.md) | V2-M1 本机合成范围验收通过，后续已部署服务器 |
-| 第二版阶段二：告警智能解读 | [stages/07-agent/README.md](stages/07-agent/README.md) | [阶段二索引](notes/01-项目调研规划与开发建设记录/第二版-智能体升级/问答及调度业务主智能体/废案-旧智能体方案/02-功能开发与阶段交付/02-告警智能解读与大屏联动/00-索引·告警智能解读与大屏联动.md) | V2-M2 合成范围验收通过，已部署 R730xd |
-| 第二版阶段三：使用引导与值班问答 | [stages/07-agent/README.md](stages/07-agent/README.md) | [阶段三索引](notes/01-项目调研规划与开发建设记录/第二版-智能体升级/问答及调度业务主智能体/废案-旧智能体方案/02-功能开发与阶段交付/03-使用引导与值班问答/00-索引·使用引导与值班问答.md) | V2-M3 于 2026-10-05 完成验收；专业审核与真实设备待办 |
-| 第二版阶段四：整体测试、安全与交付 | [stages/07-agent/README.md](stages/07-agent/README.md) | [阶段四交付](notes/01-项目调研规划与开发建设记录/第二版-智能体升级/问答及调度业务主智能体/废案-旧智能体方案/02-功能开发与阶段交付/04-测试、安全复核与交付/05-V2-M4测试与交付.md) | V2-M4 验收通过，发布 v2.0.0；专业审核与真实设备待办 |
-| 第二版后续：自然语言问答改造 | [stages/07-agent/README.md](stages/07-agent/README.md) | [本地升级索引](notes/01-项目调研规划与开发建设记录/第二版-智能体升级/问答及调度业务主智能体/废案-旧智能体方案/02-功能开发与阶段交付/05-自然语言问答改造/00-索引·自然语言问答改造.md) | 2026-10-09 本地候选；本轮不发布服务器 |
-| 阶段9：双智能体、诊断与受控演练 | [stages/09-ops-agent/README.md](stages/09-ops-agent/README.md) | [多智能体建设索引](notes/01-项目调研规划与开发建设记录/第二版-智能体升级/多智能体协作建设/00-索引·多智能体协作建设.md) | MA-M1～M3历史签收；SEC-M1～M4本机签收；r6发布/回退、最终恢复与连续观察通过；联合阶段四已签收，生产仅R0 |
-| 阶段10：安全审查与强制门禁 | [stages/10-security-agent/README.md](stages/10-security-agent/README.md) | [SEC-M2交付](notes/01-项目调研规划与开发建设记录/第二版-智能体升级/多智能体协作建设/05-安全审查模型/05-功能开发与阶段交付/02-强制门禁集成/03-SEC-M2测试与交付.md) | SEC-M1～M4本机签收；安全模型随联合阶段四发布，现行策略/许可 v6，生产零写 |
-| 第三版：设备扩容 | [stages/01-data-chain/README.md](stages/01-data-chain/README.md) | [设备扩容索引](notes/01-项目调研规划与开发建设记录/第三版-设备扩容/00-索引·第三版-设备扩容.md) | 140 台业务设备与 143 台全平台供数已上线；锁修复发布，长观察结论见状态页 |
+## 这是什么
 
-> 第一版包含两条飞书链路：设备越限和 AI 风险的业务告警经 PostgreSQL 投递表与签名适配器发送；平台运行监控经 Prometheus、Alertmanager 与同一适配器发送。旧 API 故障演练已有群内送达证据；新设备业务链与真实模型合成 AI 风险/恢复已在服务器核对机器人 HTTP 成功响应，项目所有者确认群内可见，见[阶段五测试与交付](notes/01-项目调研规划与开发建设记录/第一版-平台主体/05-功能开发与阶段交付/05-飞书告警通知/03-阶段五测试与交付.md)。
+一个从零写起的新能源设备运维平台：把光伏逆变器的遥测数据接进来，落成时序库，做告警、健康评分和故障预测，再让大模型把"这条告警到底怎么了"讲清楚，并在人批准后执行受控操作。
 
-阶段一的预检、测试、断电后收集和停止服务命令，均见[阶段一运行说明](stages/01-data-chain/README.md)。阶段一隔离短回归 180/180 通过；现有 TDengine vnode 已满，标准脚本新建验收库受限，详情见 [M2 测试与交付](notes/01-项目调研规划与开发建设记录/第一版-平台主体/05-功能开发与阶段交付/02-后端主体/04-M2测试与交付.md)。当前生成物与跨阶段迁移方法见[运行产物说明](notes/02-工程规范边界与验收治理/运行产物说明.md)和[运维与二次开发手册](notes/03-平台使用运维与二次开发手册/平台运维与二次开发手册.md)；阶段一当时的整理结果见[阶段一目录迁移记录](notes/01-项目调研规划与开发建设记录/第一版-平台主体/05-功能开发与阶段交付/01-数据链路/05-阶段一目录迁移记录.md)。
+它不是单点脚本，而是一条完整链路：**采集 → 入库 → 判警 → 解读 → 行动 → 复盘**。十个阶段各自有独立的源码目录与验收里程碑，笔记库与代码物理隔离，发布、回退、恢复都有记录可查。
 
-公开仓库为 [Cyan-carp/PowerSystem](https://github.com/Cyan-carp/PowerSystem)，阶段一发布见 [阶段1-数据链路](https://github.com/Cyan-carp/PowerSystem/releases/tag/stage1-data-chain)，阶段三正式发布见 [stage3-ai-prediction](https://github.com/Cyan-carp/PowerSystem/releases/tag/stage3-ai-prediction)。首次 M1 验收记录见 [阶段一测试与交付](notes/01-项目调研规划与开发建设记录/第一版-平台主体/05-功能开发与阶段交付/01-数据链路/04-阶段一测试与交付.md)。
+> **当前状态**：生产以**受限 R0 档**运行，只开启问答、运行与产物；动作、运维写与定期任务默认关闭。活动指针、镜像、开关与已知限制只写在 [当前系统状态](notes/00-当前系统状态.md)，本 README 不复述。
 
-## 第四版设计与交接
+> **数据说明**：仓库内全部场站、设备与告警均为合成数据；公网演示同样使用合成数据与独立演示账号。任何结论都不构成真实场站运维依据。
 
-第四版设计与分阶段交接见[第四版总索引](notes/01-项目调研规划与开发建设记录/第四版-智能助手行动化重构/00-索引·第四版-智能助手行动化重构.md)，各新对话从[接续入口](notes/01-项目调研规划与开发建设记录/第四版-智能助手行动化重构/03-跨对话交接/00-当前接续入口.md)开始；实施状态统一见[当前系统状态](notes/00-当前系统状态.md)。
+## 主要功能
 
-## 仓库大版本v4.0.0（2026-10-25）
+| 能力 | 说明 |
+| --- | --- |
+| 数据接入 | 设备模拟器 → MQTT QoS 1 → EMQX → Go 网关 → TDengine，5 秒一个采样点，断链自动补传 |
+| 运行总览 | 143 台设备的状态分布、实时功率曲线、场站对比，秒级 WebSocket 推送 |
+| 告警闭环 | 阈值与自然规则判警、去重合并、恢复跟踪、值班筛选；AI 解读失败时保留事件事实 |
+| 健康评分 | 按可用率、告警密度与遥测质量打分，缺数据显式标"未知"而不是记 0 分 |
+| 故障预测 | XGBoost 模型输出未来 60 分钟故障概率与风险等级，页面区分"过期"与"无结果" |
+| 智能助手 | 自然语言问设备状态、告警与报表；答案分层为"直接结论 / 已核验事实 / 未核验解释" |
+| 定期任务 | 日报、巡检等周期任务，带预演与交付位置；写动作须人工批准 |
+| 受控运维 | 重启采集、限功率等动作经独立安全模型审查后才执行，全程留审计 |
+| 可追溯发布 | 每次上线有批次号、备份、隔离恢复与连续观察；回退路径写在同一处 |
 
-第四版“智能助手行动化重构”S01–S09 交付，生产以**受限 R0 档**上线：只开启助手、运行（runs）与产物，动作、运维写、定期任务与联合档保持关闭，不进入下一版本。发行入口：[v4.0.0](https://github.com/Cyan-carp/PowerSystem/releases/tag/v4.0.0)；两批 full、隔离恢复与 1805.6 s 连续观察见[第四版发布观察](notes/04-系统部署发布备份与变更记录/部署与运维日志/06-第四版发布观察/40-V4-S09两批发布与恢复观察.md)。2026-10-25 登录页「输电走廊」上线，并同批修复发布基线协议（V4 全备停写与发布规则衔接），见[发布基线协议修复](notes/04-系统部署发布备份与变更记录/部署与运维日志/02-界面展示与通知/44-登录页发布与发布基线协议修复.md)。现行指针、镜像与已知限制只写[当前系统状态](notes/00-当前系统状态.md)。
+## 技术架构
 
-## 仓库大版本v3.0.0（2026-10-14）
+```
+场站设备 / 模拟器
+      │  MQTT QoS 1
+      ▼
+    EMQX
+      │
+      ▼
+  Go 网关 / 后端
+      ├──► TDengine      时序库（遥测与历史）
+      ├──► PostgreSQL    业务、告警、定期任务
+      ├──► Redis         最新值缓存
+      └──► WebSocket ──► Vue 3 控制台 ──► 智能体（问答 / 运维 / 安全审查）
+```
 
-三智能体协作大版本包含阶段8 Supervisor、阶段9 Operation与阶段10 Security，以及本项目程序门禁、巡检与配套发布恢复工具。发行入口：[v3.0.0](https://github.com/Cyan-carp/PowerSystem/releases/tag/v3.0.0)；范围、复核及未覆盖边界见[[notes/04-系统部署发布备份与变更记录/部署与运维日志/01-部署基线与仓库发行/01-仓库发行与GitHub同步（原01+05+13）]]。联合第四阶段统一入口见[[notes/01-项目调研规划与开发建设记录/第二版-智能体升级/多智能体协作建设/06-联合发布验收/00-索引·联合发布验收]]。
+| 层 | 选型 |
+| --- | --- |
+| 前端 | Vue 3 · Vite · TypeScript · Element Plus · ECharts |
+| 后端 | Go 1.24 · Gin · GORM · WebSocket |
+| 智能体 | Python 3.12 · 大模型 API · 检索增强（RAG）· FastAPI（模型服务） |
+| 数据 | TDengine 3.4 · PostgreSQL · Redis · EMQX 5.8 |
+| 运维 | Docker Compose · Nginx · Prometheus + Alertmanager · FRP · 飞书机器人 |
 
-## 笔记目录与文件夹职责
+## 快速开始
 
-完整笔记目录与文件夹职责已拆至 [00-项目目录导航](notes/00-项目目录导航.md)（Obsidian 内为 [[00-项目目录导航]]）。
+### 前置条件
 
-第三版设备扩容按专题进入 [总索引](notes/01-项目调研规划与开发建设记录/第三版-设备扩容/00-索引·第三版-设备扩容.md)：[立项需求与架构](notes/01-项目调研规划与开发建设记录/第三版-设备扩容/01-立项需求与架构/00-索引·立项需求与架构.md) → [实施测试与交付](notes/01-项目调研规划与开发建设记录/第三版-设备扩容/02-实施测试与交付/00-索引·实施测试与交付.md)；[容量与稳定性验证](notes/01-项目调研规划与开发建设记录/第三版-设备扩容/03-容量与稳定性验证/00-索引·容量与稳定性验证.md)和[告警智能解读专项](notes/01-项目调研规划与开发建设记录/第三版-设备扩容/04-告警智能解读专项/00-索引·告警智能解读专项.md)分别维护独立结论。
+| 依赖 | 版本 |
+| --- | --- |
+| Windows PowerShell | 5.1 或 7（脚本为 PowerShell 编写） |
+| Docker Desktop | Engine 处于 running |
+| Go | 1.24+ |
+| Python | 3.12 |
+| Node.js | 20.19+ 或 22.12+ |
 
-本阶段实际故障的复发排查方法见[告警解读重构与发布避坑指南](notes/02-工程规范边界与验收治理/项目工程规范/04-告警解读重构与发布避坑指南.md)；正式发布事实仍以部署日志为准。
+### 四步跑起来
 
-S02问答与共享业务事实模块的候选验证见[S02测试与交付](notes/01-项目调研规划与开发建设记录/第四版-智能助手行动化重构/02-分阶段实施/02-S02回答质量与模型接入/02-V4-S02测试与交付.md)，生产状态仍以统一入口为准。
+```powershell
+# 1. 克隆并准备本机配置（.env 已被 Git 忽略，密码只留本机）
+git clone https://github.com/Cyan-carp/PowerSystem.git
+cd PowerSystem
+Copy-Item .env.example .env      # 至少填 TDENGINE_ROOT_PASSWORD
 
+# 2. 起数据链路：EMQX + TDengine + 模拟器 + 网关（预检约 2 分钟）
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\stages\01-data-chain\scripts\preflight-stage1.ps1
 
-第四版S02补验记录：[S02测试与交付](notes/01-项目调研规划与开发建设记录/第四版-智能助手行动化重构/02-分阶段实施/02-S02回答质量与模型接入/02-V4-S02测试与交付.md)。当前状态见[当前系统状态](notes/00-当前系统状态.md)。
+# 3. 起后端：PostgreSQL / Redis / API / WebSocket
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\stages\02-backend\scripts\preflight-stage2.ps1
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\stages\02-backend\scripts\start-stage2.ps1 -SkipPreflight
 
-## S03持久任务与事件流交接
+# 4. 起前端
+cd stages\04-frontend
+npm ci
+npm run dev                      # http://127.0.0.1:5173
+```
 
-后端运行协议、恢复与验收边界见[S03阶段交接](notes/01-项目调研规划与开发建设记录/第四版-智能助手行动化重构/03-跨对话交接/S03-阶段交接.md)。当前状态见[当前系统状态](notes/00-当前系统状态.md)。独立`ma-run/v1`只读绑定与旧ma/v1分开，V4_RUNS_ENABLED默认false；关闭新受理保留查询/核查，不回退重放。
+Vite 把 `/api` 与 `/ws` 代理到 `127.0.0.1:8080`。本地跨端口调试需在 `.env` 设 `WS_ALLOWED_ORIGINS=http://127.0.0.1:5173`（精确 Origin）。
 
-## V4-S04工作台交接导航
+### 常用命令
 
-工作台实现、隔离验收与恢复边界见 [[notes/01-项目调研规划与开发建设记录/第四版-智能助手行动化重构/03-跨对话交接/S04-阶段交接]]；当前状态见 [[notes/00-当前系统状态]]。本机复现说明：[[stages/04-frontend/deploy/v4-workbench-acceptance]]。此处不复述生产状态。
+| 目的 | 命令 |
+| --- | --- |
+| 前端类型检查 | `npm run typecheck` |
+| 前端单元测试 | `npm test` |
+| 前端生产构建 | `npm run build` |
+| 停止后端进程（保留数据） | `.\stages\02-backend\scripts\stop-stage2.ps1` |
+| 完整跑一次一小时 M1 验收 | `.\stages\01-data-chain\scripts\run-stage1-test.ps1` |
+| 笔记治理校验 | `python tools\note-governance\check_notes.py` |
 
-S05 隔离交付与适用边界见 [S05阶段交接](notes/01-项目调研规划与开发建设记录/第四版-智能助手行动化重构/03-跨对话交接/S05-阶段交接.md)。当前状态以唯一状态页为准。
+## 疑难解答
 
-## V4-S06安全审查与业务操作
+**前端能打开但所有接口 404。** 后端没起，或不在 8080。先 `curl http://127.0.0.1:8080/api/v1/summary`，再查 Vite 代理目标。
 
-[阶段交接与验收边界](notes/01-项目调研规划与开发建设记录/第四版-智能助手行动化重构/03-跨对话交接/S06-阶段交接.md)提供本轮实现、必要验证、人工补验及停服清单。当前状态见 [唯一状态](notes/00-当前系统状态.md)。
+**`npm run dev` 报 Node 版本不支持。** Vite 要求 Node 20.19+ / 22.12+，18 与 22.11 都不行。
 
-V4-S07受控运维的实现范围、必要验收与交接门槛见 [S07测试与交付](notes/01-项目调研规划与开发建设记录/第四版-智能助手行动化重构/02-分阶段实施/07-S07受控运维闭环/02-V4-S07测试与交付.md)。
+**预检脚本在中文路径下失败。** 少数 Python 虚拟环境在含中文的路径下创建失败。把仓库放到纯 ASCII 路径，或改用已装好依赖的解释器。
 
-V4-S07正式交付范围、八项交接与接续要求见 [S07阶段交接](notes/01-项目调研规划与开发建设记录/第四版-智能助手行动化重构/03-跨对话交接/S07-阶段交接.md)。
+**设备显示"离线"或"健康未知"，是不是坏了？** 不是。离线按最后上报时间判定，健康未知表示样本不足或遥测故障，页面用 `?state=offline|unknown` 可单独筛，二者都不等于设备故障。
 
-V4-S08定期任务、只读预演与验收门槛见 [S08测试与交付](notes/01-项目调研规划与开发建设记录/第四版-智能助手行动化重构/02-分阶段实施/08-S08定期任务与方案预演/02-V4-S08测试与交付.md)。
+**登录后刷新还在，关掉标签页就掉线。** JWT 存在 `sessionStorage`，按标签页生命周期；这是有意的，避免共用电脑留登录态。
 
-V4-S08八项交接与接续边界见 [S08阶段交接](notes/01-项目调研规划与开发建设记录/第四版-智能助手行动化重构/03-跨对话交接/S08-阶段交接.md)。
+**能不能 `docker compose down -v` 清一下？** 不要。`-v` 会连阶段一、阶段二的 TDengine / PostgreSQL / Redis 数据卷一起删。停止用 `stop-stage2.ps1`。
 
-S09联合整改、必要验证与冻结与发布交接见 [S09阶段交接](notes/01-项目调研规划与开发建设记录/第四版-智能助手行动化重构/03-跨对话交接/S09-阶段交接.md)，具体候选/备份/回退与观察提案见 [发布准备](stages/04-frontend/deploy/v4-release-readiness.md)。当前状态以唯一系统状态页为准。
+**报表日期对不上。** 报表按北京时间自然日聚合，`end_date` 不含当日；跨时区看数据前先把时区对齐。
 
-新会话接续请读 [S09上传部署与观察交接](notes/01-项目调研规划与开发建设记录/第四版-智能助手行动化重构/03-跨对话交接/S09-上传部署与观察交接.md)，复制 [接续提示词](notes/01-项目调研规划与开发建设记录/第四版-智能助手行动化重构/03-跨对话交接/S09-新会话提示词.md)。
+**端口被占但 `netstat` 查不到。** Windows 上 Hyper-V / WSL 会预留动态端口段，落在区间内的端口 bind 直接失败。`netsh interface ipv4 show excludedportrange protocol=tcp` 可确认。
 
-S09本会话具体发布/容量确认见 [本次发布确认单](notes/01-项目调研规划与开发建设记录/第四版-智能助手行动化重构/03-跨对话交接/S09-本次发布确认单.md)。实际状态仍以唯一系统状态页为准。
+## 开发文档
 
-S09正式执行与失败修正、恢复/观察证据见 [部署日志40](notes/04-系统部署发布备份与变更记录/部署与运维日志/06-第四版发布观察/40-V4-S09两批发布与恢复观察.md)。
+| 想做什么 | 从哪里进 |
+| --- | --- |
+| 先把平台用起来 | [平台使用手册](notes/03-平台使用运维与二次开发手册/平台使用手册.md) |
+| 改代码、加功能 | [平台运维与二次开发手册](notes/03-平台使用运维与二次开发手册/平台运维与二次开发手册.md) |
+| 弄清目录为什么这样分 | [项目目录导航](notes/00-项目目录导航.md) |
+| 看当前发布、镜像与开关 | [当前系统状态](notes/00-当前系统状态.md) |
+| 按阶段读源码说明 | [阶段一](stages/01-data-chain/README.md) · [阶段二](stages/02-backend/README.md) · [阶段三](stages/03-ai-prediction/README.md) · [阶段四](stages/04-frontend/README.md) · [阶段五](stages/05-feishu-notification/README.md) · [阶段六](stages/06-security-recovery/README.md) · [阶段七](stages/07-agent/README.md) · [阶段八](stages/08-agent-rag/README.md) · [阶段九](stages/09-ops-agent/README.md) · [阶段十](stages/10-security-agent/README.md) |
+| 部署到自己的服务器 | [部署说明](stages/04-frontend/deploy/README.md) · [上传服务器规范](notes/02-工程规范边界与验收治理/项目工程规范/05-上传服务器规范.md) |
+| 查历史发布与恢复记录 | [部署与运维日志索引](notes/04-系统部署发布备份与变更记录/部署与运维日志/00-索引·部署与运维日志.md) |
+| 核对里程碑与待办 | [项目验收与收尾清单](notes/02-工程规范边界与验收治理/项目验收与收尾清单.md) |
+
+各阶段的验收结论、测试证据与遗留项写在该阶段笔记的「测试与交付」页，本 README 不再汇总里程碑表。
+
+> 笔记库是独立 Obsidian Vault。**只打开 `PowerSystem/notes`**，不要打开仓库根目录，否则全库双链与图谱都会失效。
+
+## 数据与使用边界
+
+仓库公开的是源码、配置模板与笔记。`artifacts/` 下的模型、测试账本与截图，以及服务器私有 `.env`、数据卷和签名文件，都不随 Git 提供；首次部署须自行生成模型并准备私有配置。演示环境与本文档中的所有数字都来自合成数据。
+
+## 目录
+
+- [这是什么](#这是什么)
+- [主要功能](#主要功能)
+- [技术架构](#技术架构)
+- [快速开始](#快速开始)
+- [疑难解答](#疑难解答)
+- [开发文档](#开发文档)
+- [数据与使用边界](#数据与使用边界)
+- [English](#english)
+
+```
+PowerSystem/
+├── stages/         十个阶段的源码与各自 README
+│   ├── 01-data-chain/      数据链路（模拟器 → MQTT → 网关 → TDengine）
+│   ├── 02-backend/         后端主体（API、告警、WebSocket）
+│   ├── 03-ai-prediction/   功率预测
+│   ├── 04-frontend/        Vue 控制台与部署脚本
+│   ├── 05-feishu-notification/  飞书告警
+│   ├── 06-security-recovery/    公网安全与备份恢复
+│   ├── 07-agent/           告警解读与值班问答
+│   ├── 08-agent-rag/       检索增强问答
+│   ├── 09-ops-agent/       运维动作智能体
+│   └── 10-security-agent/  安全审查与门禁
+├── notes/          Obsidian 笔记库（设计、验收、部署日志、手册）
+├── deploy/         边缘服务器部署配置
+├── tools/          笔记治理与知识图谱校验
+├── shared-memory/  跨会话过程记录（不作验收依据）
+└── backups/        备份登记表（包体不入库）
+```
+
+## English
+
+**PowerSystem** is an operations platform for renewable-energy assets, built end to end: telemetry ingestion, time-series storage, alarm lifecycle, health scoring, failure prediction, LLM-based alarm interpretation, and guarded automation.
+
+Devices publish over MQTT into EMQX; a Go gateway writes TDengine and fans out to PostgreSQL, Redis and WebSocket clients; a Vue 3 console renders it; Python agents answer questions, run scheduled jobs and review risky actions with a separate security model.
+
+**Highlights**
+
+- End-to-end chain: ingest → store → detect → explain → act → review
+- 143 synthetic devices across 5 stations, 5-second sampling, replay on reconnect
+- Layered answers: verified facts separated from unverified explanation
+- Every action that writes goes through human approval and an audit trail
+- Releases are traceable: batch id, backup, isolated restore and observation window
+
+**Quick start**
+
+```powershell
+git clone https://github.com/Cyan-carp/PowerSystem.git
+cd PowerSystem
+Copy-Item .env.example .env
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\stages\02-backend\scripts\preflight-stage2.ps1
+cd stages\04-frontend; npm ci; npm run dev
+```
+
+Requires Windows PowerShell 5.1+, Docker Desktop, Go 1.24+, Python 3.12 and Node 20.19+/22.12+. The console runs at `http://127.0.0.1:5173` and proxies `/api` and `/ws` to `127.0.0.1:8080`.
+
+**Notes**
+
+All fleet data in this repository is synthetic and must not be used as a basis for real plant operations. Production currently runs in a restricted read-only profile: chat, runs and artifacts are enabled; write actions, ops-writes and schedulers stay off. Source, configuration templates and notes are public; models, credentials, data volumes and evidence bundles are not. Start reading from the [current system status](notes/00-当前系统状态.md) and the [project directory guide](notes/00-项目目录导航.md).
