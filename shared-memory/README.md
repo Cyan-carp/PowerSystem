@@ -26,4 +26,4 @@ shared-memory/
 
 ## 当前对话
 
-- `conversations/2026-10-24-V4-S09上传部署准备.md`
+- `conversations/2026-10-26-前端发布与双版本备份.md`
