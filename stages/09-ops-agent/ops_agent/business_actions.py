@@ -25,19 +25,33 @@ def unpack(row):
 
 class BusinessAuthority:
     protocol='ma-action/v1'
-    policy=POLICY
+    local_policy=POLICY
     capabilities=CAPABILITIES
     parse_arguments=staticmethod(arguments)
     build_binding=staticmethod(binding)
     audience='ma-business-execute/v1'
     adapter_path='/internal/ma-action/v1'
     @property
+    def policy(self):
+        from .production_profile import selected, BUSINESS_POLICY
+        return BUSINESS_POLICY if selected() else self.local_policy
+    def bind_domain(self,bound):
+        from .production_profile import selected,binding
+        if selected():
+            bound={**bound,'policy_version':self.policy,'production_configuration':binding(self.cfg)}
+        return bound
+    def validate_domain(self,bound):
+        from .production_profile import selected,binding
+        if selected():
+            if bound.get('production_configuration')!=binding(self.cfg):raise HTTPException(409,'production_configuration_changed')
+        elif 'production_configuration' in bound:raise HTTPException(409,'production_configuration_changed')
+    @property
     def adapter_url(self):return self.cfg.backend_url
     @property
     def grant_key(self):return self.cfg.actor_key
     def adapter_headers(self,jwt):return {'Authorization':'Bearer '+jwt,'X-PowerSystem-Token':self.cfg.service_token}
     def receipt_headers(self,task,attempt,jwt):return self.adapter_headers(jwt)
-    def policy_snapshot(self):return dict(profile=self.policy,r1=['alarm.ack','device.remark'],sensitive=['device.remark.read'],production=False)
+    def policy_snapshot(self):return dict(profile=self.policy,r1=['alarm.ack','device.remark'],sensitive=['device.remark.read'],production=self.policy!=POLICY)
     def automatic(self,capability,opinion):return capability=='device.remark.read' and opinion['decision']=='allow'
     def verify_token(self,token):return verify_grant(token,self.grant_key)
     def execution_status(self,evidence):return 'succeeded'
@@ -49,6 +63,11 @@ class BusinessAuthority:
     @property
     def pool(self):return self.app.state.store.pool
     async def guard(self):
+        from .production_profile import selected as production_selected,guard as production_guard
+        if production_selected():
+            try:await production_guard(self.cfg,self.pool)
+            except (ValueError,OSError,KeyError):raise HTTPException(403,'production_business_policy_required') from None
+            return
         from v4_joint import selected, guard
         if selected(self.cfg):
             try:await guard(self.cfg,self.pool,'ops')
@@ -109,7 +128,7 @@ class BusinessAuthority:
             snap=await self.snapshot(body.capability,args,jwt)
             if body.capability=='device.remark' and snap['target_version']!=str(args['expected_version']):raise HTTPException(409,'target_version_changed')
             expiry=(now()+timedelta(minutes=5)).isoformat()
-            bound=self.build_binding(actor['user_id'],body,args,snap['target_version'],expiry)
+            bound=self.bind_domain(self.build_binding(actor['user_id'],body,args,snap['target_version'],expiry))
             plan=dict(binding=bound,plan_hash=digest(bound),actor_role=actor['role'],target_summary=snap['target_summary'],risk_class=self.capabilities[body.capability][0])
             opinion=await self.review(body.action_id,actor['user_id'],plan)
             if opinion['decision']=='deny':raise HTTPException(409,'security_denied')
@@ -134,7 +153,7 @@ class BusinessAuthority:
     async def review(self,tid,owner,plan):
         from .runtime_reviews import contract
         rid=uuid4();bound=plan['binding'];args=bound['typed_args']
-        raw=dict(protocol='ma-action-review/v1',review_id=str(rid),binding_hash=plan['plan_hash'],capability=bound['capability'],data_class=bound['data_class'],destination=bound['destination_id'],risk_class=plan['risk_class'],owner_id=owner,policy_version=POLICY,target_version=bound['target_version'],argument_hash=digest(args),remark_length=len(args.get('remark','')),expires_at=int(datetime.fromisoformat(bound['expires_at']).timestamp()))
+        raw=dict(protocol='ma-action-review/v1',review_id=str(rid),binding_hash=plan['plan_hash'],capability=bound['capability'],data_class=bound['data_class'],destination=bound['destination_id'],risk_class=plan['risk_class'],owner_id=owner,policy_version=self.policy,target_version=bound['target_version'],argument_hash=digest(args),remark_length=len(args.get('remark','')),expires_at=int(datetime.fromisoformat(bound['expires_at']).timestamp()))
         await self.pool.execute("INSERT INTO ma_security_reviews(review_id,task_id,step_no,trace_id,user_id,execution_epoch,kind,request_hash,binding_hash,request,state,model) VALUES($1,$2,1,$2,$3,1,'v4_business',$4,$5,$6::jsonb,'pending','deepseek-flash')",rid,tid,owner,contract.digest(raw),plan['plan_hash'],encode(raw))
         try:
             r=await self.client.post(self.cfg.security_url+'/internal/ma-action-review/v1/reviews',json=raw,headers={'X-SEC-Service-Token':self.cfg.security_service_token,'X-SEC-Request':contract.sign_message(self.cfg.security_request_key,'ma-action-review-request/v1',rid,contract.digest(raw),raw['expires_at'])},timeout=32)
@@ -160,6 +179,7 @@ class BusinessAuthority:
     async def validate_plan(self,task,a,jwt):
         plan=a['plan'];bound=plan['binding']
         await self.guard();await self.identity(jwt,task['user_id'],plan['actor_role'])
+        self.validate_domain(bound)
         if bound['policy_version']!=self.policy or digest(bound)!=plan['plan_hash'] or digest(bound['typed_args'])!=a['args_hash']:raise HTTPException(409,'approval_binding_changed')
         if a['expires_at']<=now():raise HTTPException(409,'approval_expired')
         review=await self.pool.fetchrow('SELECT * FROM ma_security_reviews WHERE review_id=$1',UUID(plan['review_id']))
@@ -292,6 +312,8 @@ class BusinessAuthority:
         aid=UUID(g['action_id']);task=await self.get_task(aid,g['owner_id']);a=unpack(await self.pool.fetchrow('SELECT * FROM ma_approvals WHERE task_id=$1',aid))
         await self.identity(jwt,g['owner_id'],a['plan']['actor_role'])
         bound=a['plan']['binding']
+        self.validate_domain(bound)
+        if digest(bound)!=a['plan']['plan_hash']:raise HTTPException(403,'grant_binding_changed')
         if g['run_id']!=str(task['run_id']) or g['capability']!=bound['capability'] or g['typed_args']!=bound['typed_args'] or g['target_version']!=bound['target_version'] or g['plan_hash']!=a['plan']['plan_hash'] or g['policy_version']!=self.policy:raise HTTPException(403,'grant_binding_changed')
         async with self.pool.acquire() as c,c.transaction():
             task=unpack(await c.fetchrow('SELECT * FROM ma_tasks WHERE task_id=$1 FOR UPDATE',aid))

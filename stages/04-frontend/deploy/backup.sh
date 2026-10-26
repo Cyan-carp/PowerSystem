@@ -148,6 +148,20 @@ finish() {
     cp -p -- "$v4_state_file" "$backup_dir/$run_id.v4-resume-required.json"
     chmod 600 "$backup_dir/$run_id.v4-resume-required.json"
     echo 'V4 writer resume failed; recovery identity retained' >&2
+  elif [ "$rc" -ne 0 ] && [ "${v4_active:-0}" = 1 ] && [ -f "$staging/v4-maintenance.json" ]; then
+    # Retain real before/after evidence even when failure precedes compression.
+    if python3 - "$project_dir" "$staging/v4-maintenance.json" <<'PY'
+import importlib.util,pathlib,sys
+spec=importlib.util.spec_from_file_location('backup_failed_resume',pathlib.Path(sys.argv[1])/'stages/04-frontend/deploy/production-stack.py')
+module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
+module.backup_maintenance_snapshot(sys.argv[2],after=True)
+PY
+    then
+      cp -p -- "$staging/v4-maintenance.json" "$backup_dir/$run_id.tar.gz.gpg.v4-maintenance.json"
+    else
+      preserve_staging=1
+      echo 'Failed backup resume evidence incomplete; staging retained' >&2
+    fi
   fi
   local status=ok
   local failed_stage=""
@@ -201,6 +215,19 @@ if [ -z "$available_kb" ] || [ "$available_kb" -lt "$minimum_kb" ]; then
 fi
 stage_end "$(( available_kb * 1024 ))"
 dc=(docker compose --env-file "$env_file" -f "$compose_file")
+if [ -f "$production_state/active.json" ]; then
+  frozen_compose_args=$(python3 - "$project_dir" <<'PY'
+import importlib.util,json,pathlib,sys
+spec=importlib.util.spec_from_file_location('backup_frozen_controller',pathlib.Path(sys.argv[1])/'stages/04-frontend/deploy/production-stack.py')
+module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
+path,manifest=module.active()
+assert not (module.STATE_DIR/'pending.json').exists()
+print(json.dumps(module.compose(path)))
+PY
+  )
+  mapfile -d '' -t dc < <(python3 -c 'import json,sys;sys.stdout.buffer.write(b"\0".join(v.encode() for v in json.loads(sys.argv[1]))+b"\0")' "$frozen_compose_args")
+  test "${#dc[@]}" -gt 5
+fi
 
 # V4 writers (RAG and Ops) must be paused for every dump/copy below. Vectors are
 # taken first while RAG is still running, then both writers stop, and the pause
@@ -289,7 +316,7 @@ stage_begin tdengine_dump
 stage_end "$(bytes_of "$staging/tdengine")"
 
 stage_begin queues_snapshot
-"${dc[@]}" --profile maintenance run --rm --no-deps backup-helper python /scripts/snapshot_queues.py "/backup/$run_id/queues"
+python3 "$project_dir/stages/04-frontend/deploy/snapshot-production-queues.py" --output "$staging/queues"
 stage_end "$(bytes_of "$staging/queues")"
 
 stage_begin model_copy
@@ -402,6 +429,9 @@ if [ -d "$production_state" ]; then
   cp -a "$production_state" "$staging/production-stack"
   cp "$project_dir/stages/04-frontend/deploy/production-stack.py" "$staging/production-stack/controller.py"
   stage_end "$(bytes_of "$staging/production-stack")"
+  stage_begin release_assets
+  python3 "$project_dir/stages/04-frontend/deploy/backup-release-assets.py" --output "$staging"
+  stage_end "$(bytes_of "$staging/release-assets")"
 fi
 v4_resume
 if [ "$v4_active" = 1 ]; then

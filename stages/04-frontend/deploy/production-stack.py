@@ -47,10 +47,29 @@ BACKUP_DIR = Path('/var/backups/powersystem')
 FAST_TIER = 'frontend-fast'
 FULL_TIER = 'full'
 MAX_FAST_BASELINE_AGE = 86400
+# One-off, owner-authorized deferral of the pre-deployment full backup. Only these
+# two explicitly named candidates may carry it, and only at the full tier. This is
+# not a general --skip-backup/--force switch: no other release can be named here.
+DEFERRAL_CANDIDATES = ('v4-production-compat-20261026-r1', 'v4-business-schedule-20261026-r1',
+                       'v4-business-schedule-20261026-r2')
+DEFERRAL_SERVICES = ('agent-rag', 'api', 'ops-agent', 'security-agent')
+DEFERRAL_FILE = 'backup-deferral.json'
 
 
 class Blocked(RuntimeError):
     pass
+
+
+def registered_business_host(capability):
+    helper = Path(__file__).with_name('host-profile.py')
+    require(helper.is_file(), 'host_profile_helper_required')
+    spec = importlib.util.spec_from_file_location('powersystem_host_profile', helper)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    try:
+        return module.require_registered_host(capability)
+    except (module.HostError, OSError, ValueError, KeyError) as error:
+        raise Blocked(str(error)) from None
 
 
 def require(condition, reason):
@@ -361,9 +380,99 @@ def owned(path):
     return path
 
 
-def inspect():
+def read_backup_deferral(source, name, parent, tier, services):
+    """The owner's written authorization to publish these two candidates without
+    a fresh full backup. Every field is explicit; nothing is inferred from a flag,
+    an environment variable or a previous release.
+    """
+    require(tier == FULL_TIER and name in DEFERRAL_CANDIDATES,
+            'backup_deferral_not_authorized_for_candidate')
+    path = owned(source)
+    try:
+        doc = read(path)
+    except (OSError, ValueError):
+        raise Blocked('backup_deferral_invalid_json') from None
+    require(isinstance(doc, dict) and doc.get('schema') == 1 and
+            doc.get('kind') == 'backup_deferral_authorization',
+            'backup_deferral_schema_required')
+    require(doc.get('candidate') == name and doc.get('parent') == parent,
+            'backup_deferral_candidate_or_parent_mismatch')
+    require(doc.get('owner_requested_defer_until_effects_accepted') is True,
+            'backup_deferral_owner_request_required')
+    require(sorted(doc.get('services') or []) == list(DEFERRAL_SERVICES),
+            'backup_deferral_scope_mismatch')
+    require(tuple(sorted(services)) == DEFERRAL_SERVICES,
+            'backup_deferral_release_scope_mismatch')
+    instruction = doc.get('owner_instruction')
+    require(isinstance(instruction, str) and len(instruction.strip()) >= 20,
+            'backup_deferral_owner_instruction_required')
+    try:
+        recorded = datetime.datetime.fromisoformat(
+            str(doc.get('recorded_at')).replace('Z', '+00:00'))
+    except ValueError:
+        raise Blocked('backup_deferral_timestamp_invalid') from None
+    require(recorded.tzinfo is not None and recorded.utcoffset() == datetime.timedelta(0),
+            'backup_deferral_timestamp_invalid')
+    require(recorded.timestamp() <= time.time(), 'backup_deferral_timestamp_in_future')
+    return path, doc, sha(path)
+
+
+def bind_backup_deferral(path, name, parent, source, doc):
+    """Freeze the authorized bytes beside the candidate and digest them.
+
+    The copy is byte-identical to what the owner wrote, is listed in the
+    manifest ``files`` map, and is therefore covered by ``immutable``. Its digest
+    is repeated in ``backup_deferral`` so the block cannot point at another file.
+    """
+    target = Path(path) / DEFERRAL_FILE
+    shutil.copyfile(source, target)
+    target.chmod(0o600)
+    value = sha(target)
+    # Carry the owner's real boolean into the manifest: publish re-checks it, so the
+    # block must not be assembled later from a constant the document never supplied.
+    accepted = doc.get('owner_requested_defer_until_effects_accepted')
+    require(accepted is True, 'backup_deferral_owner_request_required')
+    return {'file': DEFERRAL_FILE, 'sha256': value, 'candidate': name, 'parent': parent,
+            'recorded_at': doc['recorded_at'],
+            'owner_requested_defer_until_effects_accepted': accepted,
+            'owner_instruction_sha256': hashlib.sha256(
+                doc['owner_instruction'].encode()).hexdigest()}
+
+
+def frozen_backup_deferral(path, m, parent):
+    """Re-verify the authorization prepare froze into this candidate.
+
+    The document the owner signed is not re-read from its original location: the
+    frozen copy is byte-identical, listed in ``files`` and covered by the pointer's
+    manifest digest, so neither the document nor its binding can change after the
+    freeze. Passing ``--backup`` is unaffected and remains the stricter path.
+    """
+    block = m.get('backup_deferral')
+    require(isinstance(block, dict) and block.get('file') == DEFERRAL_FILE,
+            'predeployment_backup_required')
+    require(m.get('backup_tier', FULL_TIER) == FULL_TIER and
+            m['release'] in DEFERRAL_CANDIDATES and
+            block.get('candidate') == m['release'] and block.get('parent') == parent and
+            block.get('owner_requested_defer_until_effects_accepted') is True and
+            tuple(sorted(m.get('services') or [])) == DEFERRAL_SERVICES,
+            'backup_deferral_frozen_binding_mismatch')
+    _, doc, value = read_backup_deferral(path / DEFERRAL_FILE, m['release'], parent,
+                                         FULL_TIER, list(m['services']))
+    require(value == block.get('sha256') == m['files'].get(DEFERRAL_FILE),
+            'backup_deferral_frozen_file_changed')
+    require(block.get('recorded_at') == doc['recorded_at'] and
+            block.get('owner_instruction_sha256') ==
+            hashlib.sha256(doc['owner_instruction'].encode()).hexdigest(),
+            'backup_deferral_frozen_binding_mismatch')
+    return {'file': DEFERRAL_FILE, 'sha256': value, 'recorded_at': doc['recorded_at'],
+            'owner_instruction': doc['owner_instruction']}
+
+
+def inspect(allow_empty=False):
     ids = command(['docker', 'ps', '-aq', '--filter',
                    'label=com.docker.compose.project=' + PROJECT]).decode().split()
+    if allow_empty and not ids:
+        return {}
     require(bool(ids), 'running_project_required')
     rows = json.loads(command(['docker', 'inspect', *ids]))
     result = {}
@@ -375,6 +484,10 @@ def inspect():
         require(service not in result, 'duplicate_service')
         result[service] = row
     return result
+
+
+def inspect_empty_allowed():
+    return inspect(allow_empty=True)
 
 
 def states(rows):
@@ -397,6 +510,33 @@ def frontend_chunk_names(image):
 def missing_chunks(candidate, baseline):
     """Chunks the serving image has that the candidate image no longer ships."""
     return sorted(frontend_chunk_names(baseline) - frontend_chunk_names(candidate))
+
+
+def check_source_builds(config, rows, services):
+    """New V4 application images need a receipt bound to complete build inputs.
+
+    Existing image IDs, accepted history and rollback remain usable unchanged.
+    """
+    guarded = {'api', 'gateway', 'frontend', 'agent-rag', 'ops-agent', 'security-agent'}
+    changed = sorted(s for s in set(services) & guarded
+                     if config['services'][s]['image'] != rows[s]['Image'])
+    if not changed:
+        return []
+    helper = Path(__file__).with_name('source-build.py')
+    require(helper.is_file(), 'source_build_helper_missing')
+    spec = importlib.util.spec_from_file_location('powersystem_source_build', helper)
+    source_build = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(source_build)
+    results = []
+    for service in changed:
+        image = config['services'][service]['image']
+        metadata = json.loads(command(['docker', 'image', 'inspect', image]))[0]
+        try:
+            results.append(source_build.verify_receipt(
+                image, service, ROOT / 'runtime/source-builds', metadata))
+        except (source_build.SourceError, OSError, ValueError, KeyError) as error:
+            raise Blocked('source_build_required:'+service+':'+str(error)) from None
+    return results
 
 
 def healthy(rows):
@@ -435,6 +575,15 @@ def validate_v4_readonly(services):
     configuration and the new action authorities have separate switches.
     Enabling them needs an explicitly reviewed production profile first.
     """
+    configured = {name: spec.get('environment', {}).get('V4_PRODUCTION_PROFILE')
+                  for name, spec in services.items()
+                  if spec.get('environment', {}).get('V4_PRODUCTION_PROFILE')}
+    if configured:
+        require(set(configured) == {'api', 'agent-rag', 'ops-agent', 'security-agent'}
+                and set(configured.values()) == {'v4-business-schedule/v1'},
+                'v4_production_profile_incomplete_or_unknown')
+        validate_v4_production(services)
+        return
     readonly = {'V4_ASSISTANT_ENABLED', 'V4_RUNS_ENABLED', 'V4_ARTIFACTS_ENABLED'}
     for service, spec in services.items():
         env = spec.get('environment', {})
@@ -452,6 +601,72 @@ def validate_v4_readonly(services):
         if service == 'security-agent':
             require(env.get('SEC_RUNTIME_PROFILE') == 'm4-server-readonly',
                     'v4_production_security_profile_not_authorized')
+
+
+def validate_v4_production(services):
+    """One explicit business/schedule profile; never a broad V4 switch bypass."""
+    profile = 'v4-business-schedule/v1'
+    common = {'V4_PRODUCTION_PROFILE': profile}
+    action = {**common, 'V4_ACTIONS_ENABLED': 'true', 'V4_SCHEDULES_ENABLED': 'true',
+              'V4_OPS_WRITE_ENABLED': 'false'}
+    expected = {'api': action, 'ops-agent': action, 'security-agent': common,
+                'agent-rag': {**action, 'V4_ASSISTANT_ENABLED': 'true',
+                              'V4_RUNS_ENABLED': 'true', 'V4_ARTIFACTS_ENABLED': 'true',
+                              'V4_READ_DELEGATION_PROTOCOL': 'ma-run/v1'}}
+    host = registered_business_host('release')
+    roots = set()
+    for name, spec in services.items():
+        env = spec.get('environment', {})
+        actual = {k: str(v) for k, v in env.items() if k.startswith('V4_')}
+        require(actual == expected.get(name, {}), 'v4_production_capability_matrix:' + name)
+        if name not in expected:
+            continue
+        mounts = [v for v in spec.get('volumes', []) if v.get('target') == '/run/v4-production']
+        require(len(mounts) == 1 and mounts[0].get('type') == 'bind' and mounts[0].get('read_only') is True,
+                'v4_production_identity_readonly_mount:' + name)
+        root = Path(mounts[0]['source']).resolve()
+        require(root.is_relative_to(ROOT / 'runtime') and root.parent.name == 'private',
+                'v4_production_identity_outside_private')
+        roots.add(root)
+    require(len(roots) == 1, 'v4_production_identity_must_match_across_services')
+    root = roots.pop()
+    doc = read(root / 'identity.json')
+    require(set(doc) == {'profile', 'host', 'databases', 'origins', 'capabilities', 'policies'}
+            and doc['profile'] == profile
+            and doc['host'] == {'hostname': 'powersystem-prod', 'vm_id': 117,
+                                'machine_id_sha256': host.get('machine_id_sha256'),
+                                'dmi_uuid': host.get('dmi_uuid')}
+            and host.get('hostname') == 'powersystem-prod'
+            and sha(root / 'machine-id') == host.get('machine_id_sha256')
+            and (root / 'product-uuid').read_text().strip().lower() == host.get('dmi_uuid')
+            and doc['databases'] == {'business': 'powersystem', 'rag': 'powersystem_agent_rag', 'ops': 'ma_ops'}
+            and doc['origins'] == {'api': 'http://api:8080', 'rag': 'http://agent-rag:8093',
+                                  'ops': 'http://ops-agent:8094', 'security': 'http://security-agent:8100'}
+            and doc['capabilities'] == {'actions': True, 'schedules': True, 'ops_write': False}
+            and doc['policies'] == {'business': 'v4-s06-production/v1', 'schedule': 'v4-s08-production/v1'},
+            'v4_production_machine_topology_or_policy_mismatch')
+    ops = services['ops-agent'].get('environment', {})
+    sec = services['security-agent'].get('environment', {})
+    rag = services['agent-rag'].get('environment', {})
+    require(ops.get('OPS_RUNTIME_PROFILE') == 'm4-server-readonly'
+            and ops.get('OPS_WRITE_ENABLED') == 'false'
+            and ops.get('OPS_INFRA_ENABLED') == 'true'
+            and ops.get('OPS_SECURITY_ENABLED') == 'true'
+            and ops.get('OPS_INSPECTION_ENABLED') == 'true'
+            and sec.get('SEC_RUNTIME_PROFILE') == 'm4-server-readonly',
+            'v4_production_legacy_readonly_domain_required')
+    require(sec.get('SEC_ACTION_LLM_URL') == 'https://api.deepseek.com'
+            and sec.get('SEC_ACTION_MODEL') == 'deepseek-flash'
+            and sec.get('SEC_ACTION_LLM_API_KEY_FILE', '').startswith('/run/')
+            and sec.get('SEC_ACTION_LLM_API_KEY_FILE') != sec.get('SEC_LLM_API_KEY_FILE'),
+            'v4_production_independent_official_review_required')
+    require(str(rag.get('RAG_TOOL_TIMEOUT', '')).isdigit()
+            and int(rag['RAG_TOOL_TIMEOUT']) >= 40,
+            'v4_production_action_review_budget_required')
+    bridge_files = [services[n].get('environment', {}).get('SCHEDULE_BRIDGE_TOKEN_FILE')
+                    for n in ('api', 'agent-rag')]
+    require(bridge_files[0] == bridge_files[1] and bridge_files[0]
+            and bridge_files[0].startswith('/run/'), 'v4_production_independent_bridge_required')
 
 
 def validate(config):
@@ -697,6 +912,11 @@ def immutable(path):
     require(m['manifest_version'] == 1, 'unknown_manifest_version')
     for name, expected in m['files'].items():
         require(sha(path / name) == expected, 'frozen_artifact_changed')
+    deferral = m.get('backup_deferral')
+    if deferral is not None:
+        require(deferral.get('file') == DEFERRAL_FILE and
+                deferral.get('sha256') == m['files'].get(DEFERRAL_FILE),
+                'frozen_backup_deferral_unbound')
     for name, expected in m['private_references'].items():
         require(sha(name) == expected, 'private_configuration_changed')
     for image in m['images'].values():
@@ -732,7 +952,12 @@ def validate_fast_frontend_config(config, args, env, parent, services, overrides
 
 
 def freeze(name, args_path, parent, services, overrides, backup_tier=FULL_TIER,
-           allow_asset_shrink=False):
+           allow_asset_shrink=False, defer_backup=None):
+    defer_source = defer_doc = None
+    if defer_backup:
+        # Fail before any Docker work when the authorization is not usable.
+        defer_source, defer_doc, _ = read_backup_deferral(
+            defer_backup, name, parent, backup_tier, sorted(services))
     with track('freeze.origin_args') as span:
         args, env = origin_args(args_path)
         span['arguments'] = len(args)
@@ -783,6 +1008,9 @@ def freeze(name, args_path, parent, services, overrides, backup_tier=FULL_TIER,
             value.pop('build', None)
             value.pop('pull_policy', None)
         span['images'] = len(config['services'])
+    with track('freeze.source_builds') as span:
+        source_builds = check_source_builds(config, rows, services)
+        span['verified'] = len(source_builds)
     if 'frontend' in overrides:
         # A build from a stale source tree silently drops route chunks. Compare the
         # logical asset names with the serving image before any candidate is written.
@@ -812,13 +1040,19 @@ def freeze(name, args_path, parent, services, overrides, backup_tier=FULL_TIER,
             shutil.copyfile(source, target)
             target.chmod(0o600)
         files = ['private/compose.json', 'private/origin-args.json', 'gate.py', 'registry-helper.py']
+        if defer_source is not None:
+            files.append(DEFERRAL_FILE)
+            deferred = bind_backup_deferral(path, name, parent, defer_source, defer_doc)
         m = {'manifest_version': 1, 'release': name, 'created_at': now(), 'parent': parent,
              'backup_tier': backup_tier,
              'controller_sha256': sha(__file__),
              'services': sorted(services), 'origin_environment': env,
              'images': {s: v['image'] for s, v in config['services'].items()},
+             'source_builds': source_builds,
              'files': {n: sha(path / n) for n in files},
              'private_references': references(config, env), 'before': states(rows)}
+        if defer_source is not None:
+            m['backup_deferral'] = deferred
         write(path / 'manifest.json', m)
     with track('freeze.roundtrip'):
         # Docker parses the frozen JSON but no container or HTTP check is run here.
@@ -856,6 +1090,59 @@ def maintenance_states_match(before, after):
                 'backup_maintenance_identity_changed:' + service)
 
 
+def failed_backup_resume_chain(release_path, rows, evidence_path):
+    """Bind a failed pre-collection pause to a subsequent real full backup.
+
+    This issues no acceptance. The next full backup, publish and complete gate
+    remain mandatory. A retained candidate supplies the observed original state;
+    the failed timing and live identities constrain the two intervening restarts.
+    """
+    proof_path=owned(evidence_path)
+    require(proof_path.is_relative_to(ROOT/'runtime'), 'failed_backup_evidence_scope')
+    proof=read(proof_path)
+    require(proof.get('format')=='failed-backup-resume-chain/v1', 'failed_backup_evidence_format')
+    pointer=read(STATE_DIR/'active.json')
+    candidate=release(proof['candidate']); frozen=immutable(candidate)
+    gate_before=read(release_path/pointer['gate_file'])['states']
+    require(frozen['parent']==release_path.name and frozen['before']==gate_before,
+            'failed_backup_candidate_baseline_mismatch')
+    if proof.get('receipt'):
+        receipt_path=Path(proof['receipt']).resolve()
+        rollback_maintenance_matches(receipt_path,release_path,pointer,rows)
+        receipt=read(receipt_path)
+        require(receipt.get('archive') is None and not Path(str(receipt_path).removesuffix('.v4-maintenance.json')).exists(),
+                'failed_backup_receipt_must_not_claim_archive')
+        return {'before':gate_before,'observed_before':states(rows),'started_at':receipt['started_at'],
+                'actual_backup_started_at':now(),'previous_failed_backup':{
+                    'candidate':candidate.name,'candidate_manifest_sha256':sha(candidate/'manifest.json'),
+                    'retained_resume_receipt':receipt,'receipt_sha256':sha(receipt_path),
+                    'evidence_sha256':sha(proof_path),'acceptance_issued':False}}
+    timing_path=Path(proof['timing']).resolve()
+    require(timing_path.parent==BACKUP_DIR and re.fullmatch(r'powersystem-\d{8}T\d{6}Z\.timing.json',timing_path.name),
+            'failed_backup_timing_scope')
+    timing=read(timing_path)
+    require(timing.get('status')=='failed' and timing.get('archive_bytes')==0 and not timing.get('uploads')
+            and timing.get('failed_stage')=='v4_rows'
+            and not (BACKUP_DIR/timing['archive']).exists(), 'failed_backup_not_precollection_failure')
+    require(any(s.get('name')=='v4_pause' for s in timing.get('spans',[])), 'failed_backup_pause_unproven')
+    start=datetime.datetime.fromisoformat(timing['started_at'].replace('Z','+00:00'))
+    end=datetime.datetime.fromisoformat(timing['finished_at'].replace('Z','+00:00'))
+    frozen_at=datetime.datetime.fromisoformat(frozen['created_at'])
+    # backup.sh's timing started_at has whole-second precision; freeze has micros.
+    require(start.tzinfo is not None and start.timestamp()+1>=frozen_at.timestamp()
+            and 0<=time.time()-end.timestamp()<=86400, 'failed_backup_evidence_expired')
+    current=states(rows);maintenance_states_match(gate_before,current)
+    for name in ('agent-rag','ops-agent'):
+        restarted=datetime.datetime.fromisoformat(current[name]['started_at'].replace('Z','+00:00'))
+        require(start.timestamp()<=restarted.timestamp()<=end.timestamp()+5, 'failed_backup_restart_outside_window')
+    return {'before':gate_before,'observed_before':current,'started_at':max(start,frozen_at).isoformat(),
+            'actual_backup_started_at':now(),'previous_failed_backup':{
+                'failure_timing_start_precision':'seconds',
+                'candidate':candidate.name,'candidate_manifest_sha256':sha(candidate/'manifest.json'),
+                'failure_timing':timing,'failure_timing_sha256':sha(timing_path),
+                'evidence_sha256':sha(proof_path),'acceptance_issued':False}}
+
+
 def backup_maintenance_snapshot(path, after=False, archive=None):
     """Called under backup.sh's existing lock; no deployment or pointer update."""
     path = Path(path)
@@ -869,9 +1156,14 @@ def backup_maintenance_snapshot(path, after=False, archive=None):
     rows = inspect()
     healthy(rows)
     if not after:
-        current_matches(release_path, manifest)
-        write(path, {'version': 1, 'active': read(STATE_DIR / 'active.json'),
-                     'before': states(rows), 'started_at': now()})
+        observation={'before':states(rows),'started_at':now()}
+        try:
+            current_matches(release_path, manifest)
+        except Blocked:
+            proof=os.getenv('POWERSYSTEM_FAILED_BACKUP_RESUME_EVIDENCE')
+            if not proof:raise
+            observation=failed_backup_resume_chain(release_path,rows,proof)
+        write(path, {'version': 1, 'active': read(STATE_DIR / 'active.json'),**observation})
     else:
         value = read(path)
         require(value['active'] == read(STATE_DIR / 'active.json'),
@@ -896,9 +1188,13 @@ def verify_backup_maintenance(a):
     rows = inspect()
     healthy(rows)
     require(states(rows) == receipt['after'], 'backup_maintenance_post_resume_drift')
-    require(bool(manifest.get('parent')) and bool(manifest['services']),
+    migrated = manifest.get('migration', {}).get('format') == 1
+    if migrated:
+        require(read(path / 'migration-baseline.json').get('passed') is True,
+                'migration_baseline_required')
+    require(migrated or (bool(manifest.get('parent')) and bool(manifest['services'])),
             'backup_maintenance_parent_required')
-    transaction = {'previous': manifest['parent'], 'candidate': path.name,
+    transaction = {'previous': manifest['parent'] or path.name, 'candidate': path.name,
                    'services': manifest['services'], 'before': states(rows),
                    'started_at': now(), 'kind': 'post_backup_maintenance',
                    'backup': baseline}
@@ -1021,7 +1317,8 @@ def prepare(a):
     require(bool(services) and services.issubset(APPLICATIONS), 'explicit_application_services_required')
     args_path = a.from_args or previous / 'private/origin-args.json'
     freeze(a.id, args_path, previous.name, services, overrides, a.tier,
-           getattr(a, 'allow_asset_shrink', False))
+           getattr(a, 'allow_asset_shrink', False),
+           getattr(a, 'defer_backup_authorization', None))
 
 
 def drain():
@@ -1029,6 +1326,15 @@ def drain():
                      '-d', 'ma_ops', '-Atqc', "SELECT count(*) FROM ma_tasks WHERE status IN "
                      "('queued','planning','executing','awaiting_approval')"]).decode().strip()
     require(count == '0', 'inflight_tasks_block_release')
+    # RAG has an independent database and queue. A protocol/profile transition
+    # must not strand previously admitted runs even when the Ops queue is empty.
+    args = ['docker', 'exec', PROJECT + '-postgres-1', 'psql', '-U', 'powersystem',
+            '-d', 'powersystem_agent_rag', '-Atqc']
+    exists = command(args + ["SELECT to_regclass('public.assistant_runs') IS NOT NULL"]).decode().strip()
+    if exists == 't':
+        count = command(args + ["SELECT count(*) FROM assistant_runs WHERE status IN "
+                                "('queued','running','awaiting_approval')"]).decode().strip()
+        require(count == '0', 'inflight_assistant_runs_block_release')
 
 
 def refresh_registry(path, envfile):
@@ -1255,12 +1561,20 @@ def publish(a):
     require(m['parent'] == previous.name, 'stale_or_unrelated_candidate')
     services = m['services']
     require(bool(services) and set(services).issubset(APPLICATIONS), 'invalid_release_services')
-    archive = Path(a.backup).resolve()
+    archive = Path(a.backup).resolve() if a.backup else None
     tier = m.get('backup_tier', FULL_TIER)
     require(tier in (FULL_TIER, FAST_TIER), 'unknown_backup_tier')
     baseline = None
     maintenance = None
-    if tier == FAST_TIER:
+    deferral = None
+    if archive is None:
+        # No backup argument is accepted only for the owner-authorized candidates
+        # whose frozen manifest carries the authorization; see frozen_backup_deferral.
+        with track('publish.backup_deferral') as span:
+            deferral = frozen_backup_deferral(candidate, m, previous.name)
+            span['authorization_sha256'] = deferral['sha256']
+        archive_sha = None
+    elif tier == FAST_TIER:
         with track('publish.verify_fast_capsule') as span:
             receipt, baseline = verified_fast_capsule(
                 archive, m, read(STATE_DIR / 'active.json'))
@@ -1299,8 +1613,14 @@ def publish(a):
         TIMELINE.notes['candidate_created_at'] = m['created_at']
         TIMELINE.notes['prepare_to_publish_seconds'] = round(
             time.time() - datetime.datetime.fromisoformat(m['created_at']).timestamp(), 3)
-        TIMELINE.notes['backup'] = backup_summary(archive)
+        if archive is not None:
+            TIMELINE.notes['backup'] = backup_summary(archive)
         TIMELINE.notes['backup_tier'] = tier
+        if deferral:
+            # Recorded as deferred, never as a passed backup check.
+            TIMELINE.notes['backup_deferred'] = {
+                'authorization_sha256': deferral['sha256'],
+                'authorization_recorded_at': deferral['recorded_at']}
         if baseline:
             TIMELINE.notes['fast_baseline'] = baseline
     # The checks that used to be discovered by a failing startup, run again here so a
@@ -1311,8 +1631,18 @@ def publish(a):
     with track('publish.transaction_write'):
         transaction = {'previous': previous.name, 'candidate': candidate.name,
                        'services': services, 'before': states(inspect()), 'started_at': now(),
-                       'predeployment_backup': archive.name, 'backup_sha256': archive_sha,
                        'backup_tier': tier, 'backup_baseline': baseline}
+        if deferral:
+            # Truthful: no pre-deployment backup exists for this release.
+            transaction['backup_deferred'] = {
+                'authorization_file': deferral['file'],
+                'authorization_sha256': deferral['sha256'],
+                'authorization_recorded_at': deferral['recorded_at'],
+                'owner_instruction': deferral['owner_instruction'],
+                'effects_accepted': False, 'recorded_at': now()}
+        else:
+            transaction['predeployment_backup'] = archive.name
+            transaction['backup_sha256'] = archive_sha
         write(STATE_DIR / 'pending.json', transaction)
     try:
         with track('publish.deploy'):
@@ -1351,20 +1681,33 @@ def main():
     plan.add_argument('--image', action='append')
     plan.add_argument('--tier', choices=(FULL_TIER, FAST_TIER), default=FULL_TIER)
     plan.add_argument('--allow-asset-shrink', action='store_true')
+    plan.add_argument('--defer-backup-authorization')
     check = sub.add_parser('preflight')
     check.add_argument('--id', required=True)
     activate = sub.add_parser('publish')
     activate.add_argument('--id', required=True)
-    activate.add_argument('--backup', required=True)
+    activate.add_argument('--backup')
     maintenance = sub.add_parser('verify-backup')
     maintenance.add_argument('--backup', required=True)
     rollback = sub.add_parser('rollback')
     rollback.add_argument('--backup-maintenance')
     sub.add_parser('status')
+    migration = sub.add_parser('migration-stage')
+    migration.add_argument('--id', required=True)
+    migration.add_argument('--receipt', required=True)
+    migration_start = sub.add_parser('migration-start')
+    migration_start.add_argument('--id', required=True)
+    migration_start.add_argument('--group', choices=('data', 'readonly', 'background'), required=True)
+    migration_check = sub.add_parser('migration-checkpoint')
+    migration_check.add_argument('--id', required=True)
+    migration_check.add_argument('--group', choices=('data', 'readonly'), required=True)
+    migration_check.add_argument('--evidence', required=True)
+    migration_accept = sub.add_parser('migration-accept')
+    migration_accept.add_argument('--id', required=True)
     watch = sub.add_parser('timing')
     watch.add_argument('--limit', type=int, default=10)
     a = parser.parse_args()
-    require(socket.gethostname() == 'R730XD' and os.geteuid() == 0, 'specified_root_business_host_required')
+    registered_business_host('release')
     os.umask(0o077)
     STATE_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
     if a.phase == 'timing':
@@ -1399,6 +1742,16 @@ def main():
                 restore_transaction(read(pending))
             else:
                 require(not pending.exists(), 'unfinished_release_requires_rollback')
+                if a.phase.startswith('migration-'):
+                    spec = importlib.util.spec_from_file_location(
+                        'powersystem_migration_vm', Path(__file__).with_name('migration-vm.py'))
+                    module = importlib.util.module_from_spec(spec)
+                    spec.loader.exec_module(module)
+                    module.dispatch(sys.modules[__name__], a)
+                    record, value = persist_timing('ok')
+                    print(json.dumps({'phase': a.phase, 'completed': True,
+                                      'timing_file': str(record)}))
+                    return
                 {'prepare': prepare, 'bootstrap': bootstrap, 'preflight': verify_candidate,
                  'verify-backup': verify_backup_maintenance,
                  'publish': publish}[a.phase](a)

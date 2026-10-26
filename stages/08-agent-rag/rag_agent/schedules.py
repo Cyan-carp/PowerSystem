@@ -62,7 +62,24 @@ class ScheduleArtifacts(ArtifactService):
 
 class ScheduleService:
     def __init__(self,app):self.app=app;self.runs=app.state.runs;self.pool=self.runs.pool;self.cfg=app.state.config;self.controls=set()
+    def cross_database(self):
+        from .production_profile import selected
+        return bool(getattr(self.cfg,'v4_joint_profile','')) or selected()
+    async def current_owner(self,jwt,owner):
+        from .production_profile import selected
+        if not selected():return
+        await self.guard()
+        r=await self.app.state.client.get(self.cfg.backend_url+'/internal/ma/v1/actor',headers={'Authorization':'Bearer '+jwt,'X-PowerSystem-Token':self.cfg.ops_token},timeout=3)
+        if r.status_code!=200:raise HTTPException(403,'permission_changed')
+        try:a=verify(r.json()['data']['context'],self.cfg.ma_actor_key,'ma-ops')
+        except (ValueError,KeyError):raise HTTPException(403,'permission_changed') from None
+        if a['user_id']!=owner or a['role'] not in ('operator','admin'):raise HTTPException(403,'permission_changed')
     async def guard(self):
+        from .production_profile import selected as production_selected,guard as production_guard
+        if production_selected():
+            try:await production_guard(self.cfg,self.pool)
+            except (ValueError,OSError,KeyError):raise HTTPException(403,'production_schedule_policy_required') from None
+            return
         from .joint_profile import selected, guard
         if selected(self.cfg):
             try:await guard(self.cfg,self.pool,'rag')
@@ -92,7 +109,7 @@ class ScheduleService:
         if not s or not g or s['status']!='active' or g['schedule_id']!=sid or g['user_id']!=s['user_id'] or g['approved_by']!=s['user_id'] or g['revoked_at'] or g['expires_at']<=datetime.now(timezone.utc) or g['config_version']!=s['config_version'] or g['scope_hash']!=s['scope_hash'] or g['destination_id']!='platform_client' or g['destination_version']!='1':raise HTTPException(409,'schedule_grant_inactive')
         config=ScheduleConfig.model_validate_json(s['config']).model_dump()
         if config!=json.loads(s['config']) or digest(config)!=s['scope_hash']:raise HTTPException(409,'schedule_configuration_drift')
-        if lock and not getattr(self.cfg,'v4_joint_profile',''):
+        if lock and not self.cross_database():
             role=await db.fetchval('SELECT role FROM users WHERE id=$1 FOR SHARE',s['user_id'])
             if role!=s['actor_role'] or role not in ('operator','admin'):raise HTTPException(403,'permission_changed')
         return {**dict(s),'config':config,'grant_id':gid}
@@ -127,6 +144,7 @@ class ScheduleService:
         return dict(target_version=digest(material),target_summary='本人定期任务 '+str(sid))
     async def admit(self,owner,key,cap,args,actor,jwt,kind='config'):
         await self.guard()
+        await self.current_owner(jwt,owner)
         message=('配置本人定期任务：' if kind=='config' else '只读规则历史预演：')+cap+' '+encode(args)
         async def admitted(c,rid):await c.execute('INSERT INTO assistant_schedule_requests(run_id,kind,capability,args) VALUES($1,$2,$3,$4::jsonb)',rid,kind,cap,encode(args))
         return await self.runs.accept(owner,key,message,None,None,run_profile(self.cfg),AuthVault(self.cfg.service_token).seal(owner,dict(jwt=jwt,actor=actor)),120,request_hash=digest(dict(kind=kind,capability=cap,args=args)),actor=actor,on_accept=admitted)
@@ -159,7 +177,7 @@ class ScheduleService:
                 if r.status_code!=200:raise HTTPException(403,'permission_changed')
                 actor=verify(r.json()['data']['context'],self.cfg.ma_actor_key,'ma-ops')
                 if actor['user_id']!=owner or actor['role']!=claimed['actor_role'] or actor['role'] not in ('operator','admin'):raise HTTPException(403,'permission_changed')
-                if not getattr(self.cfg,'v4_joint_profile',''):
+                if not self.cross_database():
                     role=await c.fetchval('SELECT role FROM users WHERE id=$1 FOR SHARE',owner)
                     if role!=actor['role']:raise HTTPException(403,'permission_changed')
                 at=datetime.now(timezone.utc);version=args['expected_version']+1;scope=digest(config);gid=uuid5(UUID(g['execution_ref']),'schedule-read-grant')
@@ -303,15 +321,19 @@ def routes(app):
     @app.get('/internal/agent/schedules')
     async def listing(user_id:int,request:Request,offset:int=0):
         jwt(request)
+        await svc().current_owner(jwt(request),user_id)
         if offset<0:raise HTTPException(400,'invalid_offset')
         rows=await svc().pool.fetch('SELECT id FROM assistant_schedules WHERE user_id=$1 ORDER BY created_at DESC LIMIT 50 OFFSET $2',user_id,offset)
         recent=await svc().pool.fetch('SELECT r.id AS run_id,r.turn_id,r.session_id,r.status,q.capability FROM assistant_schedule_requests q JOIN assistant_runs r ON r.id=q.run_id WHERE r.user_id=$1 ORDER BY r.created_at DESC LIMIT 30',user_id)
         return dict(list=[await svc().get(r['id'],user_id) for r in rows],offset=offset,runs=[dict(r) for r in recent])
     @app.get('/internal/agent/schedules/{sid}')
-    async def get(sid:UUID,user_id:int,request:Request):jwt(request);return await svc().get(sid,user_id)
+    async def get(sid:UUID,user_id:int,request:Request):
+        await svc().current_owner(jwt(request),user_id)
+        return await svc().get(sid,user_id)
     @app.get('/internal/agent/schedules/{sid}/history')
     async def history(sid:UUID,user_id:int,request:Request,offset:int=0):
         jwt(request);await svc().get(sid,user_id)
+        await svc().current_owner(jwt(request),user_id)
         if offset<0:raise HTTPException(400,'invalid_offset')
         rows=await svc().pool.fetch('SELECT t.*,r.status AS run_status,r.turn_id,r.session_id,r.final_answer,r.artifacts FROM assistant_schedule_slots t LEFT JOIN assistant_runs r ON r.id=t.run_id WHERE t.schedule_id=$1 ORDER BY scheduled_for DESC LIMIT 50 OFFSET $2',sid,offset)
         return dict(list=[{**dict(r),'artifacts':json.loads(r['artifacts']) if r['artifacts'] else []} for r in rows],offset=offset)
@@ -329,9 +351,13 @@ def routes(app):
         row=await svc().get(sid,user_id)
         return await svc().admit(user_id,key(request),'schedule.resume',dict(schedule_id=str(sid),expected_version=body.expected_version,config=row['config']),actor(request,user_id),jwt(request))
     @app.post('/internal/agent/schedules/{sid}/pause')
-    async def pause(sid:UUID,body:Empty,user_id:int,request:Request):jwt(request);return await svc().reduce(sid,user_id)
+    async def pause(sid:UUID,body:Empty,user_id:int,request:Request):
+        await svc().current_owner(jwt(request),user_id)
+        return await svc().reduce(sid,user_id)
     @app.post('/internal/agent/schedules/{sid}/cancel')
-    async def cancel(sid:UUID,body:Empty,user_id:int,request:Request):jwt(request);return await svc().reduce(sid,user_id,True)
+    async def cancel(sid:UUID,body:Empty,user_id:int,request:Request):
+        await svc().current_owner(jwt(request),user_id)
+        return await svc().reduce(sid,user_id,True)
     @app.post('/internal/agent/rule-preview',status_code=202)
     async def preview(body:Preview,user_id:int,request:Request):return await svc().admit(user_id,key(request),'rule.preview',body.model_dump(),actor(request,user_id),jwt(request),'preview')
     @app.post('/internal/ma-schedule/v1/snapshot')
@@ -349,7 +375,8 @@ def routes(app):
         from .schedule_token import verify_action
         raw=await request.json()
         if not isinstance(raw,dict) or set(raw)!={'grant'}:raise HTTPException(400,'invalid_grant')
-        try:g=verify_action(raw['grant'],app.state.config.ma_actor_key)
+        from .production_profile import selected,SCHEDULE_POLICY
+        try:g=verify_action(raw['grant'],app.state.config.ma_actor_key,expected_policy=SCHEDULE_POLICY if selected() else POLICY)
         except ValueError:raise HTTPException(403,'invalid_grant') from None
         return await svc().apply({**g,'_token':raw['grant']},jwt(request))
     @app.get('/internal/ma-schedule/v1/receipts/{ref}')

@@ -239,7 +239,33 @@ python3 watch-fleet-soak.py --duration 7200 --interval 60 --output-dir /path/to/
 
 仅在已有本机服务和私有口令文件的服务器执行；输出目录必须不存在。输出 `samples.jsonl` / `summary.json`，核对固定 143/140/3、`partial`、错误和延迟，中断不判通过。离线测试：`python -m unittest discover -s stages/04-frontend/deploy -p test_watch_fleet_soak.py`（仓库根执行）。本次容量控制器与私有 Compose 只存于忽略的 `artifacts/fleet-capacity-20261021-r1/`，不能拿生产 Compose 或旧 `m4-load-setup.sql` 直接写生产；实际进度与边界见[容量与长时间测试记录](../../../notes/01-项目调研规划与开发建设记录/第三版-设备扩容/03-容量与稳定性验证/08-容量与长时间测试记录.md)。
 
-先独立构建并审查新镜像。**构建上下文必须取自仓库 `HEAD`**：服务器上的阶段目录可能停在旧版本，就地构建会静默丢掉新文件（2026-10-25 前端因此丢过整个第四版界面，见部署日志 45）。做法是 `git archive HEAD stages/04-frontend` 同步过去再 `docker build`，或改在受控工作区构建后导入。
+先独立构建并审查新镜像。API、gateway、frontend、agent-rag、ops-agent、security-agent 使用下面的完整源码快照流程；服务器 `/opt/powersystem/stages/` 保留历史资料及运行引用，**不能用作构建上下文**。旧目录的五个主 Dockerfile 在服务器上是拒绝直接构建的提示文件；仓库中的 Dockerfile 不变。gateway 与 API 共用 02 的 Dockerfile，工具为 gateway 固定传入 `APP=gateway`，不改变现行网关构建方式。
+
+#### 完整源码快照与构建回执
+
+先在有 Git 仓库的受控工作区确定并审查完整的 40 位提交，再导出五阶段快照。不得把旧服务器目录当底树只补几个改动文件：
+
+```sh
+python stages/04-frontend/deploy/source-build.py export \
+  --repo . --revision <已核验的40位提交> --store artifacts/<本次批次>/source-builds
+```
+
+导出同时检查这五阶段的工作区。存在未提交改动时默认拒绝，避免默默忽略本次修改；逐文件复核后，用重复 `--overlay stages/.../文件` 明确纳入新增或修改文件，用 `--delete stages/.../文件` 明确纳入删除。改名先拆为删除与新增；未列明的改动仍拒绝。无须为了构建而暂存、提交或推送。文本增量规范为 LF，私有配置、密钥和生成目录不允许混入。
+
+输出 `source`、`sha256`、`revision` 和文件数。快照在 `source-builds/contexts/<sha256>/`，包含 `source-manifest.json` 与五阶段完整文件。按上传规范核查路径与占用后，将该目录按原摘要放到业务机 `/opt/powersystem/runtime/source-builds/contexts/<sha256>/`，先验证，再构建：
+
+```sh
+python3 /opt/powersystem/stages/04-frontend/deploy/source-build.py verify \
+  --source /opt/powersystem/runtime/source-builds/contexts/<sha256>
+python3 /opt/powersystem/stages/04-frontend/deploy/source-build.py build \
+  --source /opt/powersystem/runtime/source-builds/contexts/<sha256> \
+  --store /opt/powersystem/runtime/source-builds \
+  --service api --tag powersystem-api:<本次独立版本>
+```
+
+`build` 逐文件校验，并把同一批已验字节通过 tar stdin 交给 Docker，不从旧目录读取，不部署或启动服务。09 的上下文是五阶段快照根，包含 08/09/10 交叉契约；其他四服务使用各自阶段子目录。只支持明确版本标签，已有标签不覆盖。工具核实际 image ID、源码摘要/版本/服务标签后，保存 `source-builds/receipts/<镜像摘要>.json`。也可在本机独立构建后流式导入镜像，但必须同时传入完整快照及对应回执，服务器重新核对实际镜像标签。
+
+`prepare` 对上述六服务中**实际换镜像**的项目强制验证回执、完整快照与实际 image ID 的绑定，失败报 `source_build_required`，在创建候选及备份前停止。冻结清单保存 `source_builds` 摘要；自行 `docker build` 而没有回执的镜像不能进入发布。已有运行镜像和既有已验历史版本不要求补造回执，原 `rollback` 仍按原冻结编排及门禁执行。源码快照与回执须随仍引用它们的候选、历史镜像保留。
 
 前端候选还有一层产物门禁：`prepare` 会比对候选镜像与当前运行镜像的逻辑分块名（剥掉构建哈希），候选缺少任何一个即以 `frontend_assets_missing:<名字>` 停止；确实要下线页面时显式加 `--allow-asset-shrink`。
 
@@ -275,6 +301,55 @@ python3 /opt/powersystem/stages/04-frontend/deploy/production-stack.py publish \
 ```
 
 全量档的候选是 V4 活跃时，这次全备会停复 RAG/Ops，运行状态因此不同于候选冻结快照。`publish` 读取同一个密文旁的 `<archive>.v4-maintenance.json`：只有当回执绑定同一父版本与冻结清单、`before` 等于候选 `before`、`after` 等于当前状态、且只有 RAG/Ops 的启动时间变化时，才把这段差异认作停写维护。两处基线（父版门禁、候选快照）都按同一份回执判定，其余漂移、换镜像、换容器 ID 或改重启次数一律拒绝；门禁照旧全跑，冻结清单不改。
+
+### 一次性备份延后授权（2026-10-26，两阶段及一次修正重发；不是默认）
+
+> **仅本次例外**：项目所有者 2026-10-26（UTC）明确要求“激进一点，连做大阶段后验证，本次不要全量备份，效果先呈现，等他确认可以结束后再备份”。该指令覆盖本页“先备份再发布”的常规顺序，只对本节两个候选有效；不得据此推导通用 `--skip-backup`/`--force`，也不改变其他任何发布、回退、门禁或后续批次的默认要求。效果确认后仍须补做全量加密备份，本批在此之前没有新恢复点。
+
+范围写死在控制器常量里，无法用参数扩大：
+
+- 候选 ID 只能是 `v4-production-compat-20261026-r1` 或 `v4-business-schedule-20261026-r1`，且只能 `--tier full`；
+- 变更服务必须恰为 `api`、`agent-rag`、`ops-agent`、`security-agent` 四项；
+- 授权文件必须位于 `/opt/powersystem/runtime/` 下（受 `owned` 约束），由所有者签署后随候选冻结。
+
+授权 JSON 字段（缺一即拒，全部为显式值，不做推断）：
+
+```json
+{
+  "schema": 1,
+  "kind": "backup_deferral_authorization",
+  "candidate": "v4-business-schedule-20261026-r1",
+  "parent": "<prepare 时的 active 版本名，必须精确相等>",
+  "services": ["api", "agent-rag", "ops-agent", "security-agent"],
+  "owner_requested_defer_until_effects_accepted": true,
+  "owner_instruction": "激进一点，连做大阶段后验证，本次不要全量备份，效果先呈现，等他确认可以结束后再备份",
+  "recorded_at": "2026-10-26T06:20:00Z"
+}
+```
+
+`prepare` 加 `--defer-backup-authorization`，在任何 Docker 操作前先校验（失败报 `backup_deferral_*`，不建候选目录，可用同一 ID 重跑）：
+
+```bash
+python3 /opt/powersystem/stages/04-frontend/deploy/production-stack.py prepare \
+  --id v4-business-schedule-20261026-r1 \
+  --service api --service agent-rag --service ops-agent --service security-agent \
+  --image api=reviewed-api:v4-business-schedule-20261026-r1 \
+  --defer-backup-authorization /opt/powersystem/runtime/<本批>/private/backup-deferral-authorization.json
+```
+
+冻结时把授权文件**逐字节**复制为候选目录内 `backup-deferral.json`，加入 manifest `files` 摘要表，并在 `backup_deferral` 中记录同一摘要、候选、父版本、`recorded_at` 与指令摘要。指针绑定 `digest(manifest)`，因此授权内容和绑定在 freeze 之后无法改写：改文件触发 `frozen_artifact_changed`，改绑定触发 `frozen_backup_deferral_unbound`，用未冻结的源文件顶替触发 `backup_deferral_frozen_file_changed`。源授权文件此后可另行归档。
+
+存在合法冻结授权时，`publish` 可省略 `--backup`：
+
+```bash
+python3 /opt/powersystem/stages/04-frontend/deploy/production-stack.py publish \
+  --id v4-business-schedule-20261026-r1
+```
+
+此时事务记录 `backup_deferred`（含授权摘要、`recorded_at`、原始指令、`effects_accepted: false`），计时旁车写 `notes.backup_deferred`，**不写** `predeployment_backup`，也不伪造任何备份通过。因为本批没有停复写者，两处基线判定反而更严：运行状态必须精确等于候选冻结快照，否则以 `candidate_baseline_drift` 停止。因此 prepare 与 publish 之间不要跑全量备份（包括 `powersystem-backup.timer` 的定时全备），否则需改用正常 `--backup` 路径重新发布。
+
+其余全部不变：部署锁、父版本/来源回执、排空（含 `assistant_runs`）、服务集与镜像身份、健康、双 HTTPS/WSS 门禁、失败自动回退与 pending 处理一律照旧。传了 `--backup` 仍走原有核验，等于所有者随时可以取消延后；没有冻结授权的候选（含全部历史清单）不传 `--backup` 报 `predeployment_backup_required`，旧行为不变。
+
 
 ### 分级发布：仅前端镜像快路径（2026-10-22 已启用）
 
@@ -362,3 +437,34 @@ python3 /opt/powersystem/stages/04-frontend/deploy/production-stack.py rollback 
 ### 本轮full备份显式并行选项
 
 在主副目标均已核实、未与部署事务并发时，可仅对当次规范backup.sh显式设置POWERSYSTEM_BACKUP_PARALLEL_UPLOADS=1和POWERSYSTEM_BACKUP_GZIP_THREADS=4。前者用同一密文同时传既有两端，必须都成功；后者要求已有pigz，输出仍是标准gzip。未设置时保留原顺序上传与单线程gzip。两端各记时，timing总时长按最大offset结束值，不把重叠耗时相加。中断仅清理本次进程组；异常30秒不退则失败并保留.upload-recovery-required.json与私有快照，核归属后恢复，不冒充成功双副本。每批仍按本页统一控制器/full顺序及独立端上实长/摘要核对，不扩出站。
+
+
+## 独立VM生产主机与迁机验收
+
+运行位置、VMID与DHCP实址只见[唯一状态](../../../notes/00-当前系统状态.md)；本批迁机事实见[[notes/04-系统部署发布备份与变更记录/部署与运维日志/01-部署基线与仓库发行/47-PVE宿主项目迁入独立虚拟机]]。源7070管理SSH继续到PVE宿主机，不能当新VM应用部署入口；新VM通过PVE/QGA或已登记内网角色管理。
+
+`host-profile.py`在`/etc/powersystem/host-profiles.json`逐机绑定hostname、原始machine-id摘要、DMI UUID及virtualization，分别登记release/backup/restore/registry/observe/migration能力；不全局取消主机校验。源机停服栅栏和restart=no保留，目标新数据出现后禁止直接启源旧副本。密文中的主机登记仅作恢复证据，不自动启用。
+
+初次冷迁只走受限`production-stack.py`阶段：`migration-stage --id <独立批次> --receipt <受保护实核收据>` → `migration-start --group data` → `migration-checkpoint --group data --evidence <实际检查>` → readonly组及其检查点 → 切两条项目web FRP并保留源SSH/其他代理 → background组 → `migration-accept`原完整门禁。每条命令均指定同一`--id`；收据须真实覆盖源停服/栅栏、双备份、13卷摘要、20固定镜像与所有权/角色文件，不能用离线PASS填充。
+
+迁机基线无同机父版。最终全备维护重验只接受绑定该同一新VM基线的精确回执；它不豁免全服务重启。今后通过PVE页面迁移整台VM，虚拟盘随迁；关机迁移/重启仍须另建计划维护与完整重验，不能复用本次冷迁收据或把全体StartedAt变化冒充V4备份停复。目标资源、CPU及本地磁盘传输条件须当次检查，不承诺零中断。
+
+备份保留实际RAG双环境引用、角色新key目录、原Executor布局、独立知识alias及真实产物。MA密文增加`host-runtime`控制工具/采集器/专属web FRP/显式角色引用和云端精确路由材料；所有内容仅归档校验、禁止自动激活。适用恢复仍按上文现行隔离脚本，V4 worker不启、原批准/工具/模型步骤不重放；独立RAG恢复仅挂本地模型、向量快照与新恢复只读DB角色。
+
+### 原编排输入与冻结基线的一致性
+
+迁机基线的冻结文件与继承的多文件编排参数须分别核对。`prepare`会固定实际镜像并去掉build；仅查看原始`compose config`中的历史镜像字段，不能据此推断统一入口会晋升这些镜像。但原输入仍应固定已验镜像、移除生产build声明，并保持挂载列表与冻结版本的精确顺序，避免误用原模板重建和前端快路径被顺序差异阻断。
+
+修正只落在未冻结的运行模板：先逐件核原摘要，在本批受保护候选内解析并证明与已验冻结配置精确等值，再持部署锁留原件、安装和重验；不得修改已接受的manifest、host-identity、私有env或用放宽比较放行。前端发布成功后只将未冻结镜像覆盖模板中的frontend镜像同步为新active固定ID，复核完整解析精确等于新冻结配置。源宿主历史模板保留，不随目标VM整改覆盖。
+
+`frontend-release-backup.py`与全量备份共用已登记主机的backup能力校验，校验root、机器四元组、项目范围与源机栅栏；不再用旧宿主机名判断新VM资格。该修复不改小包格式、加密或恢复过程。执行记录见[VM配置对齐与前端快发布](../../../notes/04-系统部署发布备份与变更记录/部署与运维日志/05-发布工具链与文档治理/48-VM配置源对齐与前端审批弹窗快发布.md)。
+
+本轮feature-r1因新增身份/桥目录被umask收紧为0700启动失败，已完整自动回退compat。修正chmod0755并实际非root读取通过后，新增固定重发编号`v4-business-schedule-20261026-r2`，仍绑定同四服务及精确父版/原话授权；原失败候选不改写。此次兼容→能力两阶段及r2真实结果见唯一状态页与日志50，不能把延后备份变为后续发布默认。
+
+### 全备的发布构件与实际配置闭合
+
+`backup.sh`从当前active的冻结编排获取实际服务，避免原始单份Compose模板缺镜像或混入历史构建设置。两个SQLite队列通过`snapshot-production-queues.py`调用当前固定Ops镜像的一次性辅助器，用SQLite backup API采集；辅助器无网络、源卷只读、退出即删除，不要求生产编排包含`backup-helper`。
+
+全备的`release-assets/`保存当前frontend固定镜像tar、五应用完整源码快照/构建回执与固定镜像映射；`verify-release-backup-assets.py`只验证来源、镜像内容及摘要，不激活生产指针。它不声称所有基础设施镜像和未列卷都已归档。MA的`actual_release_configuration`从四个实际服务的只读`/run/`挂载逐文件归档，含S06动作key；源限于runtime。两项既有`/etc/powersystem` API secrets只按精确source/target映射并核实与已有config归档摘要一致，不扩为任意文件读取。恢复逐份核哈，不挂生产凭据、不运行V4动作/调度worker。
+
+任何采集阶段失败，复服后也保留真实失败计时和维护草稿，不能用草稿替代成功备份。若旧失败在保留草稿前退出，受限失败复服连续性检查仅在明确证据路径、原候选基线等于已验父版、无密文/无上传、仅RAG/Ops同ID/镜像/重启数变化时，允许下一次真实全备记录连续维护链；它不签发验收。仍须新的成功双端全备和原完整发布门禁，禁止把此机制当成通用漂移豁免。

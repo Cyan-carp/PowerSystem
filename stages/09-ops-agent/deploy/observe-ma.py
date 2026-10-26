@@ -32,7 +32,8 @@ def http(url):
     except urllib.error.HTTPError as e:return e.code
     except OSError:return 0
 def main(a):
-    if os.uname().nodename!='R730XD' or a.seconds<1800:raise ValueError('specified_host_and_full_window_required')
+    subprocess.run([__import__('sys').executable,'/opt/powersystem/stages/04-frontend/deploy/host-profile.py','observe'],check=True,stdout=subprocess.DEVNULL)
+    if a.seconds<1800:raise ValueError('specified_host_and_full_window_required')
     r=a.release.resolve();output=r/'observation-final.json'
     if not r.is_relative_to(Path('/opt/powersystem/runtime')) or output.exists():raise ValueError('new_observation_required')
     fd=os.open(r/'observation.lock',os.O_CREAT|os.O_EXCL|os.O_WRONLY,0o600);os.close(fd)

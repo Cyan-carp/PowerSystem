@@ -109,6 +109,12 @@ class Config:
         return cfg
 
     def validate(self):
+        from .production_profile import selected as production_selected, validate as validate_production
+        if os.getenv('V4_PRODUCTION_PROFILE', ''):
+            if not production_selected():raise ValueError('unknown_v4_production_profile')
+            validate_production(self)
+        elif self.runtime_profile == 'm4-server-readonly' and any((self.v4_actions_enabled,self.v4_ops_enabled,self.v4_schedules_enabled,self.v4_joint_profile)):
+            raise ValueError('explicit_v4_production_profile_required')
         if self.v4_joint_profile:
             from v4_joint import validate as validate_joint
             validate_joint(self,'ops')

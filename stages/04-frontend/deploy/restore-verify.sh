@@ -27,6 +27,11 @@ mkdir -m 700 "$restore_root"
 gpg --batch --yes --pinentry-mode loopback --passphrase-file "$passphrase_file" --decrypt --output "$restore_root/archive.tar.gz" "$archive"
 tar -C "$restore_root" -xzf "$restore_root/archive.tar.gz"
 (cd "$restore_root/$run_id" && sha256sum -c SHA256SUMS)
+
+if [ -f "$restore_root/$run_id/release-assets/manifest.json" ]; then
+  python3 "$project_dir/stages/04-frontend/deploy/verify-release-backup-assets.py" \
+    --source "$restore_root/$run_id/release-assets"
+fi
 test -s "$restore_root/$run_id/config/.env"
 test -s "$restore_root/$run_id/config/feishu-webhook-url"
 test -s "$restore_root/$run_id/config/feishu-sign-secret"

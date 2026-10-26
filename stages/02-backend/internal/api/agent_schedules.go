@@ -18,11 +18,32 @@ import (
 	"powersystem/backend/internal/model"
 )
 
-// S08 deliberately has no production profile. This bridge grants no JWT and
-// can only call the two registered read handlers with DB-derived filters.
+// The original S08 local profile remains isolated. The explicit production
+// branch below attests grants through RAG and never grants a browser JWT.
 func (s *Server) s08Local() bool {
 	db, err := url.Parse(s.cfg.PostgresDSN)
 	return err == nil && (db.Scheme == "postgres" || db.Scheme == "postgresql") && db.Hostname() == "127.0.0.1" && db.Port() == "25438" && strings.HasPrefix(db.Path, "/v4_s08_") && strings.HasSuffix(db.Path, "_test") && os.Getenv("V4_S08_LOCAL_ENABLED") == "true" && s.cfg.AgentChatURL == "http://127.0.0.1:28981" && s.cfg.OpsURL == "http://127.0.0.1:28983"
+}
+
+// scheduleReadDomain selects exactly one bridge domain. An explicit production
+// profile never falls through to the S06/S08/S09 local guards.
+func (s *Server) scheduleReadDomain() string {
+	if os.Getenv("V4_PRODUCTION_PROFILE") != "" {
+		if s.v4Production() {
+			return "production"
+		}
+		return ""
+	}
+	if os.Getenv("V4_JOINT_PROFILE") != "" {
+		if s.s09Local() {
+			return "joint"
+		}
+		return ""
+	}
+	if s.s08Local() {
+		return "local"
+	}
+	return ""
 }
 
 func (s *Server) agentSchedulesProxy(c *gin.Context) {
@@ -106,8 +127,8 @@ type s08Grant struct {
 }
 
 func (s *Server) scheduleRead(c *gin.Context) {
-	joint := os.Getenv("V4_JOINT_PROFILE") != ""
-	if (joint && !s.s09Local()) || (!joint && !s.s08Local()) || len(s.cfg.AgentToken) < 32 || !hmac.Equal([]byte(c.GetHeader("X-PowerSystem-Token")), []byte(s.cfg.AgentToken)) {
+	domain := s.scheduleReadDomain()
+	if domain == "" || len(s.cfg.AgentToken) < 32 || !hmac.Equal([]byte(c.GetHeader("X-PowerSystem-Token")), []byte(s.cfg.AgentToken)) {
 		fail(c, 403, 40301, "isolated schedule bridge required")
 		return
 	}
@@ -117,7 +138,7 @@ func (s *Server) scheduleRead(c *gin.Context) {
 		return
 	}
 	var g s08Grant
-	if joint {
+	if domain == "production" || domain == "joint" {
 		var err error
 		g, err = s.scheduleAttestation(c.Request.Context(), sid, gid, c.Query("kind"), c.Query("scheduled_for"))
 		if err != nil {
@@ -164,7 +185,7 @@ func (s *Server) scheduleRead(c *gin.Context) {
 		return
 	}
 	var count int64
-	if !joint && (s.db.Raw("SELECT count(*) FROM assistant_schedule_slots WHERE schedule_id=? AND grant_id=? AND scheduled_for=? AND run_id IS NOT NULL", sid, gid, slot).Scan(&count).Error != nil || count != 1) {
+	if domain == "local" && (s.db.Raw("SELECT count(*) FROM assistant_schedule_slots WHERE schedule_id=? AND grant_id=? AND scheduled_for=? AND run_id IS NOT NULL", sid, gid, slot).Scan(&count).Error != nil || count != 1) {
 		fail(c, 403, 40301, "unclaimed slot")
 		return
 	}
@@ -200,7 +221,9 @@ func (s *Server) scheduleRead(c *gin.Context) {
 		return
 	}
 	// No caller-supplied range, endpoint, owner, command, or destination survives.
-	if !joint {
+	// Only the same-database S08 test host writes its local schedule audit; the
+	// production bridge attests and audits inside the RAG database instead.
+	if domain == "local" {
 		if err := s.db.Exec("INSERT INTO assistant_schedule_events(schedule_id,user_id,kind,detail) VALUES(?,?,'backend_read',?::jsonb)", sid, g.UserID, `{"capability":"`+kind+`"}`).Error; err != nil {
 			fail(c, 503, 50301, "schedule audit unavailable")
 			return

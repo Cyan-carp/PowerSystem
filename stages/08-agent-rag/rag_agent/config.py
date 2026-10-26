@@ -125,6 +125,9 @@ class Config:
         if schedules_enabled not in ('true','false'):raise ValueError('invalid_v4_schedules_switch')
         cfg.v4_schedules_enabled=schedules_enabled=='true'
         cfg.v4_joint_profile=os.getenv('V4_JOINT_PROFILE','')
+        from .production_profile import selected as production_selected
+        production=production_selected()
+        if os.getenv('V4_PRODUCTION_PROFILE','') and not production:raise ValueError('unknown_v4_production_profile')
         cfg.schedule_bridge_token=secret('SCHEDULE_BRIDGE_TOKEN_FILE')
         cfg.v4_read_protocol=os.getenv('V4_READ_DELEGATION_PROTOCOL','ma-run/v1')
         cfg.source_collection_prefix=os.getenv('RAG_SOURCE_COLLECTION_PREFIX') or None
@@ -138,11 +141,11 @@ class Config:
             from .joint_profile import validate
             validate(cfg,'rag')
             if len(cfg.schedule_bridge_token)<32 or cfg.schedule_bridge_token==cfg.service_token:raise ValueError('independent_schedule_bridge_identity_required')
-        if not cfg.v4_joint_profile and cfg.v4_schedules_enabled and (cfg.v4_actions_enabled or cfg.v4_ops_enabled or urlsplit(cfg.database_url).hostname!='127.0.0.1' or urlsplit(cfg.database_url).port!=25438 or not urlsplit(cfg.database_url).path.startswith('/v4_s08_') or not urlsplit(cfg.database_url).path.endswith('_test') or cfg.ops_url!='http://127.0.0.1:28983' or cfg.backend_url!='http://127.0.0.1:28982'):
+        if not production and not cfg.v4_joint_profile and cfg.v4_schedules_enabled and (cfg.v4_actions_enabled or cfg.v4_ops_enabled or urlsplit(cfg.database_url).hostname!='127.0.0.1' or urlsplit(cfg.database_url).port!=25438 or not urlsplit(cfg.database_url).path.startswith('/v4_s08_') or not urlsplit(cfg.database_url).path.endswith('_test') or cfg.ops_url!='http://127.0.0.1:28983' or cfg.backend_url!='http://127.0.0.1:28982'):
             raise ValueError('isolated_s08_policy_required')
         if not cfg.v4_joint_profile and cfg.v4_ops_enabled and (cfg.v4_actions_enabled or urlsplit(cfg.database_url).hostname!='127.0.0.1' or urlsplit(cfg.database_url).port!=25437 or not urlsplit(cfg.database_url).path.startswith('/v4_s07_') or not urlsplit(cfg.database_url).path.endswith('_test') or cfg.ops_url!='http://127.0.0.1:28973'):
             raise ValueError('isolated_s07_policy_required')
-        if not cfg.v4_joint_profile and cfg.v4_actions_enabled and (urlsplit(cfg.database_url).hostname!='127.0.0.1' or urlsplit(cfg.database_url).port!=25436 or not urlsplit(cfg.database_url).path.startswith('/v4_s06_') or not urlsplit(cfg.database_url).path.endswith('_test') or cfg.ops_url!='http://127.0.0.1:28963'):
+        if not production and not cfg.v4_joint_profile and cfg.v4_actions_enabled and (urlsplit(cfg.database_url).hostname!='127.0.0.1' or urlsplit(cfg.database_url).port!=25436 or not urlsplit(cfg.database_url).path.startswith('/v4_s06_') or not urlsplit(cfg.database_url).path.endswith('_test') or cfg.ops_url!='http://127.0.0.1:28963'):
             raise ValueError('isolated_s06_actions_required')
         legacy_drill = cfg.database_url.endswith('/ma_m3_rag_test') and cfg.backend_url == 'http://127.0.0.1:18103'
         sec_drill = cfg.database_url.endswith('/sec_m2_rag_acceptance_test') and cfg.backend_url == 'http://127.0.0.1:18104'
@@ -174,6 +177,9 @@ class Config:
         if artifacts_enabled not in ('true','false','1','0'): raise ValueError('invalid v4 configuration: v4_artifacts_enabled')
         cfg.v4_artifacts_enabled = artifacts_enabled in ('true','1')
         cfg.artifact_dir = Path(os.getenv('RAG_ARTIFACT_DIR', 'artifacts/stage8-agent-rag/files'))
+        if production:
+            from .production_profile import validate as validate_production
+            validate_production(cfg)
         return cfg
 
     def redact(self, text, extra=()):

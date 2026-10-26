@@ -57,6 +57,58 @@ class V4ProductionBoundaryTests(unittest.TestCase):
                 ps.validate_v4_readonly({'agent-rag': {'environment': {**env, 'V4_READ_DELEGATION_PROTOCOL': value}}})
 
 
+class ExplicitProductionProfileTests(unittest.TestCase):
+    def fixture(self, base):
+        root=Path(base);identity=root/'runtime/batch/private/production';identity.mkdir(parents=True)
+        raw=b'synthetic-owned-machine\n';machine=ps.hashlib.sha256(raw).hexdigest()
+        host={'hostname':'powersystem-prod','machine_id_sha256':machine,'dmi_uuid':'synthetic-dmi'}
+        ps.write(identity/'identity.json',{'profile':'v4-business-schedule/v1',
+            'host':{**host,'vm_id':117},
+            'databases':{'business':'powersystem','rag':'powersystem_agent_rag','ops':'ma_ops'},
+            'origins':{'api':'http://api:8080','rag':'http://agent-rag:8093','ops':'http://ops-agent:8094','security':'http://security-agent:8100'},
+            'capabilities':{'actions':True,'schedules':True,'ops_write':False},
+            'policies':{'business':'v4-s06-production/v1','schedule':'v4-s08-production/v1'}})
+        (identity/'machine-id').write_bytes(raw);(identity/'product-uuid').write_text('synthetic-dmi')
+        common={'V4_PRODUCTION_PROFILE':'v4-business-schedule/v1'}
+        action={**common,'V4_ACTIONS_ENABLED':'true','V4_SCHEDULES_ENABLED':'true','V4_OPS_WRITE_ENABLED':'false'}
+        services={n:{'environment':copy.deepcopy(e),'volumes':[{'type':'bind','source':str(identity),'target':'/run/v4-production','read_only':True}]} for n,e in
+                  {'api':action,'ops-agent':action,'security-agent':common,
+                   'agent-rag':{**action,'V4_ASSISTANT_ENABLED':'true','V4_RUNS_ENABLED':'true','V4_ARTIFACTS_ENABLED':'true','V4_READ_DELEGATION_PROTOCOL':'ma-run/v1'}}.items()}
+        services['ops-agent']['environment'].update(OPS_RUNTIME_PROFILE='m4-server-readonly',OPS_WRITE_ENABLED='false',OPS_INFRA_ENABLED='true',OPS_SECURITY_ENABLED='true',OPS_INSPECTION_ENABLED='true')
+        services['security-agent']['environment'].update(SEC_RUNTIME_PROFILE='m4-server-readonly',SEC_ACTION_LLM_URL='https://api.deepseek.com',SEC_ACTION_MODEL='deepseek-flash',SEC_ACTION_LLM_API_KEY_FILE='/run/action/key',SEC_LLM_API_KEY_FILE='/run/old/key')
+        services['agent-rag']['environment'].update(RAG_TOOL_TIMEOUT='45',SCHEDULE_BRIDGE_TOKEN_FILE='/run/bridge/key')
+        services['api']['environment']['SCHEDULE_BRIDGE_TOKEN_FILE']='/run/bridge/key'
+        return root,services,host,identity
+
+    def test_explicit_profile_retains_machine_and_legacy_domain_fences(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root,services,host,identity=self.fixture(directory)
+            with patch.object(ps,'ROOT',root),patch.object(ps,'registered_business_host',return_value=host):
+                ps.validate_v4_readonly(services)
+                mutations=[('ops-agent','V4_OPS_WRITE_ENABLED','true'),('agent-rag','V4_READ_DELEGATION_PROTOCOL','ma/v1-bound-read'),
+                           ('api','V4_JOINT_PROFILE','v4-s09-local'),('security-agent','SEC_ACTION_LLM_URL','https://other.example'),
+                           ('agent-rag','RAG_TOOL_TIMEOUT','15'),('ops-agent','OPS_RUNTIME_PROFILE','legacy')]
+                for service,key,value in mutations:
+                    changed=copy.deepcopy(services);changed[service]['environment'][key]=value
+                    with self.subTest(service=service,key=key),self.assertRaises(ps.Blocked):ps.validate_v4_readonly(changed)
+                (identity/'machine-id').write_bytes(b'another-machine')
+                with self.assertRaises(ps.Blocked):ps.validate_v4_readonly(services)
+
+    def test_partial_profile_and_writeable_identity_are_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root,services,host,_=self.fixture(directory)
+            with patch.object(ps,'ROOT',root),patch.object(ps,'registered_business_host',return_value=host):
+                changed=copy.deepcopy(services);changed['api']['environment'].pop('V4_PRODUCTION_PROFILE')
+                with self.assertRaises(ps.Blocked):ps.validate_v4_readonly(changed)
+                changed=copy.deepcopy(services);changed['ops-agent']['volumes'][0]['read_only']=False
+                with self.assertRaises(ps.Blocked):ps.validate_v4_readonly(changed)
+
+    def test_assistant_runs_are_drained_before_protocol_transition(self):
+        with patch.object(ps,'command',side_effect=[b'0',b't',b'1']):
+            with self.assertRaisesRegex(ps.Blocked,'inflight_assistant_runs_block_release'):ps.drain()
+        with patch.object(ps,'command',side_effect=[b'0',b't',b'0']):ps.drain()
+
+
 class BackupMaintenanceTests(unittest.TestCase):
     def fixture(self, directory):
         base=Path(directory);release=base/'releases/r0';release.mkdir(parents=True)
@@ -256,6 +308,180 @@ class FrontendAssetTests(unittest.TestCase):
         with patch.object(ps, 'frontend_chunk_names',
                           side_effect=[{'index'}, {'index', 'AgentSchedulesView'}]):
             self.assertEqual(ps.missing_chunks('candidate', 'baseline'), [])
+
+
+class BackupDeferralTests(unittest.TestCase):
+    """Two named candidates may publish once without a fresh full backup, but only
+    through the owner authorization frozen into the candidate itself."""
+
+    candidate = 'v4-business-schedule-20261026-r1'
+    parent = 'ui-approval-20261026-r1'
+
+    def authorization(self, **change):
+        value = {'schema': 1, 'kind': 'backup_deferral_authorization',
+                 'candidate': self.candidate, 'parent': self.parent,
+                 'services': list(ps.DEFERRAL_SERVICES),
+                 'owner_requested_defer_until_effects_accepted': True,
+                 'owner_instruction': '激进一点，连做大阶段后验证，本次不要全量备份，效果先呈现',
+                 'recorded_at': '2026-10-26T00:00:00Z'}
+        value.update(change)
+        return value
+
+    def fixture(self, directory, **change):
+        base = Path(directory)
+        previous = base / 'releases' / self.parent
+        candidate = base / 'releases' / self.candidate
+        previous.mkdir(parents=True)
+        candidate.mkdir(parents=True)
+        names = ('api', 'agent-rag', 'ops-agent', 'security-agent')
+        frozen = {n: {'id': n + '-id', 'image': 'sha256:' + ('a' * 64),
+                      'started_at': 'frozen', 'restarts': 0} for n in names}
+        rows = {n: {'Id': s['id'], 'Image': s['image'], 'RestartCount': 0,
+                    'State': {'StartedAt': s['started_at'], 'Running': True,
+                              'Health': {'Status': 'healthy'}}}
+                for n, s in frozen.items()}
+        ps.write(base / 'active.json', {'release': self.parent, 'gate_file': 'old.json',
+                                        'manifest_sha256': 'parent-digest',
+                                        'updated_at': '2026-10-26T00:00:00+00:00'})
+        ps.write(previous / 'old.json', {'passed': True, 'states': frozen})
+        ps.write(previous / 'acceptance-pointer.json', {'release': self.parent})
+        ps.write(candidate / 'private/compose.json', {'name': ps.PROJECT})
+        doc = self.authorization(**change)
+        source = base / 'owner-authorization.json'
+        ps.write(source, doc)
+        block = ps.bind_backup_deferral(candidate, self.candidate, self.parent, source, doc)
+        m = {'manifest_version': 1, 'release': self.candidate, 'parent': self.parent,
+             'created_at': '2026-10-26T00:00:00+00:00', 'backup_tier': ps.FULL_TIER,
+             'services': list(ps.DEFERRAL_SERVICES),
+             'files': {ps.DEFERRAL_FILE: block['sha256']}, 'images': {},
+             'private_references': {},
+             'origin_environment': str(base / 'env'), 'before': frozen,
+             'backup_deferral': block}
+        return base, previous, candidate, frozen, rows, m
+
+    def publish(self, base, previous, candidate, rows, m, backup=None):
+        captured = {}
+
+        def activate(path, gate_name, baseline=None):
+            captured['activation'] = (path, gate_name, baseline)
+            captured['pending'] = ps.read(base / 'pending.json')
+
+        with patch.multiple(ps, ROOT=base, STATE_DIR=base, BACKUP_DIR=base,
+                            active=lambda: (previous, {'parent': None}),
+                            immutable=lambda path: m, inspect=lambda: rows,
+                            drain=lambda: None, deploy=lambda *args: None,
+                            gate=lambda *args: 'accepted.json',
+                            preflight=lambda *args: None, healthy=lambda *args: None,
+                            set_active=activate):
+            ps.publish(SimpleNamespace(id=self.candidate, backup=backup))
+        return captured
+
+    def test_frozen_authorization_allows_one_publish_without_a_backup(self):
+        with tempfile.TemporaryDirectory() as directory:
+            base, previous, candidate, frozen, rows, m = self.fixture(directory)
+            # The bind result alone must carry the owner's boolean; nothing is patched in.
+            self.assertIs(m['backup_deferral']['owner_requested_defer_until_effects_accepted'],
+                          True)
+            captured = self.publish(base, previous, candidate, rows, m)
+            self.assertFalse((base / 'pending.json').exists())
+            self.assertEqual(captured['activation'][2], None)
+            pending = captured['pending']
+            self.assertNotIn('predeployment_backup', pending)
+            self.assertNotIn('backup_sha256', pending)
+            self.assertEqual(pending['backup_deferred']['effects_accepted'], False)
+            self.assertEqual(pending['backup_deferred']['authorization_sha256'],
+                             ps.sha(candidate / ps.DEFERRAL_FILE))
+            self.assertIn('不要全量备份', pending['backup_deferred']['owner_instruction'])
+            self.assertEqual(ps.sha(candidate / ps.DEFERRAL_FILE),
+                             ps.sha(base / 'owner-authorization.json'))
+
+    def test_no_authorization_keeps_the_backup_requirement(self):
+        with tempfile.TemporaryDirectory() as directory:
+            base, previous, candidate, frozen, rows, m = self.fixture(directory)
+            without = {k: v for k, v in m.items() if k != 'backup_deferral'}
+            with self.assertRaisesRegex(ps.Blocked, 'predeployment_backup_required'):
+                self.publish(base, previous, candidate, rows, without)
+            self.assertFalse((base / 'pending.json').exists())
+
+    def test_a_regular_backup_argument_is_still_verified(self):
+        with tempfile.TemporaryDirectory() as directory:
+            base, previous, candidate, frozen, rows, m = self.fixture(directory)
+            wrong = base / 'not-a-production-archive.tar.gz.gpg'
+            wrong.write_bytes(b'x')
+            with self.assertRaisesRegex(ps.Blocked, 'owned_encrypted_backup_required'):
+                self.publish(base, previous, candidate, rows, m, str(wrong))
+            self.assertFalse((base / 'pending.json').exists())
+
+    def test_frozen_copy_and_manifest_binding_cannot_drift(self):
+        with tempfile.TemporaryDirectory() as directory:
+            base, previous, candidate, frozen, rows, m = self.fixture(directory)
+            with patch.object(ps, 'ROOT', base):
+                ps.write(candidate / 'manifest.json', m)
+                ps.immutable(candidate)
+                frozen_path = candidate / ps.DEFERRAL_FILE
+                original = frozen_path.read_bytes()
+                frozen_path.write_text(original.decode() + ' ')
+                with self.assertRaisesRegex(ps.Blocked, 'frozen_artifact_changed'):
+                    ps.immutable(candidate)
+                with self.assertRaisesRegex(ps.Blocked, 'backup_deferral_frozen_file_changed'):
+                    ps.frozen_backup_deferral(candidate, m, self.parent)
+                frozen_path.write_bytes(original)
+                ps.immutable(candidate)
+                unbound = copy.deepcopy(m)
+                unbound['backup_deferral']['sha256'] = 'other'
+                ps.write(candidate / 'manifest.json', unbound)
+                with self.assertRaisesRegex(ps.Blocked, 'frozen_backup_deferral_unbound'):
+                    ps.immutable(candidate)
+
+    def test_authorization_fields_are_explicit_and_candidate_bound(self):
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            cases = [
+                ('allowlist', 'another-release-20261026-r1',
+                 {'candidate': 'another-release-20261026-r1', 'parent': self.parent},
+                 ps.FULL_TIER, list(ps.DEFERRAL_SERVICES),
+                 'backup_deferral_not_authorized_for_candidate'),
+                ('candidate', self.candidate,
+                 {'candidate': 'v4-production-compat-20261026-r2'},
+                 ps.FULL_TIER, list(ps.DEFERRAL_SERVICES),
+                 'backup_deferral_candidate_or_parent_mismatch'),
+                ('parent', self.candidate, {'parent': 'other-parent-20261026-r1'},
+                 ps.FULL_TIER, list(ps.DEFERRAL_SERVICES),
+                 'backup_deferral_candidate_or_parent_mismatch'),
+                ('flag', self.candidate,
+                 {'owner_requested_defer_until_effects_accepted': 'true'},
+                 ps.FULL_TIER, list(ps.DEFERRAL_SERVICES),
+                 'backup_deferral_owner_request_required'),
+                ('scope', self.candidate,
+                 {'services': ['api', 'frontend', 'ops-agent', 'security-agent']},
+                 ps.FULL_TIER, list(ps.DEFERRAL_SERVICES), 'backup_deferral_scope_mismatch'),
+                ('instruction', self.candidate, {'owner_instruction': 'defer'},
+                 ps.FULL_TIER, list(ps.DEFERRAL_SERVICES),
+                 'backup_deferral_owner_instruction_required'),
+                ('timestamp', self.candidate, {'recorded_at': '2999-01-01T00:00:00Z'},
+                 ps.FULL_TIER, list(ps.DEFERRAL_SERVICES),
+                 'backup_deferral_timestamp_in_future'),
+                ('offset', self.candidate, {'recorded_at': '2026-10-26T08:00:00+08:00'},
+                 ps.FULL_TIER, list(ps.DEFERRAL_SERVICES),
+                 'backup_deferral_timestamp_invalid'),
+                ('fast-tier', self.candidate, {}, ps.FAST_TIER,
+                 list(ps.DEFERRAL_SERVICES), 'backup_deferral_not_authorized_for_candidate'),
+                ('release-scope', self.candidate, {}, ps.FULL_TIER,
+                 ['api', 'agent-rag', 'ops-agent', 'security-agent', 'frontend'],
+                 'backup_deferral_release_scope_mismatch'),
+            ]
+            with patch.object(ps, 'ROOT', base):
+                for name, candidate_id, change, tier, services, reason in cases:
+                    source = base / (name + '.json')
+                    ps.write(source, self.authorization(**change))
+                    with self.subTest(case=name), self.assertRaisesRegex(ps.Blocked, reason):
+                        ps.read_backup_deferral(source, candidate_id, self.parent,
+                                                tier, services)
+                source = base / 'compat.json'
+                ps.write(source, self.authorization(candidate='v4-production-compat-20261026-r1'))
+                ps.read_backup_deferral(source, 'v4-production-compat-20261026-r1',
+                                        self.parent, ps.FULL_TIER,
+                                        list(ps.DEFERRAL_SERVICES))
 
 
 if __name__ == '__main__':

@@ -22,8 +22,23 @@ def verify_rag_configuration(source,manifest):
         if hashlib.sha256(path.read_bytes()).hexdigest()!=item['sha256']:
             raise ValueError('restored_rag_private_hash_mismatch')
     return len(files)
+def verify_release_configuration(source,manifest):
+    configuration=manifest.get('actual_release_configuration')
+    if configuration is None:return 0
+    files=configuration.get('files',{})
+    if configuration.get('restore_execution_forbidden') is not True or not files:
+        raise ValueError('restored_release_configuration_invalid')
+    root=(source/'release-runtime').resolve()
+    for name,item in files.items():
+        path=source/name
+        if not path.resolve().is_relative_to(root) or not path.is_file() or path.is_symlink():
+            raise ValueError('restored_release_private_path_invalid')
+        if hashlib.sha256(path.read_bytes()).hexdigest()!=item['sha256']:
+            raise ValueError('restored_release_private_hash_mismatch')
+    return len(files)
+
 def main(a):
-    if os.uname().nodename!='R730XD':raise ValueError('specified_host_required')
+    run([__import__('sys').executable,str(Path('/opt/powersystem/stages/04-frontend/deploy/host-profile.py')),'restore'])
     source=a.source.resolve()
     if not source.is_relative_to(Path('/var/backups/powersystem')) or source.name!='ma':raise ValueError('private_restore_source_required')
     pg=json.loads(run(['docker','inspect',a.postgres_container]))[0]
@@ -32,6 +47,7 @@ def main(a):
     if time.time()-int(project.rsplit('-',1)[1])>900:raise ValueError('old_restore_project_blocked')
     manifest=json.loads((source/'manifest.json').read_text())
     rag_private_files=verify_rag_configuration(source,manifest)
+    release_private_files=verify_release_configuration(source,manifest)
     private=source.parent/'ma-restore-runtime';private.mkdir(mode=0o700,exist_ok=False);os.chown(private,10003,10003)
     db='ma_m4_restore_'+project.rsplit('-',1)[1]
     password=secrets.token_urlsafe(36)
@@ -86,6 +102,6 @@ print(json.dumps({'fixture_readable':report['status']=='queued','restore_post_bl
     checks.update(no_new_attempts=counts_after['ma_execution_attempts']==manifest['counts']['ma_execution_attempts'],no_tool_replay=counts_after['ma_tool_calls']==manifest['counts']['ma_tool_calls'],no_model_replay=counts_after['ma_security_reviews']==manifest['counts']['ma_security_reviews'],no_outbox_replay=counts_after['ma_outbox']==manifest['counts']['ma_outbox']+1,facts_equal=True,counts_equal=True,production_credentials=False)
     (private/'checks.json').write_text(json.dumps(checks,indent=2));(private/'checks.json').chmod(0o600)
     if not all(v for k,v in checks.items() if k not in ('can_decide','production_credentials')) or checks['can_decide']:raise ValueError('restore_safety_failed')
-    print(json.dumps({'ma_restore_passed':True,'checks':checks,'project':project,'rag_private_files_verified':rag_private_files}))
+    print(json.dumps({'ma_restore_passed':True,'checks':checks,'project':project,'rag_private_files_verified':rag_private_files,'release_private_files_verified':release_private_files}))
 if __name__=='__main__':
     p=argparse.ArgumentParser();p.add_argument('--source',type=Path,required=True);p.add_argument('--postgres-container',required=True);main(p.parse_args())

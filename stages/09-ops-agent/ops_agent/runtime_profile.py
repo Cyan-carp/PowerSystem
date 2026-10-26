@@ -11,12 +11,30 @@ PROFILES = {
     'm4-server-readonly': ('sec-m4-project-readonly/v6', ('production',)),
 }
 
+# Exact schema of the released v6 Config, verified against the production image.
+# New action authority switches belong to its separately bound domain. Retaining
+# this schema reproduces old v6 digests; it does not rewrite saved task contexts.
+V6_CONTEXT_FIELDS = (
+    'database_url', 'redis_url', 'service_token', 'actor_key', 'envelope_key',
+    'backend_url', 'supervisor_url', 'knowledge_token', 'llm_url', 'model', 'llm_key',
+    'enabled', 'write_enabled', 'infra_enabled', 'executor_url', 'executor_token',
+    'executor_grant_key', 'executor_write_key', 'approval_timeout_seconds',
+    'acceptance_drill_only', 'task_timeout', 'model_timeout', 'tool_timeout',
+    'max_rounds', 'max_calls', 'max_tokens', 'tool_chars', 'global_concurrency',
+    'user_active_limit', 'queue_capacity', 'lease_seconds', 'heartbeat_seconds',
+    'verify_max_pages', 'telemetry_max_age_seconds', 'future_skew_seconds',
+    'redis_prefix', 'audit_dir', 'runtime_profile', 'inspection_enabled',
+    'security_enabled', 'security_url', 'security_service_token',
+    'security_request_key', 'security_result_key',
+)
+
 def context(cfg):
     profile = getattr(cfg, 'runtime_profile', 'legacy')
     if profile == 'legacy': return None
     if profile not in PROFILES: raise ValueError('runtime_context_unavailable')
     # Persist only a digest. Credentials and private origins never enter the task DTO.
-    material={field.name:str(getattr(cfg,field.name)) if isinstance(getattr(cfg,field.name),Path) else getattr(cfg,field.name) for field in fields(cfg)}
+    names = V6_CONTEXT_FIELDS if profile == 'm4-server-readonly' else tuple(f.name for f in fields(cfg))
+    material={name:str(getattr(cfg,name)) if isinstance(getattr(cfg,name),Path) else getattr(cfg,name) for name in names}
     fingerprint=hashlib.sha256(json.dumps(material,sort_keys=True,separators=(',',':'),allow_nan=False).encode()).hexdigest()
     return {'profile': profile, 'policy_version': 'sec-m4-policy/v6' if profile=='m4-server-readonly' else M4_POLICY, 'scope_version': PROFILES[profile][0], 'configuration_hash':fingerprint}
 

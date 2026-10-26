@@ -143,7 +143,7 @@ class Store(ApprovalStore):
         return output
 
     async def listing(self, user, sid=None, status=None, offset=0, limit=20):
-        where = "envelope->>'protocol' IS DISTINCT FROM 'ma-action/v1' AND envelope->>'protocol' IS DISTINCT FROM 'ma-ops/v1' AND user_id=$1 AND ($2::uuid IS NULL OR session_id=$2) AND ($3::text IS NULL OR status=$3)"
+        where = "envelope->>'protocol' IS DISTINCT FROM 'ma-action/v1' AND envelope->>'protocol' IS DISTINCT FROM 'ma-ops/v1' AND envelope->>'protocol' IS DISTINCT FROM 'ma-schedule/v1' AND user_id=$1 AND ($2::uuid IS NULL OR session_id=$2) AND ($3::text IS NULL OR status=$3)"
         if self.task_tombstone: where += " AND deleted_at IS NULL"
         rows = await self.pool.fetch("SELECT task_id,status,session_id,parent_turn_id,created_at,finished_at,envelope->>'intent' AS intent FROM ma_tasks WHERE " + where + " ORDER BY created_at DESC,task_id DESC OFFSET $4 LIMIT $5", user, sid, status, offset, limit)
         return {"list": [{**dict(r),'intent':display_intent(r['intent'])} for r in rows], "offset": offset, "page_size": limit}
@@ -153,7 +153,7 @@ class Store(ApprovalStore):
             await c.execute("SELECT pg_advisory_xact_lock(90901)")
             running = await c.fetchval("SELECT count(*) FROM ma_tasks WHERE status=ANY($1::text[])", ["planning", "executing"])
             if running >= self.cfg.global_concurrency: return None
-            row = await c.fetchrow("UPDATE ma_tasks SET status='planning',execution_epoch=execution_epoch+1,worker_id=$2,lease_until=now()+$3*interval '1 second',updated_at=now() WHERE task_id=$1 AND envelope->>'protocol' IS DISTINCT FROM 'ma-action/v1' AND envelope->>'protocol' IS DISTINCT FROM 'ma-ops/v1' AND status='queued' AND NOT cancel_requested AND deadline>now() RETURNING *", tid, worker, self.cfg.lease_seconds)
+            row = await c.fetchrow("UPDATE ma_tasks SET status='planning',execution_epoch=execution_epoch+1,worker_id=$2,lease_until=now()+$3*interval '1 second',updated_at=now() WHERE task_id=$1 AND envelope->>'protocol' IS DISTINCT FROM 'ma-action/v1' AND envelope->>'protocol' IS DISTINCT FROM 'ma-ops/v1' AND envelope->>'protocol' IS DISTINCT FROM 'ma-schedule/v1' AND status='queued' AND NOT cancel_requested AND deadline>now() RETURNING *", tid, worker, self.cfg.lease_seconds)
             if row:
                 await c.execute("INSERT INTO ma_task_events(task_id,from_status,to_status,execution_epoch,reason) VALUES($1,'queued','planning',$2,'claimed')", tid, row["execution_epoch"])
                 return dict(row)
@@ -238,7 +238,7 @@ class Store(ApprovalStore):
     async def recover(self, startup=False, task_id=None):
         async with self.pool.acquire() as c, c.transaction():
             await c.execute("SELECT pg_advisory_xact_lock(90901)")
-            rows = await c.fetch("SELECT * FROM ma_tasks WHERE envelope->>'protocol' IS DISTINCT FROM 'ma-action/v1' AND envelope->>'protocol' IS DISTINCT FROM 'ma-ops/v1' AND status=ANY($1::text[]) AND ($2 OR deadline<=now() OR lease_until<=now()) AND ($3::uuid IS NULL OR task_id=$3) FOR UPDATE", list(ACTIVE), startup,task_id)
+            rows = await c.fetch("SELECT * FROM ma_tasks WHERE envelope->>'protocol' IS DISTINCT FROM 'ma-action/v1' AND envelope->>'protocol' IS DISTINCT FROM 'ma-ops/v1' AND envelope->>'protocol' IS DISTINCT FROM 'ma-schedule/v1' AND status=ANY($1::text[]) AND ($2 OR deadline<=now() OR lease_until<=now()) AND ($3::uuid IS NULL OR task_id=$3) FOR UPDATE", list(ACTIVE), startup,task_id)
             for r in rows:
                 a=await c.fetchrow('SELECT * FROM ma_approvals WHERE task_id=$1',r['task_id'])
                 if r['status']=='awaiting_approval':

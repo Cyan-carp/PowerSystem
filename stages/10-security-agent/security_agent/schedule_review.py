@@ -21,10 +21,12 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from review_contract import digest, sign_message, verify_message
+from .production_profile import model_access, schedule_domain
 from .provider import read_message
 
 PROFILE = 'v4-s08-local'
 POLICY = 'v4-s08-local/v1'
+PRODUCTION_POLICY = 'v4-s08-production/v1'
 ALLOWED = {
     'schedule.create': ('R1', 'internal'),
     'schedule.update': ('R1', 'internal'),
@@ -48,7 +50,7 @@ class ScheduleReview(BaseModel):
     destination: Literal['platform_client', 'local', 'registered_model', 'external']
     risk_class: Literal['R0', 'R1', 'R2']
     owner_id: int = Field(gt=0)
-    policy_version: Literal['v4-s08-local/v1']
+    policy_version: Literal['v4-s08-local/v1', 'v4-s08-production/v1']
     target_version: str = Field(pattern='^[a-f0-9]{64}$')
     argument_hash: str = Field(pattern='^[a-f0-9]{64}$')
     expires_at: int
@@ -64,8 +66,12 @@ def routes(app):
     @app.post('/internal/ma-schedule-review/v1/reviews')
     async def review(body: ScheduleReview, req: Request):
         cfg = app.state.cfg
-        if (cfg.runtime_profile not in (PROFILE, 'v4-s09-local')) or not cfg.enabled:
+        domain = schedule_domain(cfg)
+        if domain is None or not cfg.enabled:
             raise HTTPException(503, 's08_review_disabled')
+        mode, policy = domain
+        if body.policy_version != policy:
+            raise HTTPException(403, 'security_policy_profile_mismatch')
         raw = body.model_dump()
         try:
             verify_message(req.headers.get('X-SEC-Request', ''), cfg.request_key,
@@ -103,14 +109,15 @@ def routes(app):
                 # version, no argument hash, no command text leaves the boundary.
                 projected = {key: raw[key] for key in
                              ('protocol', 'capability', 'data_class', 'destination', 'risk_class', 'policy_version')}
-                payload = dict(model='deepseek-flash', thinking={'type': 'disabled'}, stream=True,
+                access = model_access(cfg, mode)
+                payload = dict(model=access['model'], thinking={'type': 'disabled'}, stream=True,
                                max_tokens=512, temperature=0, response_format={'type': 'json_object'},
                                messages=[dict(role='system', content=prompt),
                                          dict(role='user', content=json.dumps(projected, separators=(',', ':')))])
                 async with asyncio.timeout(30):
                     response = await app.state.action_client.post(
-                        cfg.llm_url + '/chat/completions', json=payload,
-                        headers={'Authorization': 'Bearer ' + cfg.llm_key}, timeout=30)
+                        access['url'] + '/chat/completions', json=payload,
+                        headers={'Authorization': 'Bearer ' + access['key']}, timeout=30)
                 if response.status_code != 200:
                     raise HTTPException(503, 'security_model_unavailable')
                 content, calls, usage = read_message(response)

@@ -23,7 +23,10 @@ class StepUncertain(Exception):pass
 
 
 def run_profile(cfg):
-    return {**cfg.provider_profile(),'endpoint_sha256':hashlib.sha256(cfg.llm_url.encode()).hexdigest(),'read_delegation_protocol':getattr(cfg,'v4_read_protocol','ma-run/v1')}
+    value={**cfg.provider_profile(),'endpoint_sha256':hashlib.sha256(cfg.llm_url.encode()).hexdigest(),'read_delegation_protocol':getattr(cfg,'v4_read_protocol','ma-run/v1')}
+    from .production_profile import selected,PROFILE
+    if selected():value['production_profile']=PROFILE
+    return value
 
 
 class AuthVault:

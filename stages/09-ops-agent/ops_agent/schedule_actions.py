@@ -11,17 +11,26 @@ from .security import verify,digest as envelope_digest
 from .store import encode
 
 class ScheduleAuthority(BusinessAuthority):
-    protocol=contract.PROTOCOL;policy=contract.POLICY;capabilities=contract.CAPABILITIES
+    protocol=contract.PROTOCOL;capabilities=contract.CAPABILITIES
     parse_arguments=staticmethod(contract.arguments);build_binding=staticmethod(contract.binding)
     audience='ma-schedule-execute/v1';adapter_path='/internal/ma-schedule/v1'
+    @property
+    def policy(self):
+        from .production_profile import selected,SCHEDULE_POLICY
+        return SCHEDULE_POLICY if selected() else contract.POLICY
     @property
     def adapter_url(self):return self.cfg.supervisor_url
     def adapter_headers(self,jwt):return {'Authorization':'Bearer '+jwt,'X-PowerSystem-Token':self.cfg.knowledge_token}
     def automatic(self,capability,opinion):return False
-    def verify_token(self,token):return contract.verify_grant(token,self.grant_key)
+    def verify_token(self,token):return contract.verify_grant(token,self.grant_key,expected_policy=self.policy)
     def execution_status(self,evidence):return evidence.get('status','succeeded')
-    def policy_snapshot(self):return dict(profile=self.policy,r1=list(self.capabilities),trigger_r0=['daily_report','inspection'],production=False)
+    def policy_snapshot(self):return dict(profile=self.policy,r1=list(self.capabilities),trigger_r0=['daily_report','inspection'],production=self.policy!=contract.POLICY)
     async def guard(self):
+        from .production_profile import selected as production_selected,guard as production_guard
+        if production_selected():
+            try:await production_guard(self.cfg,self.pool)
+            except (ValueError,OSError,KeyError):raise HTTPException(403,'production_schedule_policy_required') from None
+            return
         from v4_joint import selected, guard
         if selected(self.cfg):
             try:await guard(self.cfg,self.pool,'ops')
@@ -55,7 +64,7 @@ class ScheduleAuthority(BusinessAuthority):
     async def validate_plan(self,task,a,jwt):
         await super().validate_plan(task,a,jwt)
         b=a['plan']['binding'];env=task['envelope']
-        expected=contract.binding(task['user_id'],contract.Proposal.model_validate({k:env[k] for k in contract.Proposal.model_fields}),contract.arguments(env['capability'],env['typed_args']),b['target_version'],b['expires_at'])
+        expected=self.bind_domain(contract.binding(task['user_id'],contract.Proposal.model_validate({k:env[k] for k in contract.Proposal.model_fields}),contract.arguments(env['capability'],env['typed_args']),b['target_version'],b['expires_at']))
         if b!=expected or a['policy_version']!=self.policy or a['plan']['risk_class']!='R1':raise HTTPException(409,'approval_binding_changed')
     async def claim(self,token,jwt):
         try:g=self.verify_token(token)
@@ -70,7 +79,7 @@ class ScheduleAuthority(BusinessAuthority):
         cap=task['envelope']['capability']
         if not a:return dict(action_id=str(aid),task_id=str(aid),run_id=str(task['run_id']),capability=cap,status='unknown' if task['status']=='planning' else 'blocked',risk_class='R1',authority_revision=1,observed_at=datetime.now(timezone.utc).isoformat(),stale=False,error_code=(task['result'].get('error') or {}).get('code'),effect_summary='调度配置尚未生效',target_summary='')
         p=a['plan'];b=p['binding'];e=(attempt or {}).get('evidence') or {}
-        return dict(protocol=self.protocol,action_id=str(aid),task_id=str(aid),run_id=str(task['run_id']),capability=cap,approval_id=str(a['approval_id']),plan_hash=p['plan_hash'],expires_at=a['expires_at'].isoformat(),risk_class='R1',status=attempt['status'] if attempt else a['status'],approval_status=a['status'],consumed_at=str(a['consumed_at']) if a['consumed_at'] else None,execution_ref=str(attempt['call_id']) if attempt else None,authority_revision=a['authority_revision'],observed_at=datetime.now(timezone.utc).isoformat(),stale=False,effect_summary=e.get('effect_summary','启用有限期本人只读调度；不会批准或执行业务/运维动作'),target_summary=p['target_summary'],target_version=b['target_version'],typed_args=b['typed_args'],parameters_summary=json.dumps(b['typed_args'],ensure_ascii=False,sort_keys=True),policy_version=self.policy,destination_id='platform_client',recovery_limit='暂停/取消会撤销grant；恢复及改配置重新审查批准，不自动续期。已交付产物仍保留。',no_effect=e.get('no_effect',False),error_code=(task['result'].get('error') or {}).get('code'))
+        return dict(protocol=self.protocol,action_id=str(aid),task_id=str(aid),run_id=str(task['run_id']),capability=cap,approval_id=str(a['approval_id']),plan_hash=p['plan_hash'],expires_at=a['expires_at'].isoformat(),risk_class='R1',status=attempt['status'] if attempt else a['status'],approval_status=a['status'],consumed_at=str(a['consumed_at']) if a['consumed_at'] else None,execution_ref=str(attempt['call_id']) if attempt else None,authority_revision=a['authority_revision'],observed_at=datetime.now(timezone.utc).isoformat(),stale=False,effect_summary=e.get('effect_summary','启用有限期本人只读调度；不会批准或执行业务/运维动作'),target_summary=p['target_summary'],target_version=b['target_version'],typed_args=b['typed_args'],parameters_summary=json.dumps(b['typed_args'],ensure_ascii=False,sort_keys=True),policy_version=b['policy_version'],destination_id='platform_client',recovery_limit='暂停/取消会撤销grant；恢复及改配置重新审查批准，不自动续期。已交付产物仍保留。',no_effect=e.get('no_effect',False),error_code=(task['result'].get('error') or {}).get('code'))
 
 def routes(app):
     def svc():return app.state.schedule_authority

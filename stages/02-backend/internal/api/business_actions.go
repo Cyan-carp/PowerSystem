@@ -77,6 +77,9 @@ func businessJSON(v any) []byte {
 }
 func businessHash(v any) string { h := sha256.Sum256(businessJSON(v)); return hex.EncodeToString(h[:]) }
 func (s *Server) businessLocal() bool {
+	if os.Getenv("V4_PRODUCTION_PROFILE") != "" {
+		return s.v4Production()
+	}
 	if os.Getenv("V4_JOINT_PROFILE") != "" {
 		return s.s09Local()
 	}
@@ -109,6 +112,9 @@ func readBusinessBody(c *gin.Context, v any) bool {
 	return true
 }
 func parseBusinessGrant(token, key string) (businessGrant, error) {
+	return parseBusinessGrantPolicy(token, key, businessPolicy)
+}
+func parseBusinessGrantPolicy(token, key, expectedPolicy string) (businessGrant, error) {
 	var g businessGrant
 	parts := strings.Split(token, ".")
 	if len(parts) != 2 || len(token) > 24000 {
@@ -131,7 +137,7 @@ func parseBusinessGrant(token, key string) (businessGrant, error) {
 		return g, err
 	}
 	now := time.Now().Unix()
-	if g.Audience != "ma-business-execute/v1" || g.Policy != businessPolicy || g.Expires <= now || g.Issued > now+5 || g.Expires-g.Issued > 300 || g.Expires <= g.Issued || g.Owner <= 0 || !agentRunUUID.MatchString(g.Run) || !agentRunUUID.MatchString(g.Action) || !agentRunUUID.MatchString(g.Execution) || len(g.PlanHash) != 64 {
+	if g.Audience != "ma-business-execute/v1" || g.Policy != expectedPolicy || g.Expires <= now || g.Issued > now+5 || g.Expires-g.Issued > 300 || g.Expires <= g.Issued || g.Owner <= 0 || !agentRunUUID.MatchString(g.Run) || !agentRunUUID.MatchString(g.Action) || !agentRunUUID.MatchString(g.Execution) || len(g.PlanHash) != 64 {
 		return g, errors.New("invalid binding")
 	}
 	return g, nil
@@ -228,7 +234,13 @@ func (s *Server) executeBusinessAction(c *gin.Context) {
 	if !readBusinessBody(c, &input) {
 		return
 	}
-	g, err := parseBusinessGrant(input.Grant, s.cfg.MAActorKey)
+	// The current domain selects the only acceptable policy version. The
+	// signature alone never makes a local grant usable in production.
+	policy := businessPolicy
+	if os.Getenv("V4_PRODUCTION_PROFILE") != "" {
+		policy = v4BusinessProductionPolicy
+	}
+	g, err := parseBusinessGrantPolicy(input.Grant, s.cfg.MAActorKey, policy)
 	if err != nil || g.Owner != c.GetInt64("user_id") {
 		fail(c, 403, 40301, "invalid business grant")
 		return

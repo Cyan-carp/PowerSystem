@@ -13,7 +13,6 @@ import importlib.util
 import json
 import os
 from pathlib import Path
-import socket
 import subprocess
 import sys
 import tarfile
@@ -84,8 +83,7 @@ def verify_stream(archive):
 
 
 def make_capsule(name):
-    stack.require(socket.gethostname() == 'R730XD' and os.geteuid() == 0,
-                  'specified_root_business_host_required')
+    stack.registered_business_host('backup')
     os.umask(0o077)
     stack.BACKUP_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
     lock_path = stack.STATE_DIR / 'deployment.lock'
