@@ -45,6 +45,10 @@ type Server struct {
 	clientsMu sync.Mutex
 	chatGate  chatAdmission
 
+	// inboxStalled counts consecutive rounds without progress. Only the single
+	// worker goroutine touches it, so no lock is needed.
+	inboxStalled int
+
 	fleetCatalog *fleet.Catalog
 }
 
@@ -253,8 +257,51 @@ func (s *Server) worker(ctx context.Context) {
 		}
 	}
 }
-func (s *Server) processPending(ctx context.Context) {
-	if s.alarmMaintenance(ctx) {
+
+// inboxVerifyGrace bounds how long one unprocessed row may hold back its device.
+// A healthy sample reaches TDengine within seconds; once a row is older than the
+// grace window and still cannot be verified or processed, it is marked processed
+// without evaluation. Leaving such a row at processed_at IS NULL would block
+// every later sample of the same device forever.
+const inboxVerifyGrace = 2 * time.Minute
+
+// inboxTickBudget caps one polling round so a slow TDengine or database cannot
+// hold the single worker goroutine; unprocessed rows wait for the next round.
+const inboxTickBudget = 30 * time.Second
+
+type inboxVerdict int
+
+const (
+	inboxRetry inboxVerdict = iota // inside the grace window, retry next round
+	inboxSkip                      // unrecoverable, mark processed and move on
+)
+
+// inboxVerdictFor decides what to do with a row that cannot be verified or
+// handled: retry inside the grace window, skip once it is older than that.
+func inboxVerdictFor(age time.Duration) inboxVerdict {
+	if age < inboxVerifyGrace {
+		return inboxRetry
+	}
+	return inboxSkip
+}
+
+func firstError(current, next error) error {
+	if current != nil {
+		return current
+	}
+	return next
+}
+
+// markInboxProcessed only stamps processed_at; the raw row stays for audit and
+// later backfill.
+func (s *Server) markInboxProcessed(ctx context.Context, id int64) error {
+	return s.db.WithContext(ctx).Model(&model.Inbox{}).
+		Where("id=? AND processed_at IS NULL", id).
+		Update("processed_at", time.Now().UTC()).Error
+}
+
+func (s *Server) processPending(parent context.Context) {
+	if s.alarmMaintenance(parent) {
 		return
 	}
 	var items []model.Inbox
@@ -264,43 +311,90 @@ func (s *Server) processPending(ctx context.Context) {
 		s.log.Error("inbox_read_failed", zap.Error(err))
 		return
 	}
+	if len(items) == 0 {
+		s.inboxStalled = 0
+		return
+	}
+	ctx, cancel := context.WithTimeout(parent, inboxTickBudget)
+	defer cancel()
+	var advanced, skipped, deferred int
+	var firstErr error
+	var oldestSkipped time.Time
+	// retryOrSkip is the single exit for a row that cannot be handled: keep it
+	// for the next round while inside the grace window, otherwise stamp it
+	// processed and move on. This guarantees the device head always advances
+	// within the grace window.
+	retryOrSkip := func(item model.Inbox, age time.Duration, cause error) {
+		firstErr = firstError(firstErr, cause)
+		if inboxVerdictFor(age) == inboxRetry {
+			deferred++
+			return
+		}
+		if err := s.markInboxProcessed(ctx, item.ID); err != nil {
+			firstErr = firstError(firstErr, err)
+			deferred++
+			return
+		}
+		skipped++
+		if oldestSkipped.IsZero() || item.ReceivedAt.Before(oldestSkipped) {
+			oldestSkipped = item.ReceivedAt
+		}
+	}
 	for _, item := range items {
+		if ctx.Err() != nil {
+			break
+		}
 		if s.alarmMaintenance(ctx) {
 			return
 		}
 		var sample telemetry.Sample
 		if err := json.Unmarshal(item.Payload, &sample); err != nil {
-			s.log.Error("inbox_payload_corrupt", zap.Error(err))
-			return
+			// A corrupt payload never heals; treat it as past the grace window.
+			s.log.Error("inbox_payload_corrupt", zap.Int64("inbox_id", item.ID), zap.Error(err))
+			retryOrSkip(item, inboxVerifyGrace, err)
+			continue
 		}
-		found, err := s.td.HasSample(ctx, item.DeviceID, item.TS, item.Seq)
-		if err != nil {
-			s.log.Warn("tdengine_verify_failed", zap.Error(err))
-			return
-		}
-		if !found {
+		age := time.Since(item.ReceivedAt)
+		found, verifyErr := s.td.HasSample(ctx, item.DeviceID, item.TS, item.Seq)
+		if verifyErr != nil || !found {
+			retryOrSkip(item, age, verifyErr)
 			continue
 		}
 		var device model.Device
-		if err := s.db.First(&device, item.DeviceID).Error; err != nil {
-			s.log.Error("inbox_device_lookup_failed", zap.Error(err))
-			return
+		if err := s.db.WithContext(ctx).First(&device, item.DeviceID).Error; err != nil {
+			retryOrSkip(item, age, err)
+			continue
 		}
 		latest, err := s.cacheLatest(ctx, device, sample, item.ReceivedAt)
 		if err != nil {
-			s.log.Warn("redis_latest_failed", zap.Error(err))
-			return
+			retryOrSkip(item, age, err)
+			continue
 		}
 		_, events, err := service.ProcessSample(s.db, item, sample)
 		if err != nil {
-			s.log.Error("inbox_process_failed", zap.Error(err))
-			return
+			// A per-row failure must not abort the round; the grace window
+			// decides whether to retry it or let the device move on.
+			retryOrSkip(item, age, err)
+			continue
 		}
 		s.broadcast(gin.H{"type": "telemetry", "data": latest})
 		for _, event := range events {
 			s.broadcast(event)
 		}
+		advanced++
 	}
+	if skipped > 0 {
+		s.log.Warn("inbox_rows_skipped", zap.Int("count", skipped), zap.Duration("grace", inboxVerifyGrace), zap.Time("oldest_received_at", oldestSkipped))
+	}
+	if advanced == 0 && skipped == 0 {
+		s.inboxStalled++
+		// Two rounds per second; report at most once per minute.
+		if s.inboxStalled == 1 || s.inboxStalled%120 == 0 {
+			s.log.Warn("inbox_no_progress", zap.Int("deferred", deferred), zap.Int("ticks", s.inboxStalled), zap.NamedError("last_error", firstErr))
+		}
+		return
+	}
+	s.inboxStalled = 0
 }
 
 func (s *Server) cacheLatest(ctx context.Context, device model.Device, sample telemetry.Sample, receivedAt time.Time) (gin.H, error) {
