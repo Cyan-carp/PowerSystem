@@ -4,7 +4,7 @@ tags:
   - 工作区导航
 status: 现行
 scope: 跨版本
-updated: 2026-10-23
+updated: 2026-10-26
 workspace_path: "deploy/edge-server/独立云服务器部署/config"
 relative_path: "../../deploy/edge-server/独立云服务器部署/config"
 repository_url: null

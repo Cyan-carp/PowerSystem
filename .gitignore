@@ -9,6 +9,8 @@ __pycache__/
 *.test
 *.out
 artifacts/
+# Local team-delivery copy; canonical evidence remains under artifacts/v5-desktop/.
+/PowerSystem-Desktop-0.2.0-Team.zip
 # Preserve the deployment artifact layout and its public documentation only.
 !deploy/artifacts/
 deploy/artifacts/*

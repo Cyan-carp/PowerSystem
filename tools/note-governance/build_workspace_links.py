@@ -7,6 +7,7 @@ import json
 import os
 import re
 import subprocess
+from datetime import date
 from pathlib import Path
 from urllib.parse import quote
 
@@ -16,6 +17,7 @@ MANIFEST = ROOT / "tools/note-governance/workspace-links.json"
 PROXY_DIR = ROOT / "notes/06-代码工作区导航与链接映射"
 REPOSITORY_BASE = "https://github.com/Cyan-carp/PowerSystem"
 ADDITIONAL_TARGETS = (
+    "stages/11-desktop-client/README.md",
     "README.md",
     "artifacts/stage8-agent-rag/server-20261011/evidence/acceptance/browser-quality.json",
     "artifacts/stage8-agent-rag/boundary/bnd-m1-20261011/server-evidence/acceptance-r3/acceptance.json",
@@ -46,7 +48,7 @@ def proxy_name(path: str) -> str:
     if path == "README.md":
         return "root-README.md"
     safe = re.sub(r"[^0-9A-Za-z._\-\u4e00-\u9fff]+", "-", path.replace("/", "-")).strip("-")
-    return safe + ".md"
+    return safe if safe.casefold().endswith(".md") else safe + ".md"
 
 
 def github_url(path: str) -> str:
@@ -60,6 +62,8 @@ def relative_target(path: str) -> str:
 
 def proxy_source(entry: dict[str, object]) -> str:
     path = str(entry["workspace_path"])
+    is_private_artifact = path.startswith("artifacts/")
+    updated = date.today().isoformat() if not entry["tracked"] and not is_private_artifact else "2026-10-23"
     repository_url = entry.get("repository_url")
     repository_yaml = str(repository_url) if repository_url else "null"
     is_dir = (ROOT / path).is_dir()
@@ -70,7 +74,7 @@ def proxy_source(entry: dict[str, object]) -> str:
         "  - 工作区导航",
         "status: 现行",
         "scope: 跨版本",
-        "updated: 2026-10-23",
+        f"updated: {updated}",
         f'workspace_path: "{path}"',
         f'relative_path: "{entry["relative_path"]}"',
         f'repository_url: "{repository_yaml}"' if repository_url else "repository_url: null",
@@ -82,7 +86,7 @@ def proxy_source(entry: dict[str, object]) -> str:
     ]
     if is_dir:
         lines.append(f"- 工作区目标：`{entry['relative_path']}`（目录，进入后按文件查看）")
-    elif entry["tracked"]:
+    elif entry["tracked"] or not is_private_artifact:
         lines.append(f"- 工作区目标：[打开相对路径目标]({entry['relative_path']})")
     else:
         # 私有运行产物按设计不入库：全新克隆中不存在，不能渲染成可点链接。
