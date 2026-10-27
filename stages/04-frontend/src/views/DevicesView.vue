@@ -2,6 +2,7 @@
 import { onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { api } from '../lib/api'
+import { useReconnectRefresh } from '../lib/reconnect-refresh'
 import { errorMessage } from '../lib/format'
 import { defaultScope, reconcileStation, scopeLabels, scopeOptions } from '../lib/scope'
 import DeviceCode from '../components/DeviceCode.vue'
@@ -63,6 +64,7 @@ async function changeScope(next: Scope): Promise<void> {
 }
 function reset(): void { groupInput.value = ''; group.value = ''; station.value = ''; page.value = 1; void load() }
 onMounted(() => { void loadStations(); void load() })
+useReconnectRefresh(load)
 </script>
 
 <template>

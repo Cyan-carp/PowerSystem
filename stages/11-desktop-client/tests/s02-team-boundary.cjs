@@ -1,0 +1,23 @@
+const { _electron } = require('playwright-core');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const run = require('../scripts/test-run-directory.cjs').testRunDirectory();
+let app;
+const report = { kind: 'team-compiled-origin-rejection-isolated-protocol-fixture', checks: [] };
+(async () => {
+  const env = { ...process.env, POWERSYSTEM_TEST_DATA: path.join(run, 'team-boundary-data') }; delete env.ELECTRON_RUN_AS_NODE;
+  app = await _electron.launch({ executablePath: require('electron'), args: [path.join(__dirname, 'fixture-main.cjs')], env });
+  const page = await app.firstWindow(); await page.waitForURL('https://www.cyancarp.cn/');
+  const child = page.frames().find(frame => frame !== page.mainFrame());
+  await child.waitForLoadState(); assert.equal(await child.evaluate(() => typeof window.powerSystemDesktop), 'undefined');
+  const denied = await app.evaluate(async ({ BrowserWindow }) => { const w = BrowserWindow.getAllWindows()[0], child = w.webContents.mainFrame.frames[0]; let denied = 0; for (const [name, h] of globalThis.__s01Handlers) if (name.startsWith('desktop:')) { try { await h({ sender: w.webContents, senderFrame: child }); } catch { denied++; } } return denied; });
+  assert.equal(denied, 5); report.checks.push('all five public methods deny actual child frame');
+  await app.evaluate(async ({ BrowserWindow }) => { await BrowserWindow.getAllWindows()[0].loadURL('http://127.0.0.1:4175/login'); });
+  assert.equal(await page.evaluate(() => typeof window.powerSystemDesktop), 'undefined');
+  const localDenied = await app.evaluate(async ({ BrowserWindow }) => { const wc = BrowserWindow.getAllWindows()[0].webContents; let count = 0; for (const [name, h] of globalThis.__s01Handlers) if (name.startsWith('desktop:')) { try { await h({ sender: wc, senderFrame: wc.mainFrame }); } catch { count++; } } return count; });
+  assert.equal(localDenied, 5); report.checks.push('team preload and all five main handlers reject exact isolated origin');
+  const childProcess = app.process(); const exited = new Promise(resolve => childProcess.once('exit', resolve));
+  await app.evaluate(({ app }) => app.quit()); assert.equal(await exited, 0); app = null;
+  report.status = 'passed';
+})().catch(error => { report.status = 'failed'; report.error = error.stack; process.exitCode = 1; app?.process().kill(); }).finally(() => { fs.writeFileSync(path.join(run, 'team-boundary-results.json'), JSON.stringify(report, null, 2)); console.log(JSON.stringify(report, null, 2)); });

@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElForm, ElFormItem, ElInputNumber, ElMessageBox } from 'element-plus'
 import { ArrowLeft, ArrowRight } from '@element-plus/icons-vue'
 import { token } from '../lib/auth'
+import { useReconnectRefresh } from '../lib/reconnect-refresh'
 import { getRun, cancelRun, consumeRun, type RunReceipt, type RunSnapshot } from '../lib/agent-runs'
 import { listSchedules, scheduleHistory, proposeSchedule, controlSchedule, previewRule, defaultConfig, type Schedule, type HistoryItem } from '../lib/agent-schedules'
 import { dateTime } from '../lib/format'
@@ -117,6 +118,10 @@ function stop() { controller?.abort(); stopped.value = true; connection.value = 
 function updated(value: RunSnapshot) { run.value = value; void refresh() }
 watch(token, () => { generation++; controller?.abort(); schedules.value = []; run.value = undefined; recent.value = []; history.value = []; activeTask.value = undefined })
 onMounted(() => { void safely(async () => { await refresh(); if (typeof route.query.run === 'string') await openRun(route.query.run) }) })
+useReconnectRefresh(async () => {
+  try { await refresh(); if (run.value?.run_id) await openRun(run.value.run_id) }
+  catch (cause) { error.value = cause instanceof Error ? cause.message : '恢复后读取失败，请手动刷新状态' }
+})
 onUnmounted(() => { disposed = true; generation++; controller?.abort() })
 </script>
 <template>

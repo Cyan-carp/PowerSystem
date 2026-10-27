@@ -90,6 +90,7 @@ onMounted(() => {
   void loadDevice()
   healthTimer = setInterval(refreshHealth, 10000)
   unsubscribe = realtime.subscribe((event) => {
+    if (event.type === 'connected') { void loadDevice(); return }
     if (event.type !== 'telemetry' || event.data.device_id !== deviceId()) return
     latest.value = event.data
     if (dateRange.value[1].getTime() < Date.now() - 60000) return

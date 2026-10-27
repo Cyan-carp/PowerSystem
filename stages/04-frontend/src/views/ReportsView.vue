@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { api } from '../lib/api'
+import { useReconnectRefresh } from '../lib/reconnect-refresh'
 import { dateTime, durationText, errorMessage } from '../lib/format'
 import type { Device, TimelinessStat } from '../types'
 import { useReportPanel, type ReportParams } from '../lib/report-panel'
@@ -47,6 +48,11 @@ async function download(kind: 'availability'|'alarm-timeliness') {
   finally { exporting.value = null }
 }
 onUnmounted(() => { availabilityPanel.cancel(); timelinessPanel.cancel() })
+useReconnectRefresh(async () => {
+  // Refresh the last displayed results, preserving unsubmitted filter edits.
+  const availabilityParams = availabilityLoaded.value, timelinessParams = timelinessLoaded.value
+  await Promise.all([availabilityParams ? availabilityPanel.load(availabilityParams) : Promise.resolve(), timelinessParams ? timelinessPanel.load(timelinessParams) : Promise.resolve()])
+})
 
 onMounted(async () => {
   void load()

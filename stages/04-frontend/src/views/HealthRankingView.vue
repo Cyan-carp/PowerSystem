@@ -2,6 +2,7 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { api } from '../lib/api'
+import { useReconnectRefresh } from '../lib/reconnect-refresh'
 import { dateTime, errorMessage, levelLabels } from '../lib/format'
 import { healthBasis, healthState } from '../lib/health'
 import { usePaged } from '../lib/paged'
@@ -49,6 +50,7 @@ watch([keyword, station, state], () => reset())
 // Auto refresh can retire a station, which would otherwise leave an empty table.
 watch(stationCodes, codes => { if (station.value && !codes.includes(station.value)) station.value = '' })
 onMounted(() => { void load(); timer = setInterval(load, 10000) })
+useReconnectRefresh(load)
 onUnmounted(() => { disposed = true; if (timer) clearInterval(timer) })
 </script>
 <template>

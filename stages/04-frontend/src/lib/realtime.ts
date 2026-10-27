@@ -1,6 +1,7 @@
 import { reactive, ref } from 'vue'
 import { api } from './api'
 import { token } from './auth'
+import { onSessionReset } from './desktop'
 import type { RealtimeEvent, Telemetry } from '../types'
 
 type Listener = (event: RealtimeEvent) => void
@@ -39,6 +40,7 @@ async function connect(epoch: number): Promise<void> {
       emit({ type: 'connected' })
     }
     ws.onmessage = (message) => {
+      if (!active || epoch !== generation || ws !== socket) return
       try {
         const event = JSON.parse(String(message.data)) as RealtimeEvent
         if (event.type === 'telemetry') latest[event.data.device_id] = event.data
@@ -54,6 +56,7 @@ async function connect(epoch: number): Promise<void> {
     }
     ws.onerror = () => ws.close()
   } catch {
+    if (!active || epoch !== generation) return
     connected.value = false
     emit({ type: 'disconnected' })
     retry(epoch)
@@ -78,9 +81,19 @@ export const realtime = {
     socket?.close()
     socket = null
     connected.value = false
+    for (const key of Object.keys(latest)) delete latest[Number(key)]
+  },
+  recover(): void {
+    if (!active || !token.value) return
+    generation++
+    if (retryTimer) clearTimeout(retryTimer)
+    retryTimer = null
+    socket?.close(); socket = null; connected.value = false
+    void connect(generation)
   },
   subscribe(listener: Listener): () => void {
     listeners.add(listener)
     return () => listeners.delete(listener)
   },
 }
+onSessionReset(() => { realtime.stop() })

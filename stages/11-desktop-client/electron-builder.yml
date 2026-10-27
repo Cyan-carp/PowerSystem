@@ -1,0 +1,68 @@
+# 第五版 S02 内部安装包配置（Windows x64 / NSIS / 当前用户 / 未签名）
+# 只描述打包口径；安装、构建与验收命令统一维护在同目录 README。
+# 版本号取 package.json 的 version，主入口由 package.json 的 main 指向 dist/main.js。
+
+appId: cn.cyancarp.powersystem.desktop
+productName: 源网智联
+
+directories:
+  output: ../../artifacts/v5-desktop/s02-20261026-r1/package
+
+# 不自动发布、不自动更新：无 provider、无 release 产物流程。
+publish: null
+
+# 应用代码进入 asar；外部资源（本地兜底页）放 resources 目录。
+asar: true
+electronFuses:
+  runAsNode: false
+  enableNodeOptionsEnvironmentVariable: false
+  enableNodeCliInspectArguments: false
+  enableEmbeddedAsarIntegrityValidation: true
+  onlyLoadAppFromAsar: true
+
+files:
+  # S02 仍无运行时依赖；如将来引入 dependencies，必须复核本段并移除 node_modules 排除项。
+  - dist/**/*.js
+  - package.json
+  - "!**/node_modules/**"
+  - "!dist/**/*.js.map"
+  - "!**/*.ts"
+  - "!**/*.map"
+  - "!**/test/**"
+  - "!**/tests/**"
+  - "!**/__tests__/**"
+  - "!**/*.log"
+  - "!**/.env*"
+  - "!**/*.pem"
+  - "!**/*.key"
+  - "!**/*.pfx"
+  - "!**/*.p12"
+
+extraResources:
+  - from: src/fallback.html
+    to: fallback.html
+
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+  executableName: PowerSystem Desktop
+  # 进程清单固定普通用户权限，安装与运行都不请求提权。
+  requestedExecutionLevel: asInvoker
+  # 内部未签名包：不配置证书相关字段；构建机也不得注入 CSC_LINK / CSC_KEY_PASSWORD。
+
+nsis:
+  packElevateHelper: false
+  oneClick: true
+  perMachine: false
+  allowElevation: false
+  allowToChangeInstallationDirectory: false
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: 源网智联
+  uninstallDisplayName: 源网智联
+  # 卸载不代删用户数据：残留仅限非敏感窗口/偏好设置，由 T03 如实记录实际路径。
+  deleteAppDataOnUninstall: false
+  artifactName: "PowerSystem-Desktop-${version}-${arch}-Setup.${ext}"
+  runAfterFinish: true

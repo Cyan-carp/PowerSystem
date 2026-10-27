@@ -5,6 +5,7 @@ import { ElNotification } from 'element-plus'
 import { Aim, BellFilled, Bell, Calendar, ChatDotSquare, Connection, DataAnalysis, DataBoard, Monitor, MuteNotification, QuestionFilled, SwitchButton, TrendCharts, Files, Warning } from '@element-plus/icons-vue'
 import { clearSession, currentUser } from '../lib/auth'
 import { realtime } from '../lib/realtime'
+import { desktopFeatures, notifyDesktopAlarm, onSessionReset } from '../lib/desktop'
 import { api } from '../lib/api'
 import { dateTime, levelLabels } from '../lib/format'
 import type { Summary } from '../types'
@@ -22,6 +23,8 @@ const summary = ref<Summary | null>(null)
 const latestAlarm = ref<{ id: number; at: string } | null>(null)
 let clock: ReturnType<typeof setInterval> | null = null
 let unsubscribe: (() => void) | null = null
+const pageNotices = new Set<ReturnType<typeof ElNotification>>()
+const resetNotices = onSessionReset(() => { for (const notice of pageNotices) notice.close(); pageNotices.clear(); activeAlarms.value = 0; urgentAlarms.value = 0; summary.value = null; latestAlarm.value = null })
 
 const navGroups = [
   { title: '监控中心', items: [
@@ -144,23 +147,30 @@ onMounted(() => {
   void refreshBadges()
   unsubscribe = realtime.subscribe((event) => {
     if (event.type === 'alarm_created') {
-      beep()
+      if (desktopFeatures.value.notifications) void notifyDesktopAlarm(event.data.id, event.data.level)
+      else beep()
       void refreshBadges()
-      ElNotification({
+      const notice = ElNotification({
         title: `${levelLabels[event.data.level]}告警 · 设备 #${event.data.device_id}`,
         message: event.data.metric === 'ai_failure_risk' ? '预测风险升高，请核查设备状态' : `${event.data.metric} 越限，请及时核查`,
         type: event.data.level === 'urgent' ? 'error' : 'warning',
         duration: 9000,
         onClick: () => { void router.push({ path: '/alarms', query: { id: String(event.data.id) } }) },
+        onClose: () => pageNotices.delete(notice),
       })
+      pageNotices.add(notice)
     }
     if (event.type === 'alarm_acked' || event.type === 'alarm_recovered') void refreshBadges()
+    if (event.type === 'connected') void refreshBadges()
   })
   realtime.start()
 })
 onUnmounted(() => {
   if (clock) clearInterval(clock)
   unsubscribe?.()
+  resetNotices()
+  for (const notice of pageNotices) notice.close()
+  pageNotices.clear()
   realtime.stop()
 })
 </script>
@@ -225,7 +235,8 @@ onUnmounted(() => {
             <span class="meter-dot" />{{ realtime.connected.value ? '实时' : '断线' }}
           </span>
           <span class="meter clock" :title="dateTime(now)">{{ clockText }}</span>
-          <button class="meter meter-btn" type="button" :class="{ muted: !soundOn }" :title="soundOn ? '告警音已开启，点击静音' : '告警音已静音，点击开启'" :aria-label="soundOn ? '告警音已开启' : '告警音已静音'" :aria-pressed="soundOn" @click="toggleSound">
+          <span v-if="desktopFeatures.notifications" class="meter" title="托盘设置可切换通知；声音与免打扰由 Windows 控制">系统通知</span>
+          <button v-else class="meter meter-btn" type="button" :class="{ muted: !soundOn }" :title="soundOn ? '告警音已开启，点击静音' : '告警音已静音，点击开启'" :aria-label="soundOn ? '告警音已开启' : '告警音已静音'" :aria-pressed="soundOn" @click="toggleSound">
             <el-icon><BellFilled v-if="soundOn" /><MuteNotification v-else /></el-icon>
             {{ soundOn ? '开' : '关' }}
           </button>

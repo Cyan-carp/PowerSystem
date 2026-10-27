@@ -1,0 +1,117 @@
+const { _electron } = require('playwright-core');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const run = require('../scripts/test-run-directory.cjs').testRunDirectory();
+const report = { checks: [], limit: 'Real Electron + compiled stage-four UI + isolated HTTP/WebSocket. OS notification/dialog/login-item calls substituted; owner must verify actual Windows UI and installed candidates.' };
+let app;
+const control = action => fetch('http://127.0.0.1:4175/__control/' + action, { method: 'POST' });
+function pass(name, detail) { report.checks.push({ name, detail, status: 'passed' }); }
+async function wait(check) { for (let n = 0; n < 100; n++) { if (await check()) return; await new Promise(r => setTimeout(r, 100)); } throw new Error('condition timed out'); }
+(async () => {
+  const env = { ...process.env }; delete env.ELECTRON_RUN_AS_NODE;
+  await control('clear401'); await control('online');
+  app = await _electron.launch({ executablePath: require('electron'), args: [path.join(__dirname, 's02-bootstrap.cjs')], env });
+  console.log('Electron launched');
+  const page = await app.firstWindow();
+  page.setDefaultTimeout(10000);
+  page.setDefaultNavigationTimeout(15000);
+  console.log('first window', page.url());
+  page.on('console', message => { if (message.type() === 'error') fs.appendFileSync(path.join(run, 's02-page-console.txt'), message.text() + '\n'); });
+  page.on('pageerror', error => fs.appendFileSync(path.join(run, 's02-page-errors.txt'), error.stack + '\n'));
+  await page.waitForURL(/\/login(?:\?|$)/);
+  const caps = await page.evaluate(() => window.powerSystemDesktop.getCapabilities());
+  assert.ok(Object.values(caps.features).every(Boolean)); pass('v1 implemented feature handshake', caps);
+  const prefs = await page.evaluate(() => window.powerSystemDesktop.getPreferences());
+  assert.deepEqual(prefs, { notificationsEnabled: true, launchAtLogin: false }); pass('fresh defaults', prefs);
+  await page.fill('#username', 'A'); await page.fill('#password', 'synthetic'); await page.click('button[type=submit]'); await page.waitForURL('**/dashboard');
+  await wait(async () => (await (await fetch('http://127.0.0.1:4175/__state')).json()).counts['POST /api/v1/ws-ticket'] > 0);
+  const invoke = async (name, ...args) => app.evaluate(async ({ BrowserWindow }, { name, args }) => { const w = BrowserWindow.getAllWindows()[0]; return globalThis.__s02.handlers.get(name)({ sender: w.webContents, senderFrame: w.webContents.mainFrame }, ...args); }, { name, args });
+  for (const [name, args] of [['desktop:capabilities', [1]], ['desktop:preferences:get', [1]], ['desktop:preferences:set', [{ token: 'bad' }]], ['desktop:alarm', [{ alarmId: 0 }]], ['desktop:session:reset', [1]]]) await assert.rejects(invoke(name, ...args));
+  const denied = await app.evaluate(async ({ BrowserWindow }) => { const w = BrowserWindow.getAllWindows()[0]; const other = new BrowserWindow({ show: false }); let count = 0; for (const h of globalThis.__s02.handlers.values()) { try { await h({ sender: other.webContents, senderFrame: other.webContents.mainFrame }); } catch { count++; } } other.destroy(); return count; });
+  assert.ok(denied >= 7); pass('wrong-window and invalid argument rejection', denied);
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].focus());
+  await control('alarm'); await page.waitForTimeout(250);
+  assert.equal(await app.evaluate(() => globalThis.__s02.notifications.length), 0); pass('focused page has no native duplicate', true);
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].close());
+  await wait(() => app.evaluate(({ BrowserWindow }) => !BrowserWindow.getAllWindows()[0].isVisible()));
+  assert.equal(await app.evaluate(() => globalThis.__s02.trays[0].isDestroyed()), false); pass('close hides window and keeps real tray', true);
+  await control('alarm'); await wait(() => app.evaluate(() => globalThis.__s02.notifications.length === 1));
+  await control('repeat'); await page.waitForTimeout(250); assert.equal(await app.evaluate(() => globalThis.__s02.notifications.length), 1);
+  pass('actual websocket alarm reaches native adapter and dedups', true);
+  await app.evaluate(() => globalThis.__s02.notifications[0].emit('click')); await page.waitForURL(/\/alarms\?id=\d+$/); pass('notification click uses existing SPA detail route', page.url());
+  await page.keyboard.press('Escape');
+  await page.evaluate(() => window.powerSystemDesktop.setPreferences({ notificationsEnabled: false }));
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].hide());
+  await control('alarm'); await page.waitForTimeout(150);
+  assert.equal(await app.evaluate(() => globalThis.__s02.notifications.length), 1);
+  pass('notification preference disables subsequent alarms', true);
+  await page.evaluate(() => window.powerSystemDesktop.setPreferences({ notificationsEnabled: true }));
+  // Windows can immediately refocus the only app window after blur(). Use an
+  // owned fixture window as a real focus destination, and observe the result.
+  await app.evaluate(({ BrowserWindow }) => {
+    const w = BrowserWindow.getAllWindows()[0]; w.show();
+    globalThis.__s02.focusSink = new BrowserWindow({ width: 160, height: 100, show: true, webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false } });
+    globalThis.__s02.focusSink.focus(); w.blur();
+  });
+  await wait(() => app.evaluate(({ BrowserWindow }) => !BrowserWindow.getAllWindows().find(w => w !== globalThis.__s02.focusSink).isFocused()));
+  await control('alarm'); await wait(() => app.evaluate(() => globalThis.__s02.notifications.length === 2));
+  pass('visible unfocused window still submits native notice', true);
+  await app.evaluate(() => { globalThis.__s02.focusSink.destroy(); delete globalThis.__s02.focusSink; });
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].focus());
+  await page.click('[aria-label="退出登录"]'); await page.waitForURL(/\/login(?:\?|$)/);
+  await page.fill('#username', 'B'); await page.fill('#password', 'synthetic'); await page.click('button[type=submit]'); await page.waitForURL('**/dashboard');
+  await app.evaluate(() => globalThis.__s02.notifications[0].emit('click')); await page.waitForTimeout(100); assert.match(page.url(), /\/dashboard$/);
+  pass('in-app account switch invalidates old native callback', true);
+  await control('401'); await page.waitForURL(/\/login(?:\?|$)/); pass('401 in actual frontend resets session', true);
+  await page.fill('#username', 'B'); await page.fill('#password', 'synthetic'); await page.click('button[type=submit]'); await page.waitForURL('**/dashboard');
+  await page.evaluate(() => history.pushState({}, '', '/agent')); await page.reload(); await page.waitForURL('**/agent');
+  const draft = page.locator('textarea').first(); await draft.fill('S02 draft survives recovery');
+  await control('offline'); await page.waitForTimeout(300); await control('online');
+  await app.evaluate(({ powerMonitor }) => powerMonitor.emit('resume'));
+  await wait(async () => (await page.locator('.meter.ok').count()) > 0);
+  assert.equal(await draft.inputValue(), 'S02 draft survives recovery');
+  pass('disconnect and resume reconnect without draft loss', true);
+  // Navigate with same document so actual auth remains in its in-memory partition.
+  await page.evaluate(() => { history.pushState({}, '', '/reports'); window.dispatchEvent(new PopStateEvent('popstate')); });
+  await page.getByRole('button', { name: '导出可用率 CSV' }).waitFor();
+  await wait(() => page.getByRole('button', { name: '导出可用率 CSV' }).isEnabled());
+  for (const mode of ['success', 'cancel', 'failure']) {
+    if (mode === 'failure') fs.mkdirSync(path.join(run, 'target-directory'), { recursive: true });
+    await app.evaluate((_e, mode) => { globalThis.__s02.downloadMode = mode; }, mode);
+    const before = await app.evaluate(() => globalThis.__s02.dialogs.length);
+    await page.getByRole('button', { name: '导出可用率 CSV' }).click();
+    await wait(() => app.evaluate((_e, before) => globalThis.__s02.dialogs.length > before, before));
+    const message = await app.evaluate(() => globalThis.__s02.dialogs.at(-1).message);
+    assert.equal(message, { success: '保存成功', cancel: '已取消保存', failure: '保存失败' }[mode]);
+    if (mode === 'success') assert.ok(fs.statSync(path.join(run, 'runtime-saved.csv')).size > 0);
+    if (mode === 'cancel') assert.ok(fs.statSync(path.join(run, 'runtime-saved.csv')).size > 0);
+    assert.equal(fs.readdirSync(run).filter(name => /^\.powersystem-.*\.part$/.test(name)).length, 0);
+    pass('actual download ' + mode, message);
+  }
+  await app.evaluate(() => { globalThis.__s02.downloadMode = 'success'; });
+  await page.evaluate(() => { history.pushState({}, '', '/agent/schedules?run=s02-synthetic-run'); window.dispatchEvent(new PopStateEvent('popstate')); });
+  await page.locator('.run-details').filter({ hasText: '产物状态' }).locator('summary').click();
+  const artifactButton = page.getByRole('button', { name: '下载 s02-artifact.csv' });
+  const beforeArtifact = await app.evaluate(() => globalThis.__s02.dialogs.length);
+  await artifactButton.click();
+  await wait(() => app.evaluate((_e, before) => globalThis.__s02.dialogs.length > before, beforeArtifact));
+  assert.equal(await app.evaluate(() => globalThis.__s02.dialogs.at(-1).message), '保存成功');
+  const manifest = JSON.parse(fs.readFileSync(path.join(run, 'fixture-manifest.json')));
+  const hash = require('node:crypto').createHash('sha256').update(fs.readFileSync(path.join(run, 'runtime-saved.csv'))).digest('hex');
+  assert.equal(hash, manifest.csvSHA256);
+  pass('existing artifact metadata ownership, size, SHA256 and saved file', { bytes: fs.statSync(path.join(run, 'runtime-saved.csv')).size, sha256: hash });
+  await app.evaluate(() => { globalThis.__s02.failStartup = true; });
+  await assert.rejects(page.evaluate(() => window.powerSystemDesktop.setPreferences({ launchAtLogin: true })));
+  assert.equal((await page.evaluate(() => window.powerSystemDesktop.getPreferences())).launchAtLogin, false);
+  pass('system startup failure is reported without false applied value', true);
+  const state = await (await fetch('http://127.0.0.1:4175/__state')).json();
+  assert.equal(Object.keys(state.counts).filter(key => /^(POST|PUT|DELETE)/.test(key) && !key.includes('/auth/login') && !key.includes('/ws-ticket')).length, 0);
+  pass('no business mutation, approval or download replay', state.counts);
+  await page.screenshot({ path: path.join(run, 's02-runtime.png') });
+  const processRef = app.process(); const exit = new Promise(resolve => processRef.once('exit', resolve));
+  await app.evaluate(() => globalThis.__s02.menu.find(item => item.label === '退出').click());
+  assert.equal(await exit, 0); app = null; pass('explicit tray exit terminates Electron', true);
+  report.status = 'passed';
+})().catch(async error => { report.status = 'failed'; report.error = error.stack; console.error(error); process.exitCode = 1; if (app) { const child = app.process(); await Promise.race([app.close().catch(() => {}), new Promise(resolve => setTimeout(() => { child.kill(); resolve(); }, 2000))]); } }).finally(() => { fs.writeFileSync(path.join(run, 's02-runtime-results.json'), JSON.stringify(report, null, 2)); console.log(JSON.stringify(report, null, 2)); });
+

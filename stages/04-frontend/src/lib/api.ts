@@ -1,4 +1,5 @@
 import { clearSession, token } from './auth'
+import { sessionEpoch } from './desktop'
 import { retryAfterSeconds } from './retry-after'
 import type { OpsStatus, OpsTask } from '../types'
 import type { Alarm, ApiEnvelope, Device, History, LoginResult, Metric, Overview, Page, Prediction, PredictionListItem, Scope, Station, Summary, Telemetry, Interpretation, AgentModelStatus, KnowledgeSource, RAGChatResponse, RAGSession, RAGTurn, VerificationInput, DeviceHealth, StationHealth, AvailabilityItem, StationAvailability, TimelinessResult } from '../types'
@@ -23,6 +24,8 @@ function query(params: Record<string, string | number | undefined>): string {
 }
 
 export async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const identity = token.value, epoch = sessionEpoch()
+  const assertSession = () => { if (identity !== token.value || epoch !== sessionEpoch()) throw new ApiError(0, 0, '登录身份已变化，请重新读取') }
   const headers = new Headers(init.headers)
   if (init.body) headers.set('Content-Type', 'application/json')
   if (token.value) headers.set('Authorization', `Bearer ${token.value}`)
@@ -32,10 +35,16 @@ export async function request<T>(path: string, init: RequestInit = {}): Promise<
     if (init.signal?.aborted) throw error
     throw new ApiError(0, 0, '无法连接后端服务，请检查本机服务状态')
   }
+  assertSession()
   let envelope: ApiEnvelope<T>
   const retryAfter = retryAfterSeconds(response.headers?.get('Retry-After'))
   try { envelope = await response.json() as ApiEnvelope<T> }
-  catch { throw new ApiError(response.status, 0, response.ok ? '服务返回了无法解析的数据' : `后端服务暂不可用（HTTP ${response.status}）`, retryAfter) }
+  catch {
+    assertSession()
+    if (response.status === 401 && token.value) { clearSession(); window.location.replace('/login') }
+    throw new ApiError(response.status, 0, response.ok ? '服务返回了无法解析的数据' : `后端服务暂不可用（HTTP ${response.status}）`, retryAfter)
+  }
+  assertSession()
   if (!response.ok || envelope.code !== 0) {
     if (response.status === 401 && token.value) {
       clearSession()
@@ -47,11 +56,14 @@ export async function request<T>(path: string, init: RequestInit = {}): Promise<
 }
 
 export async function downloadFile(path: string, filename: string): Promise<void> {
+  const identity = token.value, epoch = sessionEpoch()
+  const assertSession = () => { if (identity !== token.value || epoch !== sessionEpoch()) throw new ApiError(0, 0, '登录身份已变化，请重新下载') }
   const headers = new Headers()
   if (token.value) headers.set('Authorization', `Bearer ${token.value}`)
   let response: Response
   try { response = await fetch(path, { headers }) }
   catch { throw new ApiError(0, 0, '无法连接后端服务，请检查本机服务状态') }
+  assertSession()
   if (!response.ok) {
     let message = `后端服务暂不可用（HTTP ${response.status}）`
     try {
@@ -66,6 +78,7 @@ export async function downloadFile(path: string, filename: string): Promise<void
   }
   if (!response.headers.get('Content-Type')?.toLowerCase().includes('text/csv')) throw new ApiError(response.status, 0, '下载未返回 CSV 文件，请重试')
   const blob = await response.blob()
+  assertSession()
   const url = URL.createObjectURL(blob)
   const link = document.createElement('a')
   link.href = url

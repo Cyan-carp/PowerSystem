@@ -4,6 +4,7 @@ import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { ArrowLeft, ArrowRight, Delete, Promotion } from '@element-plus/icons-vue'
 import { api } from '../lib/api'
+import { useReconnectRefresh } from '../lib/reconnect-refresh'
 import { currentUser, token } from '../lib/auth'
 import { createRun, getRun, cancelRun, consumeRun } from '../lib/agent-runs'
 import type { RunSnapshot, RunInput } from '../lib/agent-runs'
@@ -86,6 +87,11 @@ async function explainRecordedTask(task: OpsTask): Promise<void> {
   explainTask(task.task_id)
 }
 async function refreshAll(): Promise<void> { await refreshSessions(); await Promise.all([refreshTasks(sessionID.value), refreshActiveNotice()]) }
+useReconnectRefresh(async () => {
+  await refreshAll()
+  // Reattach only already accepted run IDs; never call submitTurn/send/createRun.
+  for (const turn of turns.value) if (turn.run_id) void hydrateRun(turn, generation)
+})
 function explainTask(id: string): void { draft.value = `请解释运维任务 ${id} 的历史结果，不重新查询设备。`; void send() }
 const sessions = ref<RAGSession[]>([])
 const sessionClock = ref(Date.now())

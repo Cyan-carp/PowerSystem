@@ -1,0 +1,27 @@
+{
+  "name": "powersystem-desktop",
+  "version": "0.2.0",
+  "private": true,
+  "description": "PowerSystem V5-S02 Windows desktop client",
+  "author": "PowerSystem team",
+  "license": "UNLICENSED",
+  "main": "dist/main.js",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "build": "tsc",
+    "start": "npm run build && electron .",
+    "test": "npm run build && node --test tests/*.test.cjs",
+    "test:runtime": "npm run build && node tests/s02-runtime.cjs",
+    "package:win": "npm run build && electron-builder --config electron-builder.yml --win nsis --x64 --publish never"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.5",
+    "electron": "45.0.0",
+    "electron-builder": "26.18.0",
+    "playwright-core": "1.64.1",
+    "typescript": "5.9.3"
+  }
+}

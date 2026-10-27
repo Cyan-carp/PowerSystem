@@ -1,6 +1,33 @@
 import { describe, expect, it, vi } from 'vitest'
 
 describe('API authorization', () => {
+  it('cleans the active session even when a 401 body is not JSON', async () => {
+    vi.stubGlobal('window', { location: { replace: vi.fn() } })
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 401, json: async () => { throw new SyntaxError('not JSON') } }))
+    vi.resetModules()
+    const auth = await import('./auth')
+    auth.token.value = 'synthetic-active'
+    const { request } = await import('./api')
+    await expect(request('/synthetic')).rejects.toMatchObject({ status: 401 })
+    expect(auth.token.value).toBe('')
+    vi.unstubAllGlobals()
+  })
+  it('does not let an old account response clear a newly established account', async () => {
+    let complete!: (value: unknown) => void
+    const replace = vi.fn()
+    vi.stubGlobal('window', { location: { replace } })
+    vi.stubGlobal('fetch', vi.fn(() => new Promise(resolve => { complete = resolve })))
+    vi.resetModules()
+    const auth = await import('./auth')
+    auth.token.value = 'synthetic-A'
+    const { request } = await import('./api')
+    const pending = request('/synthetic')
+    auth.token.value = 'synthetic-B'
+    complete({ ok: false, status: 401, json: async () => ({ code: 40101 }) })
+    await expect(pending).rejects.toThrow('登录身份已变化')
+    expect(auth.token.value).toBe('synthetic-B'); expect(replace).not.toHaveBeenCalled()
+    vi.unstubAllGlobals()
+  })
   it('pins knowledge collection and version without forwarding a supplied origin or other query fields', async () => {
     const fetch = vi.fn().mockResolvedValue({ ok: true, status: 200, headers: new Headers(), json: async () => ({ code: 0, data: {} }) })
     vi.stubGlobal('fetch', fetch)
