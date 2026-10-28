@@ -6,7 +6,10 @@ import (
 	"flag"
 	"log"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
+	"time"
 
 	"go.uber.org/zap"
 	"golang.org/x/crypto/bcrypt"
@@ -34,11 +37,17 @@ func main() {
 		log.Fatal(err)
 	}
 	defer logger.Sync()
-	pg, err := store.Postgres(cfg)
+	root, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	startup, cancelStartup := context.WithTimeout(root, 30*time.Second)
+	defer cancelStartup()
+	logger.Info("api_startup", zap.String("phase", "schema"))
+	pg, err := store.PostgresContext(startup, cfg)
 	if err != nil {
 		logger.Fatal("postgres", zap.Error(err))
 	}
-	for _, path := range []string{"deploy/postgres/001_init.sql", "deploy/postgres/002_predictions.sql", "deploy/postgres/003_energy.sql", "deploy/postgres/004_business_notifications.sql", "deploy/postgres/005_agent_interpretations.sql", "deploy/postgres/006_alarm_statistics.sql", "deploy/postgres/007_alarm_closure.sql", "deploy/postgres/008_alarm_archive.sql", "deploy/postgres/009_simulation_alarms.sql", "deploy/postgres/010_interpretation_v2.sql", "deploy/postgres/011_alarm_maintenance.sql", "deploy/postgres/013_device_remarks.sql"} {
+	pg = pg.WithContext(startup)
+	for _, path := range store.MigrationPaths {
 		if err = store.Migrate(pg, path); err != nil {
 			logger.Fatal("migration", zap.Error(err))
 		}
@@ -58,6 +67,10 @@ func main() {
 	} else if err = store.Migrate(pg, "deploy/postgres/012_natural_alarm_rules.sql"); err != nil {
 		logger.Fatal("natural_alarm_rules_migration", zap.Error(err))
 	}
+	if *migrateOnly {
+		logger.Info("migration_complete")
+		return
+	}
 	if *createAdmin != "" {
 		password, readErr := bufio.NewReader(os.Stdin).ReadString('\n')
 		password = strings.TrimRight(password, "\r\n")
@@ -71,21 +84,19 @@ func main() {
 		logger.Info("admin_created", zap.String("username", *createAdmin))
 		return
 	}
-	redis, err := store.Redis(cfg)
+	redis, err := store.RedisContext(startup, cfg)
 	if err != nil {
 		logger.Fatal("redis", zap.Error(err))
 	}
 	defer redis.Close()
 	td := tdengine.New(cfg)
-	if err = td.Init(context.Background()); err != nil {
+	if err = td.Init(startup); err != nil {
 		logger.Fatal("tdengine", zap.Error(err))
 	}
-	if *migrateOnly {
-		logger.Info("migration_complete")
-		return
-	}
+	cancelStartup()
+	pg = pg.WithContext(root)
 	server := api.New(cfg, pg, redis, td, logger)
-	if err = server.Run(context.Background()); err != nil {
+	if err = server.Run(root); err != nil {
 		logger.Fatal("api", zap.Error(err))
 	}
 }

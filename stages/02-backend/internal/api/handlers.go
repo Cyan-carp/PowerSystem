@@ -36,7 +36,7 @@ func (s *Server) register(c *gin.Context) {
 		return
 	}
 	user := model.User{Username: body.Username, PasswordHash: string(hash), RealName: body.RealName, Role: "operator"}
-	if err = s.db.Create(&user).Error; err != nil {
+	if err = s.requestDB(c).Create(&user).Error; err != nil {
 		fail(c, 409, 40001, "username already exists")
 		return
 	}
@@ -52,7 +52,7 @@ func (s *Server) login(c *gin.Context) {
 		return
 	}
 	var user model.User
-	if err := s.db.Where("username=?", body.Username).First(&user).Error; err != nil || bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(body.Password)) != nil {
+	if err := s.requestDB(c).Where("username=?", body.Username).First(&user).Error; err != nil || bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(body.Password)) != nil {
 		fail(c, 401, 40101, "invalid credentials")
 		return
 	}
@@ -96,7 +96,7 @@ func (s *Server) listDevices(c *gin.Context) {
 	if !valid {
 		return
 	}
-	query := s.db.Model(&model.Device{}).Where("deleted_at IS NULL")
+	query := s.requestDB(c).Model(&model.Device{}).Where("deleted_at IS NULL")
 	query = selection.applyToDevices(query)
 	if keyword := strings.TrimSpace(c.Query("keyword")); keyword != "" {
 		if len(keyword) > 128 {
@@ -127,7 +127,7 @@ func (s *Server) createDevice(c *gin.Context) {
 		return
 	}
 	device := model.Device{DeviceCode: in.DeviceCode, Name: in.Name, DevType: in.DevType, Vendor: in.Vendor, StationCode: in.StationCode, GroupName: in.GroupName}
-	if err := s.db.Create(&device).Error; err != nil {
+	if err := s.requestDB(c).Create(&device).Error; err != nil {
 		fail(c, 409, 40001, "device code already exists")
 		return
 	}
@@ -178,7 +178,7 @@ func (s *Server) updateDevice(c *gin.Context) {
 	device.DevType = in.DevType
 	device.Vendor = in.Vendor
 	device.GroupName = in.GroupName
-	if err = s.db.Save(&device).Error; err != nil {
+	if err = s.requestDB(c).Save(&device).Error; err != nil {
 		fail(c, 500, 50000, "device update failed")
 		return
 	}
@@ -195,7 +195,7 @@ func (s *Server) deleteDevice(c *gin.Context) {
 		return
 	}
 	now := time.Now().UTC()
-	err = s.db.Transaction(func(tx *gorm.DB) error {
+	err = s.requestDB(c).Transaction(func(tx *gorm.DB) error {
 		if err := tx.Model(&model.Device{}).Where("id=?", deviceID).Update("deleted_at", now).Error; err != nil {
 			return err
 		}
@@ -278,12 +278,12 @@ func (s *Server) latest(c *gin.Context) {
 
 func (s *Server) dashboard(c *gin.Context) {
 	var devices []model.Device
-	if err := s.db.Where("deleted_at IS NULL").Find(&devices).Error; err != nil {
+	if err := s.requestDB(c).Where("deleted_at IS NULL").Find(&devices).Error; err != nil {
 		fail(c, 500, 50000, "dashboard failed")
 		return
 	}
 	var active int64
-	if err := s.db.Model(&model.AlarmRecord{}).Where("recovered_at IS NULL").Count(&active).Error; err != nil {
+	if err := s.requestDB(c).Model(&model.AlarmRecord{}).Where("recovered_at IS NULL").Count(&active).Error; err != nil {
 		fail(c, 500, 50000, "dashboard failed")
 		return
 	}
@@ -302,20 +302,26 @@ func (s *Server) dashboard(c *gin.Context) {
 		if err != nil {
 			continue
 		}
-		var v struct {
-			ReceivedAt time.Time `json:"received_at"`
-			Power      float64   `json:"power"`
-			Status     int       `json:"status"`
-		}
-		if json.Unmarshal(raw, &v) != nil || now.Sub(v.ReceivedAt) > 15*time.Second {
+		var v overviewSnapshot
+		if json.Unmarshal(raw, &v) != nil || !snapshotIsCurrent(v, now) {
 			continue
 		}
 		online++
-		power += v.Power
-		if v.Status == 2 {
+		power += *v.Power
+		if *v.Status == 2 {
 			fault++
 		} else {
 			healthy++
+		}
+	}
+	unknown := 0
+	offline := 0
+	for _, h := range healthItems {
+		if h.State == "unknown" {
+			unknown++
+		}
+		if h.State == "offline" {
+			offline++
 		}
 	}
 	score := 0.0
@@ -328,5 +334,5 @@ func (s *Server) dashboard(c *gin.Context) {
 		fail(c, 500, 50000, "energy summary failed")
 		return
 	}
-	ok(c, gin.H{"device_total": len(devices), "online": online, "offline": len(devices) - online, "fault": fault, "current_power_kw": math.Round(power*100) / 100, "active_alarms": active, "operational_health_percent": score, "health_score_percent": healthScore, "health_valid_count": validHealth, "health_unknown_count": len(devices) - validHealth, "health_provisional": validHealth < len(devices), "health_rule_version": healthRuleVersion, "health_computed_at": time.Now().UTC().Format(time.RFC3339Nano), "today_energy_kwh": e.TodayKWh, "retained_energy_kwh": e.RetainedKWh, "energy_start_ms": e.StartMS, "energy_updated_at": e.UpdatedAt})
+	ok(c, gin.H{"device_total": len(devices), "online": online, "offline": offline, "telemetry_unknown": unknown, "fault": fault, "current_power_kw": math.Round(power*100) / 100, "active_alarms": active, "operational_health_percent": score, "health_score_percent": healthScore, "health_valid_count": validHealth, "health_unknown_count": len(devices) - validHealth, "health_provisional": validHealth < len(devices), "health_rule_version": healthRuleVersion, "health_computed_at": time.Now().UTC().Format(time.RFC3339Nano), "today_energy_kwh": e.TodayKWh, "retained_energy_kwh": e.RetainedKWh, "energy_provisional": e.Provisional, "today_energy_provisional": e.TodayProvisional, "retained_energy_provisional": e.RetainedProvisional, "energy_start_ms": e.StartMS, "energy_updated_at": e.UpdatedAt})
 }

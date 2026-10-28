@@ -37,7 +37,7 @@ func TestFleetMinimalSmoke(t *testing.T) {
 	for _, statement := range []string{
 		`CREATE TABLE devices (id INTEGER PRIMARY KEY, device_code TEXT, name TEXT, dev_type TEXT, vendor TEXT, is_simulated BOOLEAN, reference_vendor TEXT, reference_model TEXT, station_code TEXT, group_name TEXT, deleted_at DATETIME, created_at DATETIME, updated_at DATETIME)`,
 		`CREATE TABLE alarm_records (id INTEGER PRIMARY KEY, device_id INTEGER, level TEXT, recovered_at DATETIME, triggered_at DATETIME, archived BOOLEAN)`,
-		`CREATE TABLE energy_daily (device_id INTEGER, day TEXT, kwh REAL, segments_count INTEGER, updated_at DATETIME)`,
+		`CREATE TABLE energy_daily (device_id INTEGER, day TEXT, kwh REAL, segments_count INTEGER, source_quality TEXT DEFAULT 'verified', updated_at DATETIME)`,
 	} {
 		if _, err := conn.Exec(statement); err != nil {
 			t.Fatal(err)

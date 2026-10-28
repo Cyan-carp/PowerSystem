@@ -17,11 +17,15 @@ func TestEnergyReportRealPostgres(t *testing.T) {
 		dsn = s03
 	}
 	if dsn == "" {
+		dsn = os.Getenv("TR_S02_TEST_DSN")
+	}
+	if dsn == "" {
 		t.Skip("dedicated S02 PostgreSQL not configured")
 	}
 	u, err := url.Parse(dsn)
 	isolated := err == nil && u.Hostname() == "127.0.0.1" && strings.HasSuffix(u.Path, "_test") &&
 		((u.Port() == "25432" && strings.HasPrefix(u.Path, "/v4_s02_")) || (u.Port() == "25433" && strings.HasPrefix(u.Path, "/v4_s03_")))
+	isolated = isolated || dsn == "postgres://tr_s02@127.0.0.1:15440/tr_s02_test?sslmode=disable"
 	if !isolated {
 		t.Fatal("dedicated S02/S03 loopback test database required")
 	}
@@ -38,7 +42,7 @@ func TestEnergyReportRealPostgres(t *testing.T) {
 	defer tx.Rollback()
 	for _, q := range []string{
 		`CREATE TEMP TABLE devices (id BIGINT PRIMARY KEY,device_code TEXT,name TEXT,dev_type TEXT,vendor TEXT,is_simulated BOOLEAN,reference_vendor TEXT,reference_model TEXT,station_code TEXT,group_name TEXT,deleted_at TIMESTAMPTZ,created_at TIMESTAMPTZ,updated_at TIMESTAMPTZ) ON COMMIT DROP`,
-		`CREATE TEMP TABLE energy_daily(device_id BIGINT,day DATE,kwh DOUBLE PRECISION,segments_count INTEGER,updated_at TIMESTAMPTZ,PRIMARY KEY(device_id,day)) ON COMMIT DROP`,
+		`CREATE TEMP TABLE energy_daily(device_id BIGINT,day DATE,kwh DOUBLE PRECISION,segments_count INTEGER,source_quality TEXT DEFAULT 'verified',updated_at TIMESTAMPTZ,PRIMARY KEY(device_id,day)) ON COMMIT DROP`,
 	} {
 		if err = tx.Exec(q).Error; err != nil {
 			t.Fatal(err)

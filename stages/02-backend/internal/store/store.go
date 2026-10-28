@@ -16,7 +16,10 @@ import (
 )
 
 func Postgres(cfg config.Config) (*gorm.DB, error) {
-	db, err := gorm.Open(postgres.Open(cfg.PostgresDSN), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
+	return PostgresContext(context.Background(), cfg)
+}
+func PostgresContext(parent context.Context, cfg config.Config) (*gorm.DB, error) {
+	db, err := gorm.Open(postgres.Open(cfg.PostgresDSN), &gorm.Config{DisableAutomaticPing: true, Logger: logger.Default.LogMode(logger.Silent)})
 	if err != nil {
 		return nil, err
 	}
@@ -24,25 +27,43 @@ func Postgres(cfg config.Config) (*gorm.DB, error) {
 	if err != nil {
 		return nil, err
 	}
-	sqlDB.SetMaxOpenConns(12)
-	sqlDB.SetMaxIdleConns(4)
+	sqlDB.SetMaxOpenConns(28)
+	sqlDB.SetMaxIdleConns(28)
 	sqlDB.SetConnMaxLifetime(30 * time.Minute)
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(parent, 5*time.Second)
 	defer cancel()
 	if err = sqlDB.PingContext(ctx); err != nil {
+		sqlDB.Close()
 		return nil, err
 	}
 	return db, nil
 }
 
 func Redis(cfg config.Config) (*redis.Client, error) {
-	client := redis.NewClient(&redis.Options{Addr: cfg.RedisAddr, Password: cfg.RedisPassword})
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	return RedisContext(context.Background(), cfg)
+}
+func RedisContext(parent context.Context, cfg config.Config) (*redis.Client, error) {
+	client := redis.NewClient(&redis.Options{Addr: cfg.RedisAddr, Password: cfg.RedisPassword, ContextTimeoutEnabled: true})
+	ctx, cancel := context.WithTimeout(parent, 3*time.Second)
 	defer cancel()
 	if err := client.Ping(ctx).Err(); err != nil {
+		client.Close()
 		return nil, err
 	}
 	return client, nil
+}
+
+// Order matters: install state before the repeatable energy reader migration.
+var MigrationPaths = []string{
+	"deploy/postgres/001_init.sql", "deploy/postgres/002_predictions.sql",
+	"deploy/postgres/003_energy.sql", "deploy/postgres/004_business_notifications.sql",
+	"deploy/postgres/005_agent_interpretations.sql", "deploy/postgres/006_alarm_statistics.sql",
+	"deploy/postgres/007_alarm_closure.sql", "deploy/postgres/008_alarm_archive.sql",
+	"deploy/postgres/009_simulation_alarms.sql", "deploy/postgres/010_interpretation_v2.sql",
+	"deploy/postgres/011_alarm_maintenance.sql", "deploy/postgres/013_device_remarks.sql",
+	"deploy/postgres/014_telemetry_reliability.sql",
+	"deploy/postgres/015_telemetry_scheduler.sql",
+	"deploy/postgres/016_telemetry_realtime.sql",
 }
 
 func Migrate(db *gorm.DB, path string) error {
@@ -50,19 +71,25 @@ func Migrate(db *gorm.DB, path string) error {
 	if err != nil {
 		return err
 	}
-	for _, statement := range strings.Split(string(content), ";") {
-		sql := strings.TrimSpace(statement)
-		if sql == "" {
-			continue
+	apply := func(tx *gorm.DB) error {
+		for _, statement := range strings.Split(string(content), ";") {
+			sql := strings.TrimSpace(statement)
+			if sql == "" {
+				continue
+			}
+			if err := tx.Exec(sql).Error; err != nil {
+				return err
+			}
 		}
-		if err := db.Exec(sql).Error; err != nil {
-			return err
+		if !tx.Migrator().HasTable("telemetry_inbox") {
+			return errors.New("migration did not create telemetry_inbox")
 		}
+		return nil
 	}
-	if !db.Migrator().HasTable("telemetry_inbox") {
-		return errors.New("migration did not create telemetry_inbox")
+	if strings.HasSuffix(path, "014_telemetry_reliability.sql") || strings.HasSuffix(path, "015_telemetry_scheduler.sql") || strings.HasSuffix(path, "016_telemetry_realtime.sql") {
+		return db.Transaction(apply)
 	}
-	return nil
+	return apply(db)
 }
 
 func SeedDemoDevices(db *gorm.DB) error {

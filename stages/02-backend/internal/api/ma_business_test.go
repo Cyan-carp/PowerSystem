@@ -44,7 +44,7 @@ func TestMAC19BusinessContinuesWithOperationUnavailable(t *testing.T) {
 	}
 	sqlDB, _ := db.DB()
 	defer sqlDB.Close()
-	for _, name := range []string{"001_init.sql", "002_predictions.sql", "003_energy.sql", "004_business_notifications.sql", "005_agent_interpretations.sql", "006_alarm_statistics.sql", "007_alarm_closure.sql", "008_alarm_archive.sql"} {
+	for _, name := range []string{"001_init.sql", "002_predictions.sql", "003_energy.sql", "004_business_notifications.sql", "005_agent_interpretations.sql", "006_alarm_statistics.sql", "007_alarm_closure.sql", "008_alarm_archive.sql", "011_alarm_maintenance.sql", "014_telemetry_reliability.sql"} {
 		if err = store.Migrate(db, filepath.Join("../../deploy/postgres", name)); err != nil {
 			t.Fatal(err)
 		}
@@ -96,7 +96,7 @@ func TestMAC19BusinessContinuesWithOperationUnavailable(t *testing.T) {
 	srv := New(cfg, tx, rd, tdengine.New(cfg), zap.NewNop())
 	srv.processPending(ctx)
 	var processed int64
-	tx.Raw("SELECT count(*) FROM telemetry_inbox WHERE id=? AND processed_at IS NOT NULL", inbox.ID).Scan(&processed)
+	tx.Raw("SELECT count(*) FROM telemetry_inbox WHERE id=? AND business_state='success'", inbox.ID).Scan(&processed)
 	if processed != 1 {
 		t.Fatal("telemetry was blocked by unavailable Operation")
 	}

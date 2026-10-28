@@ -12,6 +12,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"powersystem/backend/internal/model"
+	"powersystem/backend/internal/telemetry"
 )
 
 // rule-health-v1：当前时点的规则健康评分。离线或遥测故障为 0 分；在线非故障
@@ -69,17 +70,8 @@ func scoreLatestHealth(h deviceHealth, raw []byte, activeLevel string, now time.
 	h.SampledAt = v.TS
 	rcv := v.ReceivedAt.UTC().Format(time.RFC3339Nano)
 	h.ReceivedAt = &rcv
-	if v.ReceivedAt.IsZero() || v.ReceivedAt.After(now) {
-		h.MatchedBy = "reception time anomaly"
-		return h
-	}
-	// 保留既有 60 秒采样时钟容差；缺失或异常时间不能证明连接离线。
-	sampled := time.UnixMilli(*v.TS)
-	if *v.TS <= 0 || sampled.After(now.Add(60*time.Second)) || sampled.After(v.ReceivedAt.Add(60*time.Second)) {
-		h.MatchedBy = "sample time anomaly"
-		return h
-	}
-	if now.Sub(*v.ReceivedAt) > 15*time.Second {
+	state := telemetry.Freshness(now, *v.ReceivedAt, *v.TS)
+	if state == "offline" {
 		// 合法旧数据可证明连接已离线；离线记 0 分但不解释为已证实设备故障。
 		score := 0.0
 		h.Score = &score
@@ -88,8 +80,8 @@ func scoreLatestHealth(h deviceHealth, raw []byte, activeLevel string, now time.
 		return h
 	}
 	// 连接新鲜不等于采样新鲜；刚收到旧样本时必须保留未知。
-	if now.Sub(sampled) > 15*time.Second {
-		h.MatchedBy = "stale sample (>15s)"
+	if state != "fresh" {
+		h.MatchedBy = "sample or reception time unknown/stale/anomaly"
 		return h
 	}
 	if *v.Status == 2 {

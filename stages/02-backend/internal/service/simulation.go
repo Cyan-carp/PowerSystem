@@ -404,6 +404,9 @@ func FireSimulationSlot(db *gorm.DB, slotID int64, now time.Time) (*AlarmEvent, 
 	now = now.UTC()
 	var event *AlarmEvent
 	err := db.Transaction(func(tx *gorm.DB) error {
+		if err := AlarmWriteGate(tx); err != nil {
+			return err
+		}
 		var slot SimulationSlot
 		if err := tx.Table("simulation_alarm_slots").
 			Clauses(clause.Locking{Strength: "UPDATE"}).
@@ -472,6 +475,9 @@ func CloseExpiredSimulationSlots(db *gorm.DB, now time.Time) ([]AlarmEvent, erro
 	cutoff := now.Add(-SimulationDemoDuration)
 	events := make([]AlarmEvent, 0)
 	err := db.Transaction(func(tx *gorm.DB) error {
+		if err := AlarmWriteGate(tx); err != nil {
+			return err
+		}
 		var slots []SimulationSlot
 		if err := tx.Table("simulation_alarm_slots").
 			Clauses(clause.Locking{Strength: "UPDATE"}).

@@ -39,6 +39,11 @@ type energyReportDay struct {
 	DeviceCount      int      `json:"device_count"`
 	ValidDeviceCount int      `json:"valid_device_count"`
 	Complete         bool     `json:"complete"`
+	CoveredMS        int64    `json:"covered_ms"`
+	CoverageKnown    bool     `json:"coverage_known"`
+	CoverageComplete bool     `json:"coverage_complete"`
+	GapCount         int64    `json:"gap_count"`
+	MaxGapMS         int64    `json:"max_gap_ms"`
 }
 
 // energyReportMissing 逐条列出缺测的具体设备与自然日。
@@ -81,10 +86,16 @@ type energyReportGroup struct {
 // energyReportRow 是 energy_daily 的只读投影。Day 使用 CAST 兼容 PostgreSQL DATE
 // 与测试用 SQLite TEXT 两种存储。
 type energyReportRow struct {
+	DirtyPending bool `gorm:"column:dirty_pending"`
+
 	DeviceID      int64           `gorm:"column:device_id"`
 	Day           string          `gorm:"column:day"`
 	KWh           sql.NullFloat64 `gorm:"column:kwh"`
 	SegmentsCount sql.NullInt64   `gorm:"column:segments_count"`
+	SourceQuality string          `gorm:"column:source_quality"`
+	CoveredMS     sql.NullInt64   `gorm:"column:covered_ms"`
+	GapCount      sql.NullInt64   `gorm:"column:gap_count"`
+	MaxGapMS      sql.NullInt64   `gorm:"column:max_gap_ms"`
 	UpdatedAt     sql.NullTime    `gorm:"column:updated_at"`
 }
 
@@ -153,7 +164,11 @@ func (s *Server) energyReportRows(devices []model.Device, startDay, lastDay stri
 		ids[i] = device.ID
 	}
 	var rows []energyReportRow
-	err := s.db.Raw(`SELECT device_id, CAST(day AS TEXT) AS day, kwh, segments_count, updated_at
+	extra := "NULL AS covered_ms,NULL AS gap_count,NULL AS max_gap_ms"
+	if s.db.Dialector.Name() == "postgres" {
+		extra = "covered_ms,gap_count,max_gap_ms"
+	}
+	err := s.db.Raw(`SELECT device_id, CAST(day AS TEXT) AS day, kwh, segments_count, source_quality, updated_at,EXISTS(SELECT 1 FROM energy_dirty_days pending WHERE pending.device_id=energy_daily.device_id AND pending.day=energy_daily.day) AS dirty_pending,`+extra+`
 FROM energy_daily WHERE device_id IN ? AND day >= ? AND day <= ?`, ids, startDay, lastDay).Scan(&rows).Error
 	if err != nil {
 		return nil, err
@@ -192,7 +207,7 @@ func buildEnergyReport(selection scopeSelection, deviceID int64, devices []model
 	dayIndex := make(map[string]int, len(days))
 	for i, day := range days {
 		dayIndex[day] = i
-		report.Daily[i] = energyReportDay{Date: day, DeviceCount: len(devices)}
+		report.Daily[i] = energyReportDay{Date: day, DeviceCount: len(devices), CoverageKnown: true}
 	}
 	index := make(map[energyReportKey]energyReportRow, len(rows))
 	var aggregatedAt *time.Time
@@ -210,6 +225,9 @@ func buildEnergyReport(selection scopeSelection, deviceID int64, devices []model
 		for _, day := range days {
 			i := dayIndex[day]
 			row, found := index[energyReportKey{deviceID: device.ID, day: day}]
+			if !found || !row.CoveredMS.Valid || !row.GapCount.Valid || !row.MaxGapMS.Valid {
+				report.Daily[i].CoverageKnown = false
+			}
 			switch {
 			case !found:
 				report.Missing = append(report.Missing, energyReportMissing{DeviceID: device.ID, DeviceCode: device.DeviceCode, Date: day, Reason: "no_record"})
@@ -224,6 +242,21 @@ func buildEnergyReport(selection scopeSelection, deviceID int64, devices []model
 				report.Missing = append(report.Missing, energyReportMissing{DeviceID: device.ID, DeviceCode: device.DeviceCode, Date: day, Reason: "invalid_value"})
 				continue
 			}
+			if row.DirtyPending {
+				report.Missing = append(report.Missing, energyReportMissing{DeviceID: device.ID, DeviceCode: device.DeviceCode, Date: day, Reason: "dirty_pending"})
+			}
+			if row.SourceQuality != "verified" {
+				report.Missing = append(report.Missing, energyReportMissing{DeviceID: device.ID, DeviceCode: device.DeviceCode, Date: day, Reason: "source_uncertain"})
+			}
+			if !row.CoveredMS.Valid || !row.GapCount.Valid || !row.MaxGapMS.Valid {
+				report.Daily[i].CoverageKnown = false
+			}
+			report.Daily[i].CoveredMS += row.CoveredMS.Int64
+			report.Daily[i].GapCount += row.GapCount.Int64
+			report.Daily[i].MaxGapMS = max(report.Daily[i].MaxGapMS, row.MaxGapMS.Int64)
+			if row.GapCount.Int64 > 0 {
+				report.Missing = append(report.Missing, energyReportMissing{DeviceID: device.ID, DeviceCode: device.DeviceCode, Date: day, Reason: "sample_gap"})
+			}
 			sums[i] += row.KWh.Float64
 			report.Daily[i].ValidDeviceCount++
 			total += row.KWh.Float64
@@ -231,11 +264,18 @@ func buildEnergyReport(selection scopeSelection, deviceID int64, devices []model
 		}
 	}
 	for i := range report.Daily {
+
 		if report.Daily[i].ValidDeviceCount > 0 {
 			value := sums[i]
 			report.Daily[i].KWh = &value
 		}
 		report.Daily[i].Complete = len(devices) > 0 && report.Daily[i].ValidDeviceCount == len(devices)
+		for _, gap := range report.Missing {
+			if gap.Date == report.Daily[i].Date {
+				report.Daily[i].Complete = false
+			}
+		}
+		report.Daily[i].CoverageComplete = report.Daily[i].Complete && report.Daily[i].CoverageKnown && report.Daily[i].CoveredMS >= int64(len(devices))*86400000 && report.Daily[i].GapCount == 0
 	}
 	if validRows > 0 {
 		value := total

@@ -40,7 +40,7 @@ def main():
     boundary = f' AND i.id <= {args.max_id}' if args.max_id is not None else ''
     query = ("SELECT row_to_json(t) FROM (SELECT i.id,i.device_id,i.run_id,i.seq,i.ts_ms,"
              "i.payload,d.device_code,d.station_code FROM telemetry_inbox i "
-             "JOIN devices d ON d.id=i.device_id WHERE i.processed_at IS NULL "
+             "JOIN devices d ON d.id=i.device_id WHERE i.processed_at IS NULL AND (i.business_state IS NULL OR i.business_state IN ('pending','retry')) "
              "AND d.device_code IN ('INV-1001','INV-1002','INV-1003')" + boundary +
              " ORDER BY i.id) t")
     output = run(['docker', 'exec', 'powersystem-stage4-postgres-1', 'psql', '-U',

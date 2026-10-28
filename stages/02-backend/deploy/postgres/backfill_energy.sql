@@ -7,6 +7,6 @@ FROM (
     (to_timestamp((i.ts_ms + offsets.delta_ms)/1000.0) AT TIME ZONE 'Asia/Shanghai')::date AS day
   FROM telemetry_inbox AS i
   CROSS JOIN (VALUES (-15000), (0), (15000)) AS offsets(delta_ms)
-  WHERE i.processed_at IS NOT NULL
+  WHERE i.business_state='success' OR (i.business_state IS NULL AND i.processed_at IS NOT NULL)
 ) AS dates
 ON CONFLICT(device_id, day) DO UPDATE SET changed_at=clock_timestamp();

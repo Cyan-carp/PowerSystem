@@ -9,6 +9,7 @@ import (
 
 	"go.uber.org/zap"
 	"gorm.io/gorm"
+	"powersystem/backend/internal/service"
 )
 
 type pendingBusinessNotification struct {
@@ -42,11 +43,16 @@ func (s *Server) businessNotificationWorker(ctx context.Context) {
 	}
 }
 
-func (s *Server) deliverBusinessNotification(ctx context.Context) error {
+func (s *Server) deliverBusinessNotification(parent context.Context) error {
+	ctx, cancel := context.WithTimeout(parent, 10*time.Second)
+	defer cancel()
 	if s.alarmMaintenance(ctx) {
 		return nil
 	}
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := service.AlarmWriteGate(tx); err != nil {
+			return err
+		}
 		var item pendingBusinessNotification
 		if err := tx.Raw(`SELECT id,payload,attempts FROM business_notification_outbox
 			WHERE sent_at IS NULL AND next_attempt_at <= now()

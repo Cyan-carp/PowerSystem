@@ -140,7 +140,7 @@ func (s *Server) predictAll(ctx context.Context) {
 		return
 	}
 	var devices []model.Device
-	if err := s.db.Where("deleted_at IS NULL").Find(&devices).Error; err != nil {
+	if err := s.db.WithContext(ctx).Where("deleted_at IS NULL").Find(&devices).Error; err != nil {
 		s.log.Warn("prediction_devices_unavailable")
 		return
 	}
@@ -244,7 +244,7 @@ func (s *Server) predictDevice(ctx context.Context, device model.Device) error {
 	if result.Probability >= result.Threshold {
 		result.RiskLevel = "high"
 	}
-	return s.savePrediction(device, result)
+	return s.savePredictionContext(ctx, device, result)
 }
 
 func parseTDTime(value any) (int64, error) {
@@ -265,9 +265,17 @@ func parseTDTime(value any) (int64, error) {
 }
 
 func (s *Server) savePrediction(device model.Device, result predictionResponse) error {
+	return s.savePredictionContext(context.Background(), device, result)
+}
+func (s *Server) savePredictionContext(parent context.Context, device model.Device, result predictionResponse) error {
+	ctx, cancel := context.WithTimeout(parent, inboxTransactionBudget)
+	defer cancel()
 	var event *service.AlarmEvent
 	inserted := false
-	err := s.db.Transaction(func(tx *gorm.DB) error {
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := service.AlarmWriteGate(tx); err != nil {
+			return err
+		}
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&device, device.ID).Error; err != nil {
 			return err
 		}

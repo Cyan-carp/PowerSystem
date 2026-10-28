@@ -69,14 +69,26 @@ type AlarmRecord struct {
 	UpdatedAt    time.Time  `json:"updated_at"`
 }
 type Inbox struct {
-	ID          int64           `json:"id"`
-	RunID       string          `json:"run_id"`
-	DeviceID    int64           `json:"device_id"`
-	Seq         int64           `json:"seq"`
-	TS          int64           `gorm:"column:ts_ms" json:"ts_ms"`
-	Payload     json.RawMessage `gorm:"type:jsonb" json:"payload"`
-	ReceivedAt  time.Time       `json:"received_at"`
-	ProcessedAt *time.Time      `json:"processed_at"`
+	ID               int64           `json:"id"`
+	RunID            string          `json:"run_id"`
+	DeviceID         int64           `json:"device_id"`
+	Seq              int64           `json:"seq"`
+	TS               int64           `gorm:"column:ts_ms" json:"ts_ms"`
+	Payload          json.RawMessage `gorm:"type:jsonb" json:"payload"`
+	ReceivedAt       time.Time       `json:"received_at"`
+	ProcessedAt      *time.Time      `json:"processed_at"`
+	BusinessState    *string         `json:"business_state" gorm:"default:pending"`
+	TDConfirmedAt    *time.Time      `json:"td_confirmed_at"`
+	FirstFailedAt    *time.Time      `json:"first_failed_at"`
+	NextAttemptAt    *time.Time      `json:"next_attempt_at"`
+	Attempts         int64           `json:"attempts"`
+	FailureCode      *string         `json:"failure_code"`
+	MissingSince     *time.Time      `json:"missing_since"`
+	MissingCheckedAt *time.Time      `json:"missing_checked_at"`
+	MissingAttempts  int64           `json:"missing_attempts"`
+	ReasonSince      *time.Time      `json:"reason_since"`
+	ReasonAttempts   int64           `json:"reason_attempts"`
+	AlarmEvaluation  *string         `json:"alarm_evaluation"`
 }
 
 func (Inbox) TableName() string { return "telemetry_inbox" }

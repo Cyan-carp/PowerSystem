@@ -47,7 +47,7 @@ func TestV2PostgresRedisFixture(t *testing.T) {
 	}
 	count := func(table string) int64 { var n int64; must(db.Table(table).Count(&n).Error); return n }
 	// Exercise the application's real statement splitter, not only psql.
-	for _, path := range []string{"009_simulation_alarms.sql", "010_interpretation_v2.sql", "011_alarm_maintenance.sql"} {
+	for _, path := range []string{"009_simulation_alarms.sql", "010_interpretation_v2.sql", "011_alarm_maintenance.sql", "014_telemetry_reliability.sql"} {
 		must(store.Migrate(db, "../../deploy/postgres/"+path))
 	}
 	catalog, err := fleet.Load("../../../01-data-chain/simulator/fleet.json")

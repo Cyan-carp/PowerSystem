@@ -22,7 +22,7 @@ func main() {
 	}
 	sqlDB, _ := db.DB()
 	defer sqlDB.Close()
-	for _, name := range []string{"001_init.sql", "002_predictions.sql", "003_energy.sql", "004_business_notifications.sql", "005_agent_interpretations.sql", "006_alarm_statistics.sql", "007_alarm_closure.sql", "008_alarm_archive.sql"} {
+	for _, name := range []string{"001_init.sql", "002_predictions.sql", "003_energy.sql", "004_business_notifications.sql", "005_agent_interpretations.sql", "006_alarm_statistics.sql", "007_alarm_closure.sql", "008_alarm_archive.sql", "011_alarm_maintenance.sql", "014_telemetry_reliability.sql"} {
 		if store.Migrate(db, filepath.Join("deploy/postgres", name)) != nil {
 			panic("fixture_migration_failed")
 		}

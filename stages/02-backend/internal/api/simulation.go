@@ -40,7 +40,7 @@ func (s *Server) simulationAlarmWorker(ctx context.Context) {
 		}
 		now := time.Now()
 		// Drain existing records without creating or scheduling new slots.
-		s.closeExpiredSimulationSlots(now)
+		s.closeExpiredSimulationSlotsContext(ctx, now)
 	}
 	tick()
 	for {
@@ -54,7 +54,12 @@ func (s *Server) simulationAlarmWorker(ctx context.Context) {
 }
 
 func (s *Server) closeExpiredSimulationSlots(now time.Time) {
-	events, err := service.CloseExpiredSimulationSlots(s.db, now)
+	s.closeExpiredSimulationSlotsContext(context.Background(), now)
+}
+func (s *Server) closeExpiredSimulationSlotsContext(parent context.Context, now time.Time) {
+	ctx, cancel := context.WithTimeout(parent, inboxTransactionBudget)
+	defer cancel()
+	events, err := service.CloseExpiredSimulationSlots(s.db.WithContext(ctx), now)
 	if err != nil {
 		s.warnSimulation("simulation_close_failed", err)
 		return

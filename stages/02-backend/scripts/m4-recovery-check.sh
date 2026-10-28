@@ -15,7 +15,7 @@ docker start "$gateway" >/dev/null
 target=$((before + 1200))
 while :; do
   total=$(docker exec "$postgres" psql -U powersystem -d powersystem -tAc 'SELECT count(*) FROM telemetry_inbox')
-  pending=$(docker exec "$postgres" psql -U powersystem -d powersystem -tAc 'SELECT count(*) FROM telemetry_inbox WHERE processed_at IS NULL')
+  pending=$(docker exec "$postgres" psql -U powersystem -d powersystem -tAc "SELECT count(*) FROM telemetry_inbox WHERE business_state IS DISTINCT FROM 'success'")
   elapsed=$(($(date +%s) - started))
   if [ "$total" -ge "$target" ] && [ "$pending" -eq 0 ]; then
     printf 'recovery_elapsed_s=%s total=%s target=%s pending=%s\n' "$elapsed" "$total" "$target" "$pending"

@@ -101,29 +101,86 @@ func ProcessSample(db *gorm.DB, item model.Inbox, sample telemetry.Sample) (mode
 	var device model.Device
 	var events []AlarmEvent
 	err := db.Transaction(func(tx *gorm.DB) error {
+		if err := AlarmWriteGate(tx); err != nil {
+			return err
+		}
+		if err := TelemetryDeviceLock(tx, item.DeviceID); err != nil {
+			return err
+		}
+		var current model.Inbox
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&current, item.ID).Error; err != nil {
+			return err
+		}
+		if current.ProcessedAt != nil {
+			return ErrInboxTerminal
+		}
 		if err := tx.First(&device, item.DeviceID).Error; err != nil {
 			return err
 		}
-		// The persisted fleet identity scopes the five-slot cap. Recovery still
-		// runs for every active alarm, including legacy demonstration records.
-		controlled, err := IsControlledSimulationDevice(tx, device.ID)
-		if err != nil {
-			return err
-		}
-		var rules []model.AlarmRule
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("device_id = ? AND enabled = true", device.ID).Find(&rules).Error; err != nil {
-			return err
-		}
+		var err error
+		events, err = ProcessLockedSample(tx, current, sample, device)
+		return err
+	})
+	return device, events, err
+}
+
+// ProcessLockedSample shares the caller's already gated transaction, device
+// advisory lock and inbox row lock. It never commits or publishes independently.
+// ProcessSample remains the transaction-owning compatibility entry point.
+func ProcessLockedSample(tx *gorm.DB, item model.Inbox, sample telemetry.Sample, device model.Device) ([]AlarmEvent, error) {
+	var events []AlarmEvent
+	err := func() error {
 		now := time.Now().UTC()
+		evaluation := "evaluated"
+		var rules []model.AlarmRule
+		controlled := false
+		if telemetry.Freshness(now, item.ReceivedAt, sample.TS) != "fresh" {
+			evaluation = "historical_suppressed"
+		}
+		if tx.Dialector.Name() == "postgres" && evaluation == "evaluated" {
+			var accepted struct{ InboxID int64 }
+			result := tx.Raw(`INSERT INTO telemetry_alarm_progress(device_id,inbox_id,ts_ms) VALUES(?,?,?) ON CONFLICT(device_id) DO UPDATE SET inbox_id=excluded.inbox_id,ts_ms=excluded.ts_ms WHERE telemetry_alarm_progress.inbox_id<excluded.inbox_id AND telemetry_alarm_progress.ts_ms<=excluded.ts_ms RETURNING inbox_id`, item.DeviceID, item.ID, sample.TS).Scan(&accepted)
+			if result.Error != nil {
+				return result.Error
+			}
+			if accepted.InboxID == 0 {
+				evaluation = "historical_suppressed"
+			}
+		}
+		if evaluation == "evaluated" {
+			var err error
+			controlled, err = IsControlledSimulationDevice(tx, device.ID)
+			if err != nil {
+				return err
+			}
+			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("device_id=? AND enabled=true", device.ID).Find(&rules).Error; err != nil {
+				return err
+			}
+		}
+		// Four supported metrics share one bounded indexed lookup, retaining the
+		// same device/rule/record lock order and per-rule trigger/recovery logic.
+		activeByMetric := make(map[string]model.AlarmRecord, len(rules))
+		if len(rules) > 0 {
+			metrics := make([]string, 0, len(rules))
+			for _, rule := range rules {
+				metrics = append(metrics, rule.Metric)
+			}
+			var records []model.AlarmRecord
+			if e := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("device_id=? AND metric IN ? AND recovered_at IS NULL", device.ID, metrics).Order("id").Find(&records).Error; e != nil {
+				return e
+			}
+			for _, record := range records {
+				if _, exists := activeByMetric[record.Metric]; exists {
+					return errors.New("alarm_active_duplicate")
+				}
+				activeByMetric[record.Metric] = record
+			}
+		}
 		for _, rule := range rules {
 			value := sample.Value(rule.Metric)
 			active := Matches(rule.Operator, value, rule.Threshold)
-			var record model.AlarmRecord
-			lookup := tx.Where("device_id=? AND metric=? AND recovered_at IS NULL", device.ID, rule.Metric).First(&record).Error
-			if lookup != nil && !errors.Is(lookup, gorm.ErrRecordNotFound) {
-				return lookup
-			}
-			if active && errors.Is(lookup, gorm.ErrRecordNotFound) {
+			record, exists := activeByMetric[rule.Metric]
+			if active && !exists {
 				if controlled {
 					allowed, err := permitFleetNaturalAlarm(tx, device, rule.Metric, now, time.UnixMilli(sample.TS))
 					if err != nil {
@@ -149,7 +206,7 @@ func ProcessSample(db *gorm.DB, item model.Inbox, sample telemetry.Sample) (mode
 				}
 				events = append(events, AlarmEvent{Type: "alarm_created", Data: record})
 			}
-			if !active && lookup == nil {
+			if !active && exists {
 				if err := tx.Model(&record).Updates(map[string]any{"recovered_at": now, "status": "recovered", "close_reason": "telemetry_recovered", "updated_at": now}).Error; err != nil {
 					return err
 				}
@@ -163,12 +220,12 @@ func ProcessSample(db *gorm.DB, item model.Inbox, sample telemetry.Sample) (mode
 				events = append(events, AlarmEvent{Type: "alarm_recovered", Data: record})
 			}
 		}
-		if err := tx.Model(&model.Inbox{}).Where("id=? AND processed_at IS NULL", item.ID).Update("processed_at", now).Error; err != nil {
+		if err := tx.Model(&model.Inbox{}).Where("id=? AND processed_at IS NULL", item.ID).Updates(map[string]any{"processed_at": now, "business_state": "success", "failure_code": nil, "next_attempt_at": nil, "alarm_evaluation": evaluation}).Error; err != nil {
 			return err
 		}
 		return energy.MarkDirty(tx, item.DeviceID, sample.TS)
-	})
-	return device, events, err
+	}()
+	return events, err
 }
 
 func Matches(operator string, value, threshold float64) bool {

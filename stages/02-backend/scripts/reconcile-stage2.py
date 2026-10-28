@@ -103,11 +103,14 @@ def main() -> int:
         details[device] = {"expected": len(expected), "actual": len(actual), "missing": missing, "extra": extra, "duplicates": duplicates}
     inbox_count = pg_scalar(args.docker, f"SELECT COUNT(*) FROM telemetry_inbox WHERE run_id='{run_id}'")
     inbox_pending = pg_scalar(args.docker, f"SELECT COUNT(*) FROM telemetry_inbox WHERE run_id='{run_id}' AND processed_at IS NULL")
+    inbox_uncertain = pg_scalar(args.docker, f"SELECT COUNT(*) FROM telemetry_inbox WHERE run_id='{run_id}' AND (business_state IS NULL OR business_state<>'success')")
+    passed = passed and inbox_uncertain == 0
+
     passed = passed and inbox_count == len(generated) and inbox_pending == 0
     result = {
         "run_id": run_id, "passed": passed, "generated": len(generated),
         "simulator_pending": simulator_pending, "gateway_pending": gateway_pending,
-        "inbox_count": inbox_count, "inbox_pending": inbox_pending, "devices": details,
+        "inbox_count": inbox_count, "inbox_pending": inbox_pending, "inbox_uncertain": inbox_uncertain, "devices": details,
         "elapsed_seconds": round(elapsed_seconds, 1), "cases_passed": len(cases) if cases_passed else 0,
         "fault_events_complete": required_events.issubset(event_names), "events": events,
     }

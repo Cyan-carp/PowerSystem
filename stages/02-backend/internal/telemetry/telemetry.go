@@ -28,7 +28,40 @@ type Sample struct {
 var Code = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
 var Metrics = map[string]bool{"voltage": true, "current": true, "temperature": true, "power": true}
 
+// Freshness uses UTC instants, independently checks server receipt and sampling.
+// Clock skew tolerance is compatibility, never evidence of hardware failure.
+func Freshness(now, received time.Time, ts int64) string {
+	if received.IsZero() || received.After(now) || ts <= 0 {
+		return "unknown"
+	}
+	sampled := time.UnixMilli(ts)
+	if sampled.After(now.Add(60*time.Second)) || sampled.After(received.Add(60*time.Second)) {
+		return "unknown"
+	}
+	if now.Sub(received) > 15*time.Second {
+		return "offline"
+	}
+	if now.Sub(sampled) > 15*time.Second {
+		return "unknown"
+	}
+	return "fresh"
+}
+
 func Parse(payload []byte) (Sample, error) {
+	s, err := ParseStored(payload)
+	if err != nil {
+		return s, err
+	}
+	now := time.Now()
+	ts := time.UnixMilli(s.TS)
+	if ts.Before(now.Add(-48*time.Hour)) || ts.After(now.Add(48*time.Hour)) {
+		return s, errors.New("timestamp outside 48-hour window")
+	}
+	return s, nil
+}
+
+// ParseStored validates a durable sample without applying the arrival-time window again.
+func ParseStored(payload []byte) (Sample, error) {
 	var s Sample
 	if len(payload) > 64*1024 {
 		return s, errors.New("payload too large")
@@ -54,11 +87,6 @@ func Parse(payload []byte) (Sample, error) {
 	}
 	if s.SchemaVersion != 1 || !Code.MatchString(s.RunID) || !Code.MatchString(s.DeviceCode) || !Code.MatchString(s.StationCode) || s.Seq < 0 {
 		return s, errors.New("invalid identity or sequence")
-	}
-	now := time.Now()
-	ts := time.UnixMilli(s.TS)
-	if ts.Before(now.Add(-48*time.Hour)) || ts.After(now.Add(48*time.Hour)) {
-		return s, errors.New("timestamp outside 48-hour window")
 	}
 	for _, v := range []float64{s.Voltage, s.Current, s.Temperature, s.Power} {
 		if math.IsNaN(v) || math.IsInf(v, 0) {

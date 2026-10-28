@@ -4,9 +4,9 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -35,26 +35,39 @@ import (
 )
 
 type Server struct {
-	cfg       config.Config
-	db        *gorm.DB
-	redis     *redis.Client
-	td        *tdengine.Client
-	log       *zap.Logger
-	router    *gin.Engine
-	clients   map[*websocket.Conn]struct{}
-	clientsMu sync.Mutex
-	chatGate  chatAdmission
+	ingressOnce  sync.Once
+	ingressQueue chan mqtt.Message
+	ingressDone  chan struct{}
 
-	// inboxStalled counts consecutive rounds without progress. Only the single
-	// worker goroutine touches it, so no lock is needed.
-	inboxStalled int
+	cfg          config.Config
+	db           *gorm.DB
+	redis        *redis.Client
+	td           *tdengine.Client
+	log          *zap.Logger
+	router       *gin.Engine
+	clients      map[*websocket.Conn]*realtimeClient
+	clientsMu    sync.Mutex
+	chatGate     chatAdmission
+	realtime     realtimeHub
+	startupMu    sync.Mutex
+	startupPhase string
+	restoreOK    bool
+	runContext   context.Context
+
+	telemetry         telemetryMonitor
+	scheduler         inboxScheduler
+	snapshotMu        sync.Mutex
+	tdCircuit         dependencyCircuit
+	snapshotTDCircuit dependencyCircuit
+	redisCircuit      dependencyCircuit
 
 	fleetCatalog *fleet.Catalog
 }
 
 func New(cfg config.Config, db *gorm.DB, redis *redis.Client, td *tdengine.Client, log *zap.Logger) *Server {
 	gin.SetMode(gin.ReleaseMode)
-	s := &Server{cfg: cfg, db: db, redis: redis, td: td, log: log, clients: make(map[*websocket.Conn]struct{})}
+	s := &Server{cfg: cfg, db: db, redis: redis, td: td, log: log, clients: make(map[*websocket.Conn]*realtimeClient), startupPhase: "created"}
+	s.telemetry.touch("start", time.Now())
 	// The fleet manifest is optional: a missing or invalid file must not stop the
 	// existing API from serving devices and alarms without scope filtering.
 	if cfg.FleetPath != "" {
@@ -70,11 +83,30 @@ func New(cfg config.Config, db *gorm.DB, redis *redis.Client, td *tdengine.Clien
 	r := gin.New()
 	r.Use(gin.Recovery())
 	r.Use(httpMetrics.observe())
-	r.GET("/metrics", httpMetrics.serve)
-	r.GET("/api/v1/ping", func(c *gin.Context) { ok(c, gin.H{"status": "ok"}) })
+	r.GET("/metrics", func(c *gin.Context) { s.serveTelemetryMetrics(c) })
+	r.GET("/api/v1/ping", func(c *gin.Context) {
+		ready, phase, _ := s.readinessSnapshot()
+		if s.runContext != nil && !ready {
+			fail(c, 503, 50301, "telemetry not ready: "+phase)
+			return
+		}
+		ok(c, gin.H{"status": "ok", "telemetry_ready": ready, "telemetry_phase": phase})
+	})
+	r.GET("/live", func(c *gin.Context) { ok(c, gin.H{"status": "alive"}) })
+	r.GET("/ready", s.telemetryReady)
 	r.POST("/api/v1/auth/register", s.register)
 	r.POST("/api/v1/auth/login", s.login)
 	a := r.Group("/api/v1", s.authorize)
+	a.Use(func(c *gin.Context) {
+		if s.runContext != nil {
+			s.startupMu.Lock()
+			restored := s.restoreOK
+			s.startupMu.Unlock()
+			if !restored {
+				fail(c, 503, 50301, "telemetry startup recovery incomplete")
+			}
+		}
+	})
 	a.Use(s.alarmMaintenanceGuard)
 	a.GET("/devices", s.listDevices)
 	a.GET("/stations", s.listStations)
@@ -84,6 +116,7 @@ func New(cfg config.Config, db *gorm.DB, redis *redis.Client, td *tdengine.Clien
 	a.DELETE("/devices/:id", requireAdmin, s.deleteDevice)
 	a.GET("/devices/:id/telemetry", s.history)
 	a.GET("/devices/:id/telemetry/latest", s.latest)
+	a.GET("/devices/:id/telemetry/progress", s.telemetryProgress)
 	a.GET("/devices/:id/telemetry/export", s.exportTelemetry)
 	a.GET("/devices/:id/prediction", s.getPrediction)
 	a.GET("/predictions", s.listPredictions)
@@ -150,40 +183,92 @@ func New(cfg config.Config, db *gorm.DB, redis *redis.Client, td *tdengine.Clien
 	s.router = r
 	return s
 }
-func (s *Server) Run(ctx context.Context) error {
-	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
+func (s *Server) Run(parent context.Context) (runErr error) {
+	ctx, stop := signal.NotifyContext(parent, os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	s.restoreLatest(ctx)
-	go s.worker(ctx)
-	go s.energyWorker(ctx)
-	if s.cfg.SimulationAlarmMode != "off" && s.cfg.SimulationAlarmMode != "" {
-		go s.simulationAlarmWorker(ctx)
-	}
-	if s.cfg.AgentInterpretEnabled {
-		go s.interpretationScanner(ctx)
-		go s.monitorConsumer(ctx)
-		for i := 0; i < 2; i++ {
-			go s.interpretationWorker(ctx)
+	s.runContext = ctx
+	s.ensureRealtime()
+	var wg sync.WaitGroup
+	launch := func(fn func(context.Context)) { wg.Add(1); go func() { defer wg.Done(); fn(ctx) }() }
+	httpServer := &http.Server{Addr: s.cfg.HTTPAddr, Handler: s.router, ReadHeaderTimeout: 5 * time.Second, BaseContext: func(_ net.Listener) context.Context { return ctx }}
+	errCh := make(chan error, 1)
+	go func() { errCh <- httpServer.ListenAndServe() }()
+	defer func() {
+		s.setStartup("stopping", false)
+		stop()
+		s.realtime.cancel()
+		shut, cancel := context.WithTimeout(context.Background(), shutdownBudget)
+		defer cancel()
+		if err := httpServer.Shutdown(shut); err != nil {
+			httpServer.Close()
+			runErr = err
 		}
-	}
-	if s.cfg.BusinessNotifyEnabled {
-		go s.businessNotificationWorker(ctx)
-	}
-	if s.cfg.AIEnabled {
-		go s.predictionWorker(ctx)
-	}
+		done := make(chan struct{})
+		go func() { wg.Wait(); close(done) }()
+		select {
+		case <-done:
+		case <-shut.Done():
+			runErr = errors.New("telemetry_shutdown_timeout")
+		}
+		if s.ingressDone != nil {
+			select {
+			case <-s.ingressDone:
+			case <-shut.Done():
+				runErr = errors.New("ingress_shutdown_timeout")
+			}
+		}
+		select {
+		case <-s.realtime.done:
+		case <-shut.Done():
+			runErr = errors.New("realtime_shutdown_timeout")
+		}
+	}()
+	launch(s.telemetryWatchdog)
+	s.setStartup("subscribing", false)
 	if err := s.subscribe(ctx); err != nil {
 		return err
 	}
-	httpServer := &http.Server{Addr: s.cfg.HTTPAddr, Handler: s.router, ReadHeaderTimeout: 5 * time.Second}
-	errCh := make(chan error, 1)
-	go func() { errCh <- httpServer.ListenAndServe() }()
+	launch(func(ctx context.Context) {
+		for ctx.Err() == nil {
+			s.setStartup("restoring", false)
+			if err := s.restoreLatest(ctx); err == nil {
+				s.setStartup("running", true)
+				launch(s.worker)
+				launch(s.snapshotWorker)
+				launch(s.energyWorker)
+				if s.cfg.SimulationAlarmMode != "off" && s.cfg.SimulationAlarmMode != "" {
+					launch(s.simulationAlarmWorker)
+				}
+				if s.cfg.AgentInterpretEnabled {
+					launch(s.interpretationScanner)
+					launch(s.monitorConsumer)
+					for i := 0; i < 2; i++ {
+						launch(s.interpretationWorker)
+					}
+				}
+				if s.cfg.BusinessNotifyEnabled {
+					launch(s.businessNotificationWorker)
+				}
+				if s.cfg.AIEnabled {
+					launch(s.predictionWorker)
+				}
+				return
+			}
+			s.setStartup("restore_failed", false)
+			s.telemetryLog("restore_failed", time.Now())
+			timer := time.NewTimer(5 * time.Second)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return
+			case <-timer.C:
+			}
+		}
+	})
 	s.log.Info("api_started", zap.String("address", s.cfg.HTTPAddr))
 	select {
 	case <-ctx.Done():
-		shutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		return httpServer.Shutdown(shutCtx)
+		return nil
 	case err := <-errCh:
 		if err == http.ErrServerClosed {
 			return nil
@@ -195,6 +280,34 @@ func (s *Server) Run(ctx context.Context) error {
 // Handler is used by the isolated local MA acceptance proxy without starting business workers.
 func (s *Server) Handler() http.Handler { return s.router }
 func (s *Server) subscribe(ctx context.Context) error {
+	s.ingressOnce.Do(func() {
+		s.ingressQueue = make(chan mqtt.Message, 128)
+		s.ingressDone = make(chan struct{})
+		var receivers sync.WaitGroup
+		for n := 0; n < 4; n++ {
+			receivers.Add(1)
+			go func() {
+				defer receivers.Done()
+				for {
+					select {
+					case <-ctx.Done():
+						return
+					case message := <-s.ingressQueue:
+						for !s.receive(nil, message) {
+							timer := time.NewTimer(time.Second)
+							select {
+							case <-ctx.Done():
+								timer.Stop()
+								return
+							case <-timer.C:
+							}
+						}
+					}
+				}
+			}()
+		}
+		go func() { receivers.Wait(); close(s.ingressDone) }()
+	})
 	storePath := s.cfg.QueuePath + ".mqtt-store"
 	if err := os.MkdirAll(filepath.Dir(storePath), 0755); err != nil {
 		return err
@@ -204,46 +317,106 @@ func (s *Server) subscribe(ctx context.Context) error {
 	}
 	opts := mqtt.NewClientOptions().AddBroker(s.cfg.Broker).SetClientID(s.cfg.ClientID).SetCleanSession(false).SetStore(mqtt.NewFileStore(storePath)).SetAutoReconnect(true).SetConnectRetry(true).SetConnectRetryInterval(time.Second).SetMaxReconnectInterval(30 * time.Second).SetAutoAckDisabled(true).SetOrderMatters(true)
 	opts.SetOnConnectHandler(func(c mqtt.Client) {
-		token := c.Subscribe("device/telemetry", 1, s.receive)
-		if !token.WaitTimeout(10*time.Second) || token.Error() != nil {
+		token := c.Subscribe("device/telemetry", 1, s.acceptTelemetry)
+		wait, finish := context.WithTimeout(ctx, 2*time.Second)
+		defer finish()
+		select {
+		case <-token.Done():
+		case <-wait.Done():
+		}
+		if ctx.Err() != nil {
+			return
+		}
+		if wait.Err() != nil || token.Error() != nil {
 			s.log.Error("backend_subscribe_failed", zap.Error(token.Error()))
 		}
 	})
 	client := mqtt.NewClient(opts)
-	client.AddRoute("device/telemetry", s.receive)
+	client.AddRoute("device/telemetry", s.acceptTelemetry)
 	token := client.Connect()
-	if !token.WaitTimeout(30*time.Second) || token.Error() != nil {
+	connect, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	select {
+	case <-token.Done():
+	case <-connect.Done():
+		client.Disconnect(0)
+		return connect.Err()
+	}
+	if token.Error() != nil {
 		return fmt.Errorf("mqtt connect: %v", token.Error())
 	}
 	go func() { <-ctx.Done(); client.Disconnect(500) }()
 	return nil
 }
-func (s *Server) receive(_ mqtt.Client, message mqtt.Message) {
+
+// The bounded volatile admission buffer owns no queue truth: messages remain
+// unacknowledged until the database commits, and QoS1 owns crash redelivery.
+func (s *Server) acceptTelemetry(_ mqtt.Client, m mqtt.Message) {
+	if len(m.Payload()) > 64*1024 {
+		m.Ack()
+		return
+	}
+	select {
+	case <-s.runContext.Done():
+		return
+	case s.ingressQueue <- m:
+	}
+}
+func (s *Server) receive(_ mqtt.Client, message mqtt.Message) bool {
+	measured := time.Now()
+	defer func() { s.telemetry.elapsed("ingress", time.Since(measured)) }()
+	parent := s.runContext
+	if parent == nil {
+		parent = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(parent, inboxTransactionBudget)
+	defer cancel()
+	db := s.db.WithContext(ctx)
 	sample, err := telemetry.Parse(message.Payload())
 	if err != nil {
 		s.log.Warn("backend_rejected", zap.Error(err))
 		message.Ack()
-		return
+		return true
 	}
 	var device model.Device
-	if err = s.db.Where("device_code = ? AND deleted_at IS NULL", sample.DeviceCode).First(&device).Error; err != nil {
+	if err = db.Where("device_code = ? AND deleted_at IS NULL", sample.DeviceCode).First(&device).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			message.Ack()
 		} else {
 			s.log.Error("inbox_device_lookup", zap.Error(err))
 		}
-		return
+		return errors.Is(err, gorm.ErrRecordNotFound)
 	}
 	if device.StationCode != sample.StationCode {
 		message.Ack()
-		return
+		return true
 	}
-	err = s.db.Exec("INSERT INTO telemetry_inbox(run_id,device_id,seq,ts_ms,payload) VALUES(?,?,?,?,?::jsonb) ON CONFLICT(run_id,device_id,seq) DO NOTHING", sample.RunID, device.ID, sample.Seq, sample.TS, string(message.Payload())).Error
+	var admission struct {
+		GateCount int64
+		Admitted  int64
+	}
+	// One server-side statement is one transaction. MATERIALIZED gate and device
+	// lock keep the same drain/ordering protocol while avoiding seven RTTs per
+	// serial MQTT callback. A lost acknowledgement is safely retried by identity.
+	err = db.Raw(`WITH gate AS MATERIALIZED (SELECT enabled FROM alarm_maintenance_state WHERE id=1 FOR SHARE),
+ locked AS MATERIALIZED (SELECT pg_advisory_xact_lock(hashtextextended(?,0)) FROM gate WHERE NOT enabled),
+ inserted AS (INSERT INTO telemetry_inbox(run_id,device_id,seq,ts_ms,payload,received_at)
+ SELECT ?,?,?,?,?::jsonb,clock_timestamp() FROM locked ON CONFLICT(run_id,device_id,seq) DO NOTHING RETURNING device_id,ts_ms),
+ dirty AS (INSERT INTO energy_dirty_days(device_id,day,changed_at)
+ SELECT DISTINCT device_id,(to_timestamp((ts_ms+offset_ms)/1000.0) AT TIME ZONE 'Asia/Shanghai')::date,statement_timestamp()
+ FROM inserted CROSS JOIN (VALUES(-15000::bigint),(0::bigint),(15000::bigint)) offsets(offset_ms)
+ ON CONFLICT(device_id,day) DO UPDATE SET changed_at=excluded.changed_at RETURNING device_id)
+ SELECT (SELECT count(*) FROM gate) AS gate_count,(SELECT count(*) FROM locked) AS admitted`, fmt.Sprintf("telemetry-device:%d", device.ID), sample.RunID, device.ID, sample.Seq, sample.TS, string(message.Payload())).Scan(&admission).Error
+	if err == nil && (admission.GateCount != 1 || admission.Admitted != 1) {
+		return false
+	}
+
 	if err != nil {
 		s.log.Error("inbox_insert_failed", zap.Error(err))
-		return
+		return false
 	}
 	message.Ack()
+	return true
 }
 func (s *Server) worker(ctx context.Context) {
 	ticker := time.NewTicker(500 * time.Millisecond)
@@ -258,176 +431,134 @@ func (s *Server) worker(ctx context.Context) {
 	}
 }
 
-// inboxVerifyGrace bounds how long one unprocessed row may hold back its device.
-// A healthy sample reaches TDengine within seconds; once a row is older than the
-// grace window and still cannot be verified or processed, it is marked processed
-// without evaluation. Leaving such a row at processed_at IS NULL would block
-// every later sample of the same device forever.
-const inboxVerifyGrace = 2 * time.Minute
-
-// inboxTickBudget caps one polling round so a slow TDengine or database cannot
-// hold the single worker goroutine; unprocessed rows wait for the next round.
+// S02 budgets remain unchanged. S03 bounds selection, retry and dependency work.
 const inboxTickBudget = 30 * time.Second
+const inboxItemBudget = 5 * time.Second
+const inboxTransactionBudget = 3 * time.Second
+const telemetryDependencyBudget = time.Second
+const restoreBudget = 30 * time.Second
+const shutdownBudget = 5 * time.Second
 
-type inboxVerdict int
-
-const (
-	inboxRetry inboxVerdict = iota // inside the grace window, retry next round
-	inboxSkip                      // unrecoverable, mark processed and move on
-)
-
-// inboxVerdictFor decides what to do with a row that cannot be verified or
-// handled: retry inside the grace window, skip once it is older than that.
-func inboxVerdictFor(age time.Duration) inboxVerdict {
-	if age < inboxVerifyGrace {
-		return inboxRetry
-	}
-	return inboxSkip
-}
-
-func firstError(current, next error) error {
-	if current != nil {
-		return current
-	}
-	return next
-}
-
-// markInboxProcessed only stamps processed_at; the raw row stays for audit and
-// later backfill.
-func (s *Server) markInboxProcessed(ctx context.Context, id int64) error {
-	return s.db.WithContext(ctx).Model(&model.Inbox{}).
-		Where("id=? AND processed_at IS NULL", id).
-		Update("processed_at", time.Now().UTC()).Error
-}
-
-func (s *Server) processPending(parent context.Context) {
-	if s.alarmMaintenance(parent) {
-		return
-	}
-	var items []model.Inbox
-	// Each device advances in inbox order. A late TDengine row for one device
-	// must not hold back healthy devices.
-	if err := s.db.Raw("SELECT DISTINCT ON (device_id) * FROM telemetry_inbox WHERE processed_at IS NULL ORDER BY device_id,id LIMIT 500").Scan(&items).Error; err != nil {
-		s.log.Error("inbox_read_failed", zap.Error(err))
-		return
-	}
-	if len(items) == 0 {
-		s.inboxStalled = 0
-		return
-	}
-	ctx, cancel := context.WithTimeout(parent, inboxTickBudget)
+func (s *Server) processInboxItem(parent context.Context, item model.Inbox) {
+	measured := time.Now()
+	defer func() { s.telemetry.elapsed("history", time.Since(measured)) }()
+	ctx, cancel := context.WithTimeout(parent, inboxItemBudget)
 	defer cancel()
-	var advanced, skipped, deferred int
-	var firstErr error
-	var oldestSkipped time.Time
-	// retryOrSkip is the single exit for a row that cannot be handled: keep it
-	// for the next round while inside the grace window, otherwise stamp it
-	// processed and move on. This guarantees the device head always advances
-	// within the grace window.
-	retryOrSkip := func(item model.Inbox, age time.Duration, cause error) {
-		firstErr = firstError(firstErr, cause)
-		if inboxVerdictFor(age) == inboxRetry {
-			deferred++
-			return
+	txctx, txcancel := context.WithTimeout(ctx, inboxTransactionBudget)
+	defer txcancel()
+	code := "business_failed"
+	quarantine := false
+	var events []service.AlarmEvent
+	err := service.TelemetryTransaction(s.db.WithContext(txctx), func(tx *gorm.DB) error {
+		// Resolve an indeterminate commit before Redis or business side effects.
+		if err := service.TelemetryDeviceLock(tx, item.DeviceID); err != nil {
+			return err
 		}
-		if err := s.markInboxProcessed(ctx, item.ID); err != nil {
-			firstErr = firstError(firstErr, err)
-			deferred++
-			return
+		var current model.Inbox
+		if err := tx.Raw("SELECT * FROM telemetry_inbox WHERE id=? FOR UPDATE", item.ID).Scan(&current).Error; err != nil {
+			return err
 		}
-		skipped++
-		if oldestSkipped.IsZero() || item.ReceivedAt.Before(oldestSkipped) {
-			oldestSkipped = item.ReceivedAt
+		if current.ID == 0 || current.ProcessedAt != nil {
+			return service.ErrInboxTerminal
 		}
-	}
-	for _, item := range items {
-		if ctx.Err() != nil {
-			break
+		item = current
+		if current.NextAttemptAt != nil && current.NextAttemptAt.After(time.Now()) {
+			return errInboxDeferred
 		}
-		if s.alarmMaintenance(ctx) {
-			return
+		var head struct{ ID int64 }
+		if err := tx.Raw("SELECT id FROM telemetry_inbox WHERE device_id=? AND processed_at IS NULL ORDER BY id LIMIT 1", item.DeviceID).Scan(&head).Error; err != nil {
+			return err
 		}
-		var sample telemetry.Sample
-		if err := json.Unmarshal(item.Payload, &sample); err != nil {
-			// A corrupt payload never heals; treat it as past the grace window.
-			s.log.Error("inbox_payload_corrupt", zap.Int64("inbox_id", item.ID), zap.Error(err))
-			retryOrSkip(item, inboxVerifyGrace, err)
-			continue
+		if head.ID != item.ID {
+			return errInboxDeferred
 		}
-		age := time.Since(item.ReceivedAt)
-		found, verifyErr := s.td.HasSample(ctx, item.DeviceID, item.TS, item.Seq)
-		if verifyErr != nil || !found {
-			retryOrSkip(item, age, verifyErr)
-			continue
+		sample, parseErr := telemetry.ParseStored(item.Payload)
+		if parseErr != nil || sample.SchemaVersion != 1 || sample.RunID != item.RunID || sample.Seq != item.Seq || sample.TS != item.TS {
+			code, quarantine = "payload_invalid", false
+			return errors.New(code)
 		}
 		var device model.Device
-		if err := s.db.WithContext(ctx).First(&device, item.DeviceID).Error; err != nil {
-			retryOrSkip(item, age, err)
-			continue
+		err := tx.Where("id=? AND deleted_at IS NULL", item.DeviceID).First(&device).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			code, quarantine = "device_deleted", true
+			return err
 		}
-		latest, err := s.cacheLatest(ctx, device, sample, item.ReceivedAt)
 		if err != nil {
-			retryOrSkip(item, age, err)
-			continue
+			code = "device_lookup"
+			return err
 		}
-		_, events, err := service.ProcessSample(s.db, item, sample)
-		if err != nil {
-			// A per-row failure must not abort the round; the grace window
-			// decides whether to retry it or let the device move on.
-			retryOrSkip(item, age, err)
-			continue
+		if sample.DeviceCode != device.DeviceCode || sample.StationCode != device.StationCode {
+			code, quarantine = "identity_invalid", true
+			return errors.New(code)
 		}
-		s.broadcast(gin.H{"type": "telemetry", "data": latest})
-		for _, event := range events {
-			s.broadcast(event)
+		if item.TDConfirmedAt == nil {
+			if !s.tdCircuit.enter(time.Now()) {
+				s.telemetry.touch("td_circuit_skip", time.Now())
+				return errDependencyOpen
+			}
+			dep, depcancel := context.WithTimeout(txctx, telemetryDependencyBudget)
+			found, err := s.td.HasSample(dep, item.DeviceID, item.TS, item.Seq)
+			depcancel()
+			s.tdCircuit.finish(time.Now(), err, txctx.Err() != nil)
+			s.telemetry.touch("td_circuit_attempt", time.Now())
+			if err != nil {
+				code = "td_unavailable"
+				return err
+			}
+			if !found {
+				code = "td_missing"
+				return errors.New(code)
+			}
+			if err := tx.Model(&model.Inbox{}).Where("id=?", item.ID).Update("td_confirmed_at", gorm.Expr("clock_timestamp()")).Error; err != nil {
+				return err
+			}
 		}
-		advanced++
-	}
-	if skipped > 0 {
-		s.log.Warn("inbox_rows_skipped", zap.Int("count", skipped), zap.Duration("grace", inboxVerifyGrace), zap.Time("oldest_received_at", oldestSkipped))
-	}
-	if advanced == 0 && skipped == 0 {
-		s.inboxStalled++
-		// Two rounds per second; report at most once per minute.
-		if s.inboxStalled == 1 || s.inboxStalled%120 == 0 {
-			s.log.Warn("inbox_no_progress", zap.Int("deferred", deferred), zap.Int("ticks", s.inboxStalled), zap.NamedError("last_error", firstErr))
+
+		businessMeasured := time.Now()
+		events, err = service.ProcessLockedSample(tx, item, sample, device)
+		s.telemetry.elapsed("business_pg", time.Since(businessMeasured))
+		return err
+	})
+	if err != nil {
+		switch {
+		case errors.Is(err, service.ErrCommitUnknown):
+			s.requestRealtimeRefresh()
+			s.telemetry.touch("commit_unknown", time.Now())
+			s.telemetryLog("commit_unknown", time.Now())
+		case errors.Is(err, service.ErrInboxTerminal), errors.Is(err, errInboxDeferred), errors.Is(err, errDependencyOpen):
+		case errors.Is(err, service.ErrAlarmMaintenance), errors.Is(err, service.ErrMaintenanceMissing):
+			s.telemetryLog("maintenance_transaction", time.Now())
+		default:
+			if ctx.Err() != nil || txctx.Err() != nil {
+				s.telemetry.touch("cancelled", time.Now())
+				s.telemetryLog("cancelled", time.Now())
+				return
+			}
+			s.recordInboxFailure(ctx, item, code, quarantine)
 		}
 		return
 	}
-	s.inboxStalled = 0
+	s.telemetry.touch("success", time.Now())
+	s.telemetry.touch("advance", time.Now())
+	for _, event := range events {
+		s.broadcast(event)
+	}
 }
 
 func (s *Server) cacheLatest(ctx context.Context, device model.Device, sample telemetry.Sample, receivedAt time.Time) (gin.H, error) {
-	latest := gin.H{"device_id": device.ID, "device_code": device.DeviceCode, "run_id": sample.RunID, "seq": sample.Seq, "ts_ms": sample.TS, "received_at": receivedAt, "voltage": sample.Voltage, "current": sample.Current, "temperature": sample.Temperature, "power": sample.Power, "status": sample.Status, "fault_code": sample.FaultCode}
-	b, err := json.Marshal(latest)
-	if err != nil {
+	var item model.Inbox
+	if err := s.db.WithContext(ctx).Where("device_id=? AND run_id=? AND seq=? AND ts_ms=? AND td_confirmed_at IS NOT NULL", device.ID, sample.RunID, sample.Seq, sample.TS).First(&item).Error; err != nil {
 		return nil, err
 	}
-	if err := s.redis.Set(ctx, fmt.Sprintf("device:%d:latest", device.ID), b, 0).Err(); err != nil {
+	if err := s.refreshDeviceSnapshot(ctx, device); err != nil {
 		return nil, err
 	}
-	return latest, nil
+	return gin.H{"snapshot_source": "td_confirmed", "business_commit": "not_asserted"}, nil
 }
 
-func (s *Server) restoreLatest(ctx context.Context) {
-	var items []model.Inbox
-	if err := s.db.Raw("SELECT DISTINCT ON (device_id) * FROM telemetry_inbox WHERE processed_at IS NOT NULL ORDER BY device_id,id DESC").Scan(&items).Error; err != nil {
-		s.log.Warn("latest_restore_failed", zap.Error(err))
-		return
-	}
-	for _, item := range items {
-		var device model.Device
-		if err := s.db.Where("id=? AND deleted_at IS NULL", item.DeviceID).First(&device).Error; err != nil {
-			continue
-		}
-		var sample telemetry.Sample
-		if err := json.Unmarshal(item.Payload, &sample); err != nil {
-			continue
-		}
-		if _, err := s.cacheLatest(ctx, device, sample, item.ReceivedAt); err != nil {
-			s.log.Warn("latest_restore_failed", zap.Error(err))
-		}
-	}
+// Startup and runtime recovery use the same bounded durable-source path.
+func (s *Server) restoreLatest(ctx context.Context) error {
+	return s.restoreSnapshots(ctx)
 }
 
 type response struct {
@@ -499,7 +630,10 @@ func (s *Server) energyWorker(ctx context.Context) {
 	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
 	for {
-		if _, err := energy.RebuildPending(ctx, s.db, 12); err != nil && ctx.Err() == nil {
+		round, finish := context.WithTimeout(ctx, inboxTransactionBudget)
+		_, err := energy.RebuildPending(round, s.db, 12)
+		finish()
+		if err != nil && ctx.Err() == nil {
 			s.log.Warn("energy_rebuild_failed", zap.Error(err))
 		}
 		select {

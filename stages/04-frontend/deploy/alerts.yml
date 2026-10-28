@@ -15,3 +15,69 @@ groups:
           severity: warning
         annotations:
           summary: A host filesystem is more than 80 percent full
+  - name: telemetry-reliability
+    rules:
+      - alert: PowerSystemTelemetryProbeFailed
+        expr: ((powersystem_telemetry_probe_pg_ok == 0 or powersystem_telemetry_probe_redis_ok == 0 or time() - powersystem_telemetry_probe_timestamp_seconds > 15) and on(instance) (time() - powersystem_telemetry_start_timestamp_seconds > 15)) or (up{job="api"} unless on(instance) powersystem_telemetry_probe_timestamp_seconds)
+        for: 15s
+        labels:
+          severity: critical
+          component: telemetry
+        annotations:
+          summary: Telemetry watchdog unavailable or dependency probe failed
+      - alert: PowerSystemTelemetryInputStopped
+        expr: (powersystem_telemetry_inbox_receive_age_seconds > 30 or powersystem_telemetry_inbox_receive_age_seconds != powersystem_telemetry_inbox_receive_age_seconds) and on(instance) powersystem_telemetry_expected_devices > 0 and on(instance) (powersystem_telemetry_maintenance != 1) and on(instance) (time() - powersystem_telemetry_start_timestamp_seconds > 30)
+        for: 15s
+        labels:
+          severity: critical
+          component: telemetry
+        annotations:
+          summary: Expected telemetry input stopped or never initialized
+      - alert: PowerSystemTelemetryCoverageLow
+        expr: (powersystem_telemetry_fresh_ratio < 1 or powersystem_telemetry_missing_keys > 0 or powersystem_telemetry_cache_received_worst_age_seconds > 30 or powersystem_telemetry_cache_sample_worst_age_seconds > 30) and on(instance) powersystem_telemetry_expected_devices > 0 and on(instance) (powersystem_telemetry_maintenance != 1) and on(instance) (time() - powersystem_telemetry_start_timestamp_seconds > 30)
+        for: 15s
+        labels:
+          severity: warning
+          component: telemetry
+        annotations:
+          summary: Registered devices have missing or stale telemetry
+      - alert: PowerSystemTelemetryWorkerStalled
+        expr: (time() - powersystem_telemetry_loop_timestamp_seconds > 30 or powersystem_telemetry_queue_oldest_age_seconds > 60) and on(instance) powersystem_telemetry_expected_devices > 0 and on(instance) (powersystem_telemetry_maintenance != 1) and on(instance) (time() - powersystem_telemetry_start_timestamp_seconds > 30)
+        for: 15s
+        labels:
+          severity: critical
+          component: telemetry
+        annotations:
+          summary: Telemetry worker stopped or queue is not advancing
+      - alert: PowerSystemTelemetryNoBusinessSuccess
+        expr: (powersystem_telemetry_business_success_age_seconds > 60 or powersystem_telemetry_business_success_age_seconds != powersystem_telemetry_business_success_age_seconds) and on(instance) powersystem_telemetry_queue_oldest_age_seconds > 60 and on(instance) (powersystem_telemetry_maintenance != 1) and on(instance) powersystem_telemetry_expected_devices > 0 and on(instance) (time() - powersystem_telemetry_start_timestamp_seconds > 30)
+        for: 15s
+        labels:
+          severity: warning
+          component: telemetry
+        annotations:
+          summary: Pending telemetry has no successful business commits
+      - alert: PowerSystemTelemetryMaintenanceOverdue
+        expr: powersystem_telemetry_maintenance == 1 and on(instance) powersystem_telemetry_maintenance_age_seconds > 1800
+        for: 15s
+        labels:
+          severity: warning
+          component: telemetry
+        annotations:
+          summary: Telemetry maintenance exceeded its observation budget
+      - alert: PowerSystemTelemetryRegistryUnknown
+        expr: powersystem_telemetry_classification_known == 0 or powersystem_telemetry_maintenance_known == 0
+        for: 15s
+        labels:
+          severity: warning
+          component: telemetry
+        annotations:
+          summary: Telemetry registry classification or maintenance is unknown
+      - alert: PowerSystemTelemetryRedisWriteStalled
+        expr: time() - powersystem_telemetry_redis_write_timestamp_seconds > 60 and on(instance) powersystem_telemetry_queue_oldest_age_seconds > 60 and on(instance) (powersystem_telemetry_maintenance != 1) and on(instance) powersystem_telemetry_expected_devices > 0 and on(instance) (time() - powersystem_telemetry_start_timestamp_seconds > 30)
+        for: 15s
+        labels:
+          severity: warning
+          component: telemetry
+        annotations:
+          summary: Telemetry queue has no recent successful Redis writes

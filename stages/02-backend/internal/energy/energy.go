@@ -3,6 +3,7 @@ package energy
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"math"
 	"sort"
 	"time"
@@ -20,10 +21,14 @@ type Sample struct {
 }
 
 type Summary struct {
-	TodayKWh    *float64
-	RetainedKWh *float64
-	StartMS     *int64
-	UpdatedAt   *time.Time
+	Provisional         bool
+	TodayProvisional    bool
+	RetainedProvisional bool
+	TodayKWh            *float64
+	RetainedKWh         *float64
+	StartMS             *int64
+
+	UpdatedAt *time.Time
 }
 
 func dayFor(ts int64) string { return time.UnixMilli(ts).In(china).Format("2006-01-02") }
@@ -125,31 +130,78 @@ func rebuildDay(ctx context.Context, db *gorm.DB, d dirtyDay) error {
 	}
 	start, end := date.UnixMilli(), date.AddDate(0, 0, 1).UnixMilli()
 	rows, err := db.WithContext(ctx).Raw(`SELECT ts_ms,(payload->>'power')::double precision AS power
-FROM telemetry_inbox WHERE device_id=? AND processed_at IS NOT NULL
+FROM telemetry_inbox WHERE device_id=? AND processed_at IS NOT NULL AND (business_state='success' OR business_state IS NULL)
 AND ts_ms>=? AND ts_ms<=? ORDER BY ts_ms,id`, d.DeviceID, start-maxGapMs, end+maxGapMs).Rows()
 	if err != nil {
 		return err
 	}
 	defer rows.Close()
-	var samples []Sample
-	for rows.Next() {
-		var s Sample
-		if err := rows.Scan(&s.TS, &s.Power); err != nil {
-			return err
+	var left, right *Sample
+	kwh := 0.0
+	segments := 0
+	var covered, gaps, maxGap int64
+	accumulate := func() {
+		if left == nil || right == nil || min(right.TS, end) <= max(left.TS, start) {
+			return
 		}
-		if len(samples) > 0 && samples[len(samples)-1].TS == s.TS {
-			samples[len(samples)-1] = s
-		} else {
-			samples = append(samples, s)
+		gap := right.TS - left.TS
+		if gap > maxGap {
+			maxGap = gap
+		}
+		if gap > maxGapMs {
+			gaps++
+			return
+		}
+		value, n := calculateDay([]Sample{*left, *right}, start, end)
+		kwh += value
+		segments += n
+		if n > 0 {
+			covered += min(right.TS, end) - max(left.TS, start)
 		}
 	}
+	for rows.Next() {
+		var sample Sample
+		if err := rows.Scan(&sample.TS, &sample.Power); err != nil {
+			return err
+		}
+		if right == nil {
+			right = &sample
+			continue
+		}
+		if sample.TS == right.TS {
+			right = &sample
+			continue
+		}
+		accumulate()
+		left = right
+		right = &sample
+	}
+	accumulate()
 	if err := rows.Err(); err != nil {
 		return err
 	}
-	kwh, segments := calculateDay(samples, start, end)
+	var uncertain int64
+	if err := db.WithContext(ctx).Raw(`SELECT count(*) FROM telemetry_inbox WHERE device_id=? AND ts_ms>=? AND ts_ms<=? AND (business_state IS NULL OR business_state<>'success')`, d.DeviceID, start-maxGapMs, end+maxGapMs).Scan(&uncertain).Error; err != nil {
+		return err
+	}
+	quality := "verified"
+	if uncertain > 0 || gaps > 0 {
+		quality = "provisional"
+	}
 	return db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Exec(`INSERT INTO energy_daily(device_id,day,kwh,segments_count,updated_at) VALUES(?,?,?,?,now())
-ON CONFLICT(device_id,day) DO UPDATE SET kwh=excluded.kwh,segments_count=excluded.segments_count,updated_at=now()`, d.DeviceID, d.Day, kwh, segments).Error; err != nil {
+		// The same singleton UPDATE is the drain barrier for derived energy writes.
+		if tx.Dialector.Name() == "postgres" {
+			var gate struct{ Enabled bool }
+			r := tx.Raw("SELECT enabled FROM alarm_maintenance_state WHERE id=1 FOR SHARE").Scan(&gate)
+			if r.Error != nil {
+				return r.Error
+			}
+			if r.RowsAffected != 1 || gate.Enabled {
+				return errors.New("energy_maintenance_closed")
+			}
+		}
+		if err := tx.Exec(`INSERT INTO energy_daily(device_id,day,kwh,segments_count,source_quality,covered_ms,gap_count,max_gap_ms,updated_at) VALUES(?,?,?,?,?,?,?,?,now())
+ON CONFLICT(device_id,day) DO UPDATE SET kwh=excluded.kwh,segments_count=excluded.segments_count,source_quality=excluded.source_quality,covered_ms=excluded.covered_ms,gap_count=excluded.gap_count,max_gap_ms=excluded.max_gap_ms,updated_at=now()`, d.DeviceID, d.Day, kwh, segments, quality, covered, gaps, maxGap).Error; err != nil {
 			return err
 		}
 		return tx.Exec(`DELETE FROM energy_dirty_days WHERE device_id=? AND day=? AND changed_at<=?`, d.DeviceID, d.Day, d.ChangedAt).Error
@@ -164,14 +216,21 @@ func ReadSummary(ctx context.Context, db *gorm.DB, now time.Time) (Summary, erro
 SUM(CASE WHEN segments_count>0 THEN kwh END), MAX(updated_at) FROM energy_daily`, today).Row().Scan(&todayValue, &retainedValue, &updated); err != nil {
 		return Summary{}, err
 	}
+	var uncertainty struct {
+		Today    int64
+		Retained int64
+	}
+	if err := db.WithContext(ctx).Raw("SELECT COALESCE(SUM(CASE WHEN day=? AND source_quality<>'verified' THEN 1 ELSE 0 END),0)+(SELECT count(*) FROM energy_dirty_days WHERE day=?) AS today, COALESCE(SUM(CASE WHEN source_quality<>'verified' THEN 1 ELSE 0 END),0)+(SELECT count(*) FROM energy_dirty_days) AS retained FROM energy_daily", today, today).Scan(&uncertainty).Error; err != nil {
+		return Summary{}, err
+	}
 	var first sql.NullInt64
-	if err := db.WithContext(ctx).Raw(`SELECT MIN(ts_ms) FROM telemetry_inbox WHERE processed_at IS NOT NULL`).Row().Scan(&first); err != nil {
+	if err := db.WithContext(ctx).Raw(`SELECT MIN(ts_ms) FROM telemetry_inbox WHERE processed_at IS NOT NULL AND (business_state='success' OR business_state IS NULL)`).Row().Scan(&first); err != nil {
 		return Summary{}, err
 	}
 	if !first.Valid {
 		return Summary{}, nil
 	}
-	s := Summary{StartMS: &first.Int64}
+	s := Summary{StartMS: &first.Int64, Provisional: uncertainty.Retained > 0, TodayProvisional: uncertainty.Today > 0 || !todayValue.Valid, RetainedProvisional: uncertainty.Retained > 0 || !retainedValue.Valid}
 	if todayValue.Valid {
 		s.TodayKWh = &todayValue.Float64
 	}

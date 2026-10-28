@@ -4,6 +4,8 @@ tags: [源网智联, 后端, 源码运行]
 
 # 阶段二 · 后端主体
 
+遥测链路修复的四阶段方案与验收见[专项总索引](../../notes/01-项目调研规划与开发建设记录/专项修复-遥测链路可靠性/00-索引·遥测链路可靠性修复.md)，新对话从[接续入口](../../notes/01-项目调研规划与开发建设记录/专项修复-遥测链路可靠性/03-跨对话交接/00-TR当前接续入口.md)开始；新增实际命令仍维护本README，运行状态只看[唯一状态页](../../notes/00-当前系统状态.md)。
+
 2026-10-21告警v2已发布（旧业务告警10-22清理完成）：`AGENT_INTERPRET_PROTOCOL=v2`启用专属事件协议；当次发布的`SIMULATION_ALARM_MODE=controlled`核对fleet中143台设备并抑制自然新告警，`paused`仅停止新演示，已登记门控仍保留（历史行为）。迁移009/010/011分别维护演示日程、持久调用预算和维护冻结。自然预测仍保存，真实设备/平台监控不受每日五条配额影响。`GET /api/v1/alarms`及statistics支持`origin=normal|simulation`，statistics另支持`group_by=origin`；默认总数不变。
 
 2026-10-22 自然规则切换（**未生产发布**）：新增`deploy/postgres/012_natural_alarm_rules.sql`，为已核对的143台合成设备各建四类规则（五站共20类，`ON CONFLICT DO NOTHING`不覆盖既有规则）。`ProcessSample`不再对合成设备一律跳过自然新建，而是只在五个北京时间窗口内、由当日轮换设备、且当日策略设备自然/演示记录少于5条时允许新建；五条限额只统计策略表内合成设备，真实设备与平台监控不受限。`SIMULATION_ALARM_MODE=controlled`仅作为兼容输入，worker只结束历史演示，不再新建演示告警；旧演示记录保留。12个候选文件已按上传规范同步服务器源码、留原文件副本并核对LF/SHA；未构建候选或切换生产。012已在服务器上隔离断网的PostgreSQL夹具验证语法和幂等，但尚未在候选API镜像的实际迁移入口执行。
@@ -241,3 +243,192 @@ V4-S08定期任务、只读预演与验收门槛见 [S08测试与交付](../../n
 V4-S08八项交接与接续边界见 [S08阶段交接](../../notes/01-项目调研规划与开发建设记录/第四版-智能助手行动化重构/03-跨对话交接/S08-阶段交接.md)。
 
 S09联合整改、必要验证与未发布交接见 [S09阶段交接](../../notes/01-项目调研规划与开发建设记录/第四版-智能助手行动化重构/03-跨对话交接/S09-阶段交接.md)，具体候选/备份/回退与观察提案见 [发布准备](../../stages/04-frontend/deploy/v4-release-readiness.md)。当前状态以唯一系统状态页为准。
+
+## TR-S01 隔离验收与迁移
+
+契约、逐读写者清单和实际验收见[TR-S01交接](../../notes/01-项目调研规划与开发建设记录/专项修复-遥测链路可靠性/02-分阶段实施/01-S01监控与失败状态/04-TR-S01阶段交接.md)。当前运行状态只看[唯一状态页](../../notes/00-当前系统状态.md)。
+
+`014_telemetry_reliability.sql`由`store.MigrationPaths`接入API启动，整份014在同一事务执行。保留旧列/索引/历史NULL状态，不清洗历史；首次索引构建仍需维护窗口评估。迁移后仅前滚：先停所有旧worker，再迁移并启动新候选；禁止直接启动旧API回退。`-migrate-only`完成schema、种子及适用自然规则后退出，不再要求Redis/TD可用。本轮未执行生产迁移。
+
+### 专用依赖
+
+Linux/WSL夹具使用PostgreSQL16、Redis7、Prometheus2.45和官方独立Alertmanager0.26；仅绑定15439、16389、18089、19090、19093的loopback端口。依赖须解包到`$TR_S01_FIXTURE_ROOT/deps/root/usr/`，PostgreSQL库位于其`lib/x86_64-linux-gnu`；不得指向现有业务库。发行版Alertmanager可能硬编码系统模板，使用官方独立二进制，保持名称`prometheus-alertmanager`。
+
+```bash
+export TR_S01_FIXTURE_ROOT=/home/user23103/tr-s01-fixture
+bash stages/02-backend/scripts/tr-s01-fixture.sh start
+# 仅重置本夹具两库及16389 Redis；保留原证据，必要重测时才执行
+bash stages/02-backend/scripts/tr-s01-fixture.sh reset
+```
+
+### 构建与真实依赖验证
+
+以下PowerShell从阶段二目录执行。证据目录应事先建立并在每次修订后另建批次；测试缺依赖会失败，不能把SKIP算作通过。
+
+```powershell
+go build -o ../../artifacts/telemetry-reliability/TR-S01-local/api.exe ./cmd/api
+$env:TR_S01_API_BIN=(Resolve-Path ../../artifacts/telemetry-reliability/TR-S01-local/api.exe).Path
+$env:TR_S01_TEST_DSN='postgres://tr_s01@127.0.0.1:15439/tr_s01_test?sslmode=disable'
+go test -tags tr_s01 ./internal/api -run '^TestTRS01Isolated$' -v -count=1 -timeout 90s
+```
+
+该测试经真实API二进制验证空库首装、重复与旧数据升级；真实PG/Redis，TD为loopback协议夹具，不含MQTT、模型或外部通知。普通单测不用`tr_s01`标签。必要定向回归为电量报表、overview聚合、遥测解析及`TestTelemetry*`；不重跑其他智能体矩阵。
+
+### 告警闭环与边界
+
+以下从仓库根目录在Linux/WSL执行；`--evidence`必须是新目录。使用实际`stages/04-frontend/deploy/alerts.yml`和15秒抓取/求值，预算在执行前写入`budget-before.json`。
+
+```bash
+python3 stages/02-backend/scripts/test-telemetry-alerts.py \
+  --bin-dir /home/user23103/tr-s01-fixture/deps/root/usr/bin \
+  --evidence artifacts/telemetry-reliability/TR-S01-local/alerts-r1
+python3 stages/02-backend/scripts/telemetry-rule-boundaries.py /home/user23103/tr-s01-fixture/rules.json
+/home/user23103/tr-s01-fixture/deps/root/usr/bin/promtool test rules /home/user23103/tr-s01-fixture/rules.json
+bash -n stages/02-backend/scripts/tr-s01-fixture.sh
+bash stages/02-backend/scripts/tr-s01-fixture.sh stop
+```
+
+闭环只路由到本地假webhook。生产Alertmanager、飞书送达和维护协议不由此签收。新metrics由独立5秒watchdog生成，单轮4秒预算；handler只读内存快照。固定15秒新鲜度沿用本专题当前契约，不能直接外推上报周期更长的真实设备。
+
+`business_state`的pending/retry仍由当前worker消费；依赖重试暂为1秒，无复杂退避/公平调度。`processed_at`保留兼容的终结标记，只有`business_state='success'`可解释为业务成功。历史NULL行不重分类；legacy恢复须TD再验证，否则missing/unknown。
+
+电量数值保留legacy来源，隔离/重试不纳入积分。`source_quality=legacy_unknown/provisional`会使报表日/组/总计`complete=false`并给出`source_uncertain`；数值仍保留。`verified`仅说明来源状态经过验证；`complete`仍指所选设备日聚合可用，不承诺全天无采样缺口。summary分别返回今日与保留历史的暂定标记，overview返回今日标记。显式历史重建只使用`deploy/postgres/backfill_energy.sql`，本轮只在隔离库执行，禁止据本README重放生产历史。
+
+## TR-S02 维护、时限与隔离验证
+
+实现契约与八项交接见[TR-S02交接](../../notes/01-项目调研规划与开发建设记录/专项修复-遥测链路可靠性/02-分阶段实施/02-S02维护门禁与超时/04-TR-S02阶段交接.md)，当前状态只认[唯一状态页](../../notes/00-当前系统状态.md)。S01迁移只允许前滚的限制保留；本轮无新迁移、不发布、不重放历史告警或实发外部通知。
+
+维护门禁区分关闭/开启/SQL错误/缺id=1，后三者停业务写。原`UPDATE enabled=true`等待业务事务的共享行锁后构成冻结边界；原在途解读任务排空仍须保留。原始MQTT接收与网关TD写不随之停止，不能把维护当成整个平台停机；不自动解除维护。
+
+`/live`为独立存活接口；`/api/v1/ping`保留响应格式并在实际Run时同`/ready`强制就绪，避免原容器healthcheck在早启HTTP时提前200。额外返回`telemetry_ready/telemetry_phase`；`/ready`为真实数据就绪，恢复未完成、依赖未知/不可用、维护或预期集合覆盖不足均503。TD每轮独立限1秒SELECT只读探针；probe_td_state区分0未初始化/1成功/2错误/3超时/4未执行，固定计数、最近时间及分钟限流日志可诊断。新鲜度从探针测量起点持续增长，不能冻结在快照年龄。恢复失败每5秒重试一次受限恢复，保持未就绪；schema/依赖初始化总30秒、单次恢复30秒、单设备2秒。大库初始化超时须按S04统一维护窗口处理，不通过延长健康等待伪造新鲜。
+
+缓存`snapshot_source=td_confirmed/business_commit=not_asserted`只表达已读到TD样本，不表示PG告警事务已提交。`commit_unknown`后只允许先查持久inbox终态再处理，不因Redis/WS成功重放告警。
+
+广播全局64条、每连接8条/独立writer，最多128连接，每载荷16KiB，写预算1秒。队满或超长使旧epoch失效并断开，慢连接满或超时也断开；重连取新票据，沿用前端connected触发的只读刷新恢复，不保证WS事件必达或外部通知恰好一次。
+
+### 专用夹具启停（仓库根目录、WSL）
+
+复用已解包的S01 PG16/Redis7二进制，S02另建数据根与loopback端口15440/16390。脚本只允许专用`/home/.../tr-s02-fixture`；测试仅允许固定`tr_s02_test`和派生启动测试库，不指向业务库。
+
+```bash
+export TR_S02_FIXTURE_ROOT=/home/user23103/tr-s02-fixture
+export TR_S02_DEPS_ROOT=/home/user23103/tr-s01-fixture/deps/root
+bash stages/02-backend/scripts/tr-s02-fixture.sh start
+# 完成本轮验证后停止；保留数据与失败证据供下一阶段复核
+bash stages/02-backend/scripts/tr-s02-fixture.sh stop
+```
+
+### 同候选必要验证（PowerShell，阶段二目录）
+
+先创建新的批次目录，以下示例名称仅作示意，不覆盖已归档批次。每次修订另存输出；缺依赖测试失败，不能用SKIP代偿。测试会重建固定专用测试库的public schema，以及`tr_s02_startup_test`，所有数据均为本地合成夹具。
+
+```powershell
+$trEvidence='../../artifacts/telemetry-reliability/TR-S02-local'
+New-Item -ItemType Directory -Force $trEvidence | Out-Null
+$env:GOCACHE=(Join-Path (Resolve-Path $trEvidence).Path 'go-cache')
+go build -o "$trEvidence/api.exe" ./cmd/api
+$env:TR_S02_API_BIN=(Resolve-Path "$trEvidence/api.exe").Path
+$env:TR_S02_TEST_DSN='postgres://tr_s02@127.0.0.1:15440/tr_s02_test?sslmode=disable'
+$env:NATURAL_TEST_POSTGRES_DSN=$env:TR_S02_TEST_DSN
+go test -tags tr_s02 ./internal/api -run '^TestTRS02(Isolated|StartupEntry|GETBoundary)$' -v -count=1 -timeout 90s
+go test ./internal/api ./internal/service ./internal/energy ./internal/telemetry -run 'TestOriginAllowed|TestTelemetry|TestEnergy|TestOverview|TestMatches|TestFleetSlotWindow|TestSimulation|TestArchive|TestAlarm|TestRule|TestBusinessGrant|TestBusinessPolicy|TestPrediction|TestParse|TestIntegrate' -count=1
+go vet ./internal/api ./internal/service ./internal/energy ./internal/store ./cmd/api
+```
+
+T01—T08使用真实PG/Redis、实际事务锁/触发器取消、实际COMMIT且丢回执的驱动夹具、真实WebSocket握手/专用慢写连接、真实API Run与本地MQTT协议对端。TD、MQTT对端及慢写网络为协议/故障夹具，不外推完整服务、容量或生产送达。StartupEntry经实际API二进制验证空库与重复`-migrate-only`。
+
+前端源码无改动；重连与只读刷新复用`src/lib/realtime.ts`及各页面connected监听。若核查该恢复路径，在阶段四目录用既有`npm test -- src/lib/realtime.test.ts`运行单文件即可，无需重跑全前端或模型矩阵。严格笔记检查、图谱生成与`git diff --check`从仓库根目录按既有治理入口执行，证据归本轮独立批次。
+
+## TR-S03 公平调度、退避与受控补偿
+
+契约及八项交接见[TR-S03交接](../../notes/01-项目调研规划与开发建设记录/专项修复-遥测链路可靠性/02-分阶段实施/03-S03公平调度与可重试机制/04-TR-S03阶段交接.md)，当前状态只认[唯一状态页](../../notes/00-当前系统状态.md)。015由实际API迁移入口整体事务应用，保持014前滚限制；不支持旧worker混跑。游标只是调度元数据，inbox仍为唯一队列权威。每页最多500个设备队头，按inbox ID跨run有序；游标持久记录调度访问，退避/熔断跳过不计业务成功。
+
+> S04新增资源阀、两通道和网关接收协议见本页末节；S03测量不作为S04容量基线。
+
+### 专用依赖与必要矩阵
+
+从仓库根在WSL执行下列命令，仅本轮独立loopback端口；start拒绝覆盖已运行实例，stop核对Redis PID。先确认根目录和依赖根存在，不使用生产连接。脚本须保留LF换行。
+
+```bash
+export TR_S03_FIXTURE_ROOT=/home/user23103/tr-s03-fixture
+export TR_S03_DEPS_ROOT=/home/user23103/tr-s01-fixture/deps/root
+bash stages/02-backend/scripts/tr-s03-fixture.sh start
+# 验证结束只停止上述专用实例，保留PG数据和本轮证据
+bash stages/02-backend/scripts/tr-s03-fixture.sh stop
+```
+
+从阶段二目录在PowerShell运行。测试仅允许精确的S03 DSN，缺依赖直接失败；每个T01—T08用例以实际API空库/重复迁移准入，并在下个用例重置public前复制合成数据到`retained_testtrs03...` schema。T02的服务间隔取真实时钟；长宽限使用明确的合成策略时间，不冒充长时间容量观察。
+
+```powershell
+$trEvidence='../../artifacts/telemetry-reliability/TR-S03-local'
+New-Item -ItemType Directory -Force $trEvidence | Out-Null
+$env:GOCACHE=(Join-Path (Resolve-Path $trEvidence).Path 'go-cache')
+go build -o "$trEvidence/api.exe" ./cmd/api
+go build -o "$trEvidence/tr-compensate.exe" ./cmd/tr-compensate
+$env:TR_S03_API_BIN=(Resolve-Path "$trEvidence/api.exe").Path
+$env:TR_S03_COMP_BIN=(Resolve-Path "$trEvidence/tr-compensate.exe").Path
+$env:TR_S03_TEST_DSN='postgres://tr_s03@127.0.0.1:15441/tr_s03_test?sslmode=disable'
+go test -tags 'tr_s02 tr_s03' ./internal/api -run 'TestTRS03|TestTRS02Isolated|TestTRS02GETBoundary' -v -count=1 -timeout 240s
+go test ./internal/api ./internal/service ./internal/telemetry -run 'TestTelemetry|TestMatchesAtThreshold|TestEnergyReport(Route|Window|Scope|Seven|Distinguishes|NoDevices|NoAggregated)|TestParse' -v -count=1
+go vet ./internal/api ./internal/service ./internal/store ./internal/model ./cmd/api ./cmd/tr-compensate
+```
+
+### 补偿清单与单条入口
+
+补偿前逐条登记：候选/隔离环境、inbox ID及run/device/seq、持久状态/TD来源、首次失败/次数/稳定原因、原始行保留位置、依赖恢复证据、前驱及后继终态、操作者/原因/请求幂等键、预期业务及outbox数量。未知提交先锁读持久结果，success不重排；已有终结后继的历史行拒绝回队。补偿仅单ID，无范围扫描、自动任务或HTTP入口。
+
+以下入口默认只检查持久状态。`-isolated-replay`须另行显式传入，服务同时强制核对专用DB名/地址/端口；仅用于合成夹具演练，不是生产积压或历史告警重放工具。不启动通知派发器。相同request-id必须对应相同ID、actor及reason，原状态/首次失败/次数保留在审计表与原行。
+
+```powershell
+$env:TR_COMPENSATION_DSN=$env:TR_S03_TEST_DSN
+& "$trEvidence/tr-compensate.exe" -inbox-id <明确ID> -request-id <固定请求键> -actor <操作者> -reason <复核原因>
+# 仅专用隔离库、完成上述清单后，显式增加 -isolated-replay 演练一次
+```
+
+不通过清队列、缩小预期集合或改写received_at/成功时间治理积压。显式停用/静默沿S01有actor/reason/起止的silence窗口；只改变预期输入口径，仍处理已经到达的正常行。生产容量、积压恢复、原子最新值与统一时钟/历史告警策略及发布门禁留S04按当轮授权执行。
+
+## TR-S04 容量恢复、实时快照与历史业务
+
+当前状态见[唯一状态页](../../notes/00-当前系统状态.md)。契约、实际测试与八项交接见[TR-S04交接](../../notes/01-项目调研规划与开发建设记录/专项修复-遥测链路可靠性/02-分阶段实施/04-S04容量恢复与实时通道/04-TR-S04阶段交接.md)。本节只维护命令与操作协议，容量数据只见正式交付页。
+
+### 两通道与资源阀
+
+- 网关：128条未确认易失缓冲；最多32条或20ms合并一次SQLite FULL事务，成功提交才ACK；TD按原50条持久批次、跨设备最多4组并发，部分失败保留整批重试。取消等待接收/写入协程退出，SQLite文件及MQTT持久会话保留。
+- API：接收4槽/128条未确认缓冲，数据库单语句持维护SHARE与设备锁，到提交后才ACK。历史8槽/8条派发缓冲，页最多500设备队头；实时8槽/8条缓冲，页最多128设备/每设备最多3候选；PG连接上限28/空闲28。两个游标都只是检查点，原始inbox始终是队列权威。
+- `telemetry_scheduler.history_enabled`可暂停历史，`history_parallelism`限定1—8；降低并行度在下一轮生效，维护排空仍以维护单例UPDATE提交为准，不能把调小阀门当成全备栅栏。
+- 实时来源为已持久接收且精确匹配device/ts/seq的TD确认，`telemetry_snapshots`只保存派生来源引用。其提交后，另在维护SHARE及同设备锁下重读来源并写Redis；不是跨库原子事务。历史Redis故障不再回滚告警/outbox业务，未知PG提交仍先锁读inbox结果。
+- Redis用20位十进制inbox ID字符串做Lua原子比较，run/seq不参与大小；旧采样时间不推进水位。数据库恢复后在锁下以实际持久来源校正残存缓存，包括缓存ID比恢复库高的情况；Redis运行期重启由同一路径分页恢复。派生键TTL为10分钟；未变值不会靠写入刷新年龄，过期后按原持久来源补回，已删除设备的孤立键有固定寿命。
+
+### 时钟、读者及历史空档
+
+UTC毫秒为采样格式，数据库`clock_timestamp()`为接收权威；入库48小时容差保持。实时候选相对原接收时间过去15秒/未来60秒；展示仍要求接收和采样各15秒，未来最多60秒。慢30秒/停滞/旧样本新接收为unknown；快30秒处于兼容容差；超过60秒为unknown；合法旧接收为offline，均不推断硬件故障。
+
+summary、overview、health及watchdog复用同一时间谓词。summary/overview新增`telemetry_unknown`，未知不再并入offline；旧数值/字段保留，旧消费者须将未知与离线分开。latest保留`snapshot_source=td_confirmed/business_commit=not_asserted`与原接收时间，不宣称告警已完成。前端和07/08/09的现有只读工具继续接收JSON，忽略新增字段不会扩大写权限；故障诊断应读取unknown/partial及时间，不能以总数减online解释硬件故障。
+
+历史/乱序样本整次抑制告警评估（含恢复），不补发历史通知；`alarm_evaluation=historical_suppressed`持久保留。`GET /api/v1/devices/:id/telemetry/progress?before_id=...`以64条有界页显示业务状态、TD确认、抑制空档及隔离原因，不返回原始payload，下一页用`next_before_id`；GET只读。历史告警记录本身不伪造回填。
+
+电量仍只积分success及兼容legacy终结行；实时TD确认的pending与quarantine不积分，来源不确定仍provisional。流式重建按最后inbox ID合并同时间样本，超过15秒不积分；JSON报表新增`covered_ms/gap_count/max_gap_ms/coverage_known/coverage_complete`。旧complete保留“有效日聚合和来源”含义，全天连续覆盖要另外检查coverage_complete；旧日值不猜测补齐覆盖。报表保留独立dirty_pending缺口；dirty尚未重建时summary/overview为provisional，不用旧verified聚合冒充最新完整。CSV的source_uncertain/sample_gap继续显式传递缺口。
+
+### 016迁移及安全停止
+
+016通过实际API的`-migrate-only`入口按014/015后整体事务前滚，新增来源引用、告警评估水位、阀门与电量覆盖列；不清原始行、不猜测重分类legacy、不改既有kWh。不允许新旧worker混跑。S04容量依赖API和gateway两份实现，不能只更换API后外推结果。
+
+旧API在新schema上可能写success却缺少新审计，并使用无顺序SET，不能用切旧镜像回退。可验证的保守退路是维护冻结并停止API/gateway写者，保留schema与原始数据，再由同schema候选恢复；不承诺旧版本可继续业务。需要可用版本回退时，生产发布前另构建并验证同schema兼容镜像，或按统一全备恢复至独立隔离环境核对后另获授权，不能在线降schema。
+
+全备/恢复继续执行统一停止写者协议：维护UPDATE先排空API历史/实时写入，网关必须按原全备协议停止并等待其MQTT接收、SQLite/TD写协程退出；单独关闭历史阀不冻结网关。恢复保持维护开启，分别核PG来源、TD数据和派生缓存，之后走ready/健康及观察门禁。
+
+### 专用隔离复验（仓库根PowerShell）
+
+只对`tr-s04-*`四个专用容器及回环15442/16392/16042/11884操作。首次全新环境使用start；若已有本轮专用容器，先inventory核身份并保存回执，不能覆盖或停止同名但不归本轮的资源。
+
+```powershell
+$trEvidence=Join-Path (Get-Location) 'artifacts/telemetry-reliability/TR-S04-local'
+./stages/02-backend/scripts/tr-s04-fixture.ps1 -Action start -EvidenceRoot $trEvidence
+# 本轮已知专用夹具改用 -Action inventory，保留实际容器ID/镜像与配额回执。
+./stages/02-backend/scripts/tr-s04-validate.ps1 -Run final-r1 -EvidenceRoot $trEvidence -OldApiBinary '实际保存的pre-S04隔离API绝对路径.exe'
+./stages/02-backend/scripts/tr-s04-fixture.ps1 -Action stop -EvidenceRoot $trEvidence
+```
+
+验证器冻结API/gateway/测试二进制及旧兼容探针、源码/迁移/脚本清单，日志头尾核摘要与逐文件实哈，运行编号不可复用。Windows夹具记录组合API/网关进程CPU、RSS/Go堆及协程；真实四依赖性能不由协议故障对端代偿。143/5秒严格覆盖原140业务+3基线清单，286/5秒仅在隔离内存目录新增headroom身份，登记期望集合不排除；每设备4条指标规则，watchdog与电量重建持续竞争。二者均为专用隔离测量，后者是2倍余量验证，不自动注册生产设备或改频率。
+
+夹具库、SQLite、失败/修订证据、旧候选和冻结备份至少保留至2026-11-27或专项复核/交接完成较晚者。stop只按回执核对后的精确容器ID停服，保留卷/网络；不清其他会话、生产或回退资产。本节及隔离通过均不授权生产上传、部署、积压处理或外部通知。

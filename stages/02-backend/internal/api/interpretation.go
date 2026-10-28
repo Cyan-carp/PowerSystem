@@ -64,8 +64,13 @@ func (s *Server) interpretationScanner(ctx context.Context) {
 	}
 }
 
-func (s *Server) scanInterpretations(ctx context.Context) error {
+func (s *Server) scanInterpretations(parent context.Context) error {
+	ctx, cancel := context.WithTimeout(parent, inboxTransactionBudget)
+	defer cancel()
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := service.AlarmWriteGate(tx); err != nil {
+			return err
+		}
 		if err := tx.Exec(`INSERT INTO agent_scan_cursor(name,baseline_id,last_id)
    SELECT 'alarms',COALESCE(MAX(id),0),COALESCE(MAX(id),0) FROM alarm_records
    ON CONFLICT(name) DO NOTHING`).Error; err != nil {

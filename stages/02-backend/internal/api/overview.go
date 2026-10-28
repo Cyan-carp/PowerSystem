@@ -15,12 +15,14 @@ import (
 	"go.uber.org/zap"
 
 	"powersystem/backend/internal/model"
+	"powersystem/backend/internal/telemetry"
 )
 
 type overviewSummary struct {
 	DeviceTotal              int      `json:"device_total"`
 	Online                   int      `json:"online"`
 	Offline                  int      `json:"offline"`
+	TelemetryUnknown         int      `json:"telemetry_unknown"`
 	Fault                    int      `json:"fault"`
 	ActiveAlarms             int64    `json:"active_alarms"`
 	CurrentPowerKW           *float64 `json:"current_power_kw"`
@@ -30,6 +32,7 @@ type overviewSummary struct {
 	HealthUnknownCount       int      `json:"health_unknown_count"`
 	HealthProvisional        bool     `json:"health_provisional"`
 	TodayEnergyKWh           *float64 `json:"today_energy_kwh"`
+	EnergyProvisional        bool     `json:"energy_provisional"`
 	EnergyUpdatedAt          *string  `json:"energy_updated_at"`
 }
 
@@ -57,30 +60,34 @@ type overviewAlarm struct {
 }
 
 type overviewEnergy struct {
-	KWh       *float64
-	UpdatedAt *time.Time
+	Provisional bool
+	KWh         *float64
+	UpdatedAt   *time.Time
 }
 
 type overviewAccumulator struct {
-	registered int
-	observed   int
-	online     int
-	fault      int
-	power      float64
-	powerCount int
-	alarms     int64
-	healthSum  float64
-	healthN    int
-	energy     float64
-	energyN    int
-	energyAt   *time.Time
+	registered        int
+	observed          int
+	online            int
+	offline           int
+	fault             int
+	power             float64
+	powerCount        int
+	alarms            int64
+	healthSum         float64
+	healthN           int
+	energy            float64
+	energyN           int
+	energyProvisional bool
+	energyAt          *time.Time
 }
 
 func (a overviewAccumulator) summary() overviewSummary {
 	result := overviewSummary{
 		DeviceTotal:        a.registered,
 		Online:             a.online,
-		Offline:            a.registered - a.online,
+		Offline:            a.offline,
+		TelemetryUnknown:   a.registered - a.online - a.offline,
 		Fault:              a.fault,
 		ActiveAlarms:       a.alarms,
 		HealthValidCount:   a.healthN,
@@ -107,6 +114,7 @@ func (a overviewAccumulator) summary() overviewSummary {
 		value := a.energyAt.UTC().Format(time.RFC3339Nano)
 		result.EnergyUpdatedAt = &value
 	}
+	result.EnergyProvisional = a.energyProvisional || a.energyN < a.registered
 	return result
 }
 
@@ -115,12 +123,7 @@ func snapshotIsCurrent(v overviewSnapshot, now time.Time) bool {
 		*v.Status < 0 || *v.Status > 2 || math.IsNaN(*v.Power) || math.IsInf(*v.Power, 0) {
 		return false
 	}
-	sampled := time.UnixMilli(*v.TS)
-	if v.ReceivedAt.IsZero() || v.ReceivedAt.After(now) || *v.TS <= 0 ||
-		sampled.After(now.Add(60*time.Second)) || sampled.After(v.ReceivedAt.Add(60*time.Second)) {
-		return false
-	}
-	return now.Sub(*v.ReceivedAt) <= 15*time.Second && now.Sub(sampled) <= 15*time.Second
+	return telemetry.Freshness(now, *v.ReceivedAt, *v.TS) == "fresh"
 }
 
 func healthValue(raw []byte, d model.Device, activeLevel string, now time.Time) *float64 {
@@ -193,16 +196,17 @@ func (s *Server) overviewEnergy(devices []model.Device, now time.Time) (map[int6
 	china := time.FixedZone("Asia/Shanghai", 8*60*60)
 	day := now.In(china).Format("2006-01-02")
 	var rows []struct {
-		DeviceID int64
-		KWh      sql.NullFloat64
-		Updated  sql.NullTime
+		DeviceID  int64
+		KWh       sql.NullFloat64 `gorm:"column:kwh"`
+		Uncertain int64
+		Updated   sql.NullTime
 	}
 	if err := s.db.Raw(`SELECT device_id, SUM(CASE WHEN segments_count>0 THEN kwh END) AS kwh,
-MAX(updated_at) AS updated FROM energy_daily WHERE day=? AND device_id IN ? GROUP BY device_id`, day, ids).Scan(&rows).Error; err != nil {
+SUM(CASE WHEN source_quality<>'verified' OR EXISTS(SELECT 1 FROM energy_dirty_days pending WHERE pending.device_id=energy_daily.device_id AND pending.day=energy_daily.day) THEN 1 ELSE 0 END) AS uncertain, MAX(updated_at) AS updated FROM energy_daily WHERE day=? AND device_id IN ? GROUP BY device_id`, day, ids).Scan(&rows).Error; err != nil {
 		return nil, err
 	}
 	for _, row := range rows {
-		item := overviewEnergy{}
+		item := overviewEnergy{Provisional: row.Uncertain > 0}
 		if row.KWh.Valid {
 			item.KWh = &row.KWh.Float64
 		}
@@ -234,7 +238,11 @@ func accumulateOverview(devices []model.Device, raw map[int64][]byte, alarms map
 			result.healthSum += *score
 			result.healthN++
 		}
+		if h := scoreLatestHealth(deviceHealth{State: "unknown"}, bytes, alarm.Level, now); h.State == "offline" {
+			result.offline++
+		}
 		if energy := energies[d.ID]; energy.KWh != nil {
+			result.energyProvisional = result.energyProvisional || energy.Provisional
 			result.energy += *energy.KWh
 			result.energyN++
 			if energy.UpdatedAt != nil && (result.energyAt == nil || energy.UpdatedAt.After(*result.energyAt)) {

@@ -42,7 +42,7 @@ func (s *Server) listRules(c *gin.Context) {
 	if !valid {
 		return
 	}
-	query := s.db.Model(&model.AlarmRule{})
+	query := s.requestDB(c).Model(&model.AlarmRule{})
 	if v := c.Query("device_id"); v != "" {
 		query = query.Where("device_id=?", v)
 	}
@@ -80,7 +80,7 @@ func (s *Server) createRule(c *gin.Context) {
 		enabled = *in.Enabled
 	}
 	rule := model.AlarmRule{DeviceID: in.DeviceID, Metric: in.Metric, Operator: in.Operator, Threshold: in.Threshold, Level: in.Level, Enabled: enabled, Version: "v1"}
-	if s.db.Create(&rule).Error != nil {
+	if s.requestDB(c).Create(&rule).Error != nil {
 		fail(c, 409, 40001, "rule already exists for device and metric")
 		return
 	}
@@ -92,7 +92,7 @@ func (s *Server) getRule(c *gin.Context) {
 		return
 	}
 	var rule model.AlarmRule
-	if s.db.First(&rule, ruleID).Error != nil {
+	if s.requestDB(c).First(&rule, ruleID).Error != nil {
 		fail(c, 404, 40401, "rule not found")
 		return
 	}
@@ -104,7 +104,7 @@ func (s *Server) updateRule(c *gin.Context) {
 		return
 	}
 	var rule model.AlarmRule
-	if s.db.First(&rule, ruleID).Error != nil {
+	if s.requestDB(c).First(&rule, ruleID).Error != nil {
 		fail(c, 404, 40401, "rule not found")
 		return
 	}
@@ -120,7 +120,7 @@ func (s *Server) updateRule(c *gin.Context) {
 	if in.Enabled != nil {
 		rule.Enabled = *in.Enabled
 	}
-	if err := s.db.Transaction(func(tx *gorm.DB) error {
+	if err := s.requestDB(c).Transaction(func(tx *gorm.DB) error {
 		if err := tx.Save(&rule).Error; err != nil {
 			return err
 		}
@@ -141,11 +141,11 @@ func (s *Server) deleteRule(c *gin.Context) {
 		return
 	}
 	var rule model.AlarmRule
-	if s.db.First(&rule, ruleID).Error != nil {
+	if s.requestDB(c).First(&rule, ruleID).Error != nil {
 		fail(c, 404, 40401, "rule not found")
 		return
 	}
-	if err := s.db.Transaction(func(tx *gorm.DB) error {
+	if err := s.requestDB(c).Transaction(func(tx *gorm.DB) error {
 		if err := tx.Delete(&model.AlarmRule{}, ruleID).Error; err != nil {
 			return err
 		}
@@ -190,11 +190,14 @@ func (s *Server) listAlarms(c *gin.Context) {
 	if !valid {
 		return
 	}
-	query := s.db.Model(&model.AlarmRecord{}).Where("archived = FALSE")
-	query = selection.applyToAlarms(s.db, query)
-	if origin:=c.Query("origin"); origin!="" {
-		if origin!="normal"&&origin!="simulation" {fail(c,400,40001,"invalid origin");return}
-		query=query.Where("origin=?",origin)
+	query := s.requestDB(c).Model(&model.AlarmRecord{}).Where("archived = FALSE")
+	query = selection.applyToAlarms(s.requestDB(c), query)
+	if origin := c.Query("origin"); origin != "" {
+		if origin != "normal" && origin != "simulation" {
+			fail(c, 400, 40001, "invalid origin")
+			return
+		}
+		query = query.Where("origin=?", origin)
 	}
 	if device := c.Query("device_id"); device != "" {
 		deviceID, err := strconv.ParseInt(device, 10, 64)
@@ -258,7 +261,7 @@ func (s *Server) getAlarm(c *gin.Context) {
 		return
 	}
 	var alarm model.AlarmRecord
-	if s.db.First(&alarm, alarmID).Error != nil {
+	if s.requestDB(c).First(&alarm, alarmID).Error != nil {
 		fail(c, 404, 40401, "alarm not found")
 		return
 	}
@@ -273,7 +276,7 @@ func (s *Server) ackAlarm(c *gin.Context) {
 	userID := c.GetInt64("user_id")
 	var alarm model.AlarmRecord
 	errConflict := errors.New("alarm already acknowledged or recovered")
-	err := s.db.Transaction(func(tx *gorm.DB) error {
+	err := s.requestDB(c).Transaction(func(tx *gorm.DB) error {
 		result := tx.Model(&model.AlarmRecord{}).Where("id=? AND status='unhandled' AND recovered_at IS NULL", alarmID).Updates(map[string]any{"status": "acked", "acked_by": userID, "acked_at": now, "updated_at": now})
 		if result.Error != nil {
 			return result.Error
@@ -298,7 +301,7 @@ func (s *Server) ackAlarm(c *gin.Context) {
 		fail(c, 500, 50000, "ack failed")
 		return
 	}
-	s.broadcast(gin.H{"type": "alarm_acked", "data": alarm})
+	s.broadcastAfterWrite(c, gin.H{"type": "alarm_acked", "data": alarm})
 	ok(c, alarm)
 }
 
@@ -307,7 +310,7 @@ func (s *Server) archiveAlarm(c *gin.Context) {
 	if !valid {
 		return
 	}
-	result := s.db.Model(&model.AlarmRecord{}).Where("id=?", alarmID).
+	result := s.requestDB(c).Model(&model.AlarmRecord{}).Where("id=?", alarmID).
 		Updates(map[string]any{"archived": true, "updated_at": time.Now().UTC()})
 	if result.Error != nil {
 		fail(c, 500, 50000, "archive failed")
@@ -318,11 +321,11 @@ func (s *Server) archiveAlarm(c *gin.Context) {
 		return
 	}
 	var alarm model.AlarmRecord
-	if s.db.First(&alarm, alarmID).Error != nil {
+	if s.requestDB(c).First(&alarm, alarmID).Error != nil {
 		fail(c, 500, 50000, "archive failed")
 		return
 	}
-	s.broadcast(gin.H{"type": "alarm_archived", "data": alarm})
+	s.broadcastAfterWrite(c, gin.H{"type": "alarm_archived", "data": alarm})
 	ok(c, alarm)
 }
 
@@ -357,13 +360,13 @@ func (s *Server) archiveAlarms(c *gin.Context) {
 		return
 	}
 	now := time.Now().UTC()
-	if err := s.db.Model(&model.AlarmRecord{}).Where("id IN ?", ids).Where("archived = FALSE").
+	if err := s.requestDB(c).Model(&model.AlarmRecord{}).Where("id IN ?", ids).Where("archived = FALSE").
 		Updates(map[string]any{"archived": true, "updated_at": now}).Error; err != nil {
 		fail(c, http.StatusInternalServerError, 50000, "archive failed")
 		return
 	}
 	var archivedIDs []int64
-	if err := s.db.Model(&model.AlarmRecord{}).Where("id IN ?", ids).Where("archived = TRUE").
+	if err := s.requestDB(c).Model(&model.AlarmRecord{}).Where("id IN ?", ids).Where("archived = TRUE").
 		Pluck("id", &archivedIDs).Error; err != nil {
 		fail(c, http.StatusInternalServerError, 50000, "archive failed")
 		return
@@ -379,7 +382,7 @@ func (s *Server) archiveAlarms(c *gin.Context) {
 		}
 	}
 	if len(archivedIDs) > 0 {
-		s.broadcast(gin.H{"type": "alarm_archived", "data": gin.H{"ids": archivedIDs}})
+		s.broadcastAfterWrite(c, gin.H{"type": "alarm_archived", "data": gin.H{"ids": archivedIDs}})
 	}
 	ok(c, gin.H{"archived": len(archivedIDs), "failed": failed, "updated_at": now})
 }

@@ -4,11 +4,11 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sync"
 	"syscall"
 	"time"
 
@@ -24,6 +24,9 @@ import (
 )
 
 type Gateway struct {
+	runContext context.Context
+	ingress    chan mqtt.Message
+
 	cfg   config.Config
 	pg    *gorm.DB
 	queue *sql.DB
@@ -56,21 +59,26 @@ func NewGateway(cfg config.Config, pg *gorm.DB, td *tdengine.Client, log *zap.Lo
 			return nil, err
 		}
 	}
-	return &Gateway{cfg: cfg, pg: pg, queue: queue, td: td, log: log, wake: make(chan struct{}, 1)}, nil
+	return &Gateway{cfg: cfg, pg: pg, queue: queue, td: td, log: log, wake: make(chan struct{}, 1), ingress: make(chan mqtt.Message, 128)}, nil
 }
 func (g *Gateway) Close() error { return g.queue.Close() }
 
 func (g *Gateway) Run(ctx context.Context) error {
 	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	go g.writer(ctx)
+	g.runContext = ctx
+	writerDone := make(chan struct{})
+	admissionDone := make(chan struct{})
+	go func() { defer close(writerDone); g.writer(ctx) }()
+	go func() { defer close(admissionDone); g.admissionWorker(ctx) }()
+	defer func() { stop(); <-writerDone; <-admissionDone }()
 	path := g.cfg.QueuePath + ".mqtt-store"
 	if err := os.MkdirAll(path, 0755); err != nil {
 		return err
 	}
 	opts := mqtt.NewClientOptions().AddBroker(g.cfg.Broker).SetClientID(g.cfg.ClientID).SetCleanSession(false).SetStore(mqtt.NewFileStore(path)).SetAutoReconnect(true).SetConnectRetry(true).SetConnectRetryInterval(time.Second).SetMaxReconnectInterval(30 * time.Second).SetAutoAckDisabled(true).SetOrderMatters(true)
 	opts.SetOnConnectHandler(func(c mqtt.Client) {
-		token := c.Subscribe("device/telemetry", 1, g.receive)
+		token := c.Subscribe("device/telemetry", 1, g.acceptTelemetry)
 		if !token.WaitTimeout(10*time.Second) || token.Error() != nil {
 			g.log.Error("subscribe_failed", zap.Error(token.Error()))
 		} else {
@@ -78,7 +86,7 @@ func (g *Gateway) Run(ctx context.Context) error {
 		}
 	})
 	client := mqtt.NewClient(opts)
-	client.AddRoute("device/telemetry", g.receive)
+	client.AddRoute("device/telemetry", g.acceptTelemetry)
 	token := client.Connect()
 	if !token.WaitTimeout(30*time.Second) || token.Error() != nil {
 		return fmt.Errorf("mqtt connect: %v", token.Error())
@@ -87,39 +95,6 @@ func (g *Gateway) Run(ctx context.Context) error {
 	<-ctx.Done()
 	client.Disconnect(500)
 	return nil
-}
-func (g *Gateway) receive(_ mqtt.Client, message mqtt.Message) {
-	sample, err := telemetry.Parse(message.Payload())
-	if err != nil {
-		g.log.Warn("telemetry_rejected", zap.Error(err))
-		message.Ack()
-		return
-	}
-	var device model.Device
-	if err := g.pg.Where("device_code = ? AND deleted_at IS NULL", sample.DeviceCode).First(&device).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			g.log.Warn("unregistered_device", zap.String("device", sample.DeviceCode))
-			message.Ack()
-		} else {
-			g.log.Error("device_lookup_failed", zap.Error(err))
-		}
-		return
-	}
-	if device.StationCode != sample.StationCode {
-		g.log.Warn("station_mismatch", zap.String("device", sample.DeviceCode))
-		message.Ack()
-		return
-	}
-	_, err = g.queue.Exec("INSERT OR IGNORE INTO pending(run_id,device_id,seq,ts_ms,payload) VALUES(?,?,?,?,?)", sample.RunID, device.ID, sample.Seq, sample.TS, string(message.Payload()))
-	if err != nil {
-		g.log.Error("queue_write_failed", zap.Error(err))
-		return
-	}
-	message.Ack()
-	select {
-	case g.wake <- struct{}{}:
-	default:
-	}
 }
 func (g *Gateway) writer(ctx context.Context) {
 	ticker := time.NewTicker(2 * time.Second)
@@ -169,17 +144,46 @@ func (g *Gateway) flush(ctx context.Context) {
 		for _, row := range batch {
 			groups[row.deviceID] = append(groups[row.deviceID], row.sample)
 		}
+		// At most four cross-device TD writes; queue remains the durable SQLite
+		// authority. A partial batch failure retains every row for idempotent
+		// retry, and never deletes an unconfirmed group.
+		sem := make(chan struct{}, 4)
+		var writes sync.WaitGroup
+		var resultMu sync.Mutex
+		var writeErr error
 		for id, samples := range groups {
-			var device model.Device
-			if err = g.pg.First(&device, id).Error; err != nil {
-				g.log.Error("device_lookup_failed", zap.Error(err))
+			select {
+			case sem <- struct{}{}:
+			case <-ctx.Done():
+				writes.Wait()
 				return
 			}
-			if err = g.td.Insert(ctx, device, samples); err != nil {
-				g.log.Warn("tdengine_write_failed", zap.Error(err), zap.Int64("device_id", id))
-				return
-			}
+			writes.Add(1)
+			go func(id int64, samples []telemetry.Sample) {
+				defer writes.Done()
+				defer func() { <-sem }()
+				one, end := context.WithTimeout(ctx, 3*time.Second)
+				defer end()
+				var device model.Device
+				e := g.pg.WithContext(one).First(&device, id).Error
+				if e == nil {
+					e = g.td.Insert(one, device, samples)
+				}
+				if e != nil {
+					resultMu.Lock()
+					if writeErr == nil {
+						writeErr = e
+					}
+					resultMu.Unlock()
+				}
+			}(id, samples)
 		}
+		writes.Wait()
+		if writeErr != nil {
+			g.log.Warn("tdengine_batch_deferred")
+			return
+		}
+
 		tx, err := g.queue.BeginTx(ctx, nil)
 		if err != nil {
 			g.log.Error("queue_transaction_failed", zap.Error(err))

@@ -2,6 +2,7 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
@@ -299,7 +300,12 @@ func (s *Server) executeBusinessAction(c *gin.Context) {
 	var output map[string]any
 	var alarm model.AlarmRecord
 	conflict := errors.New("target or permission changed")
-	err = s.db.Transaction(func(tx *gorm.DB) error {
+	writeCtx, cancelWrite := context.WithTimeout(c.Request.Context(), inboxTransactionBudget)
+	defer cancelWrite()
+	err = s.db.WithContext(writeCtx).Transaction(func(tx *gorm.DB) error {
+		if err := service.AlarmWriteGate(tx); err != nil {
+			return err
+		}
 		var user model.User
 		if tx.Clauses(clause.Locking{Strength: "SHARE"}).First(&user, g.Owner).Error != nil || (user.Role != "operator" && user.Role != "admin") {
 			return conflict

@@ -32,7 +32,7 @@ func TestAccumulateOverviewKeepsMissingValuesUnknown(t *testing.T) {
 		map[int64]overviewAlarm{1: {Count: 2, Level: "major"}, 2: {Count: 1, Level: "urgent"}},
 		map[int64]overviewEnergy{1: {KWh: floatPtr(12.25), UpdatedAt: &updated}}, now)
 	got := acc.summary()
-	if acc.observed != 2 || got.Online != 2 || got.Offline != 1 || got.Fault != 1 || got.ActiveAlarms != 3 {
+	if acc.observed != 2 || got.Online != 2 || got.Offline != 0 || got.TelemetryUnknown != 1 || got.Fault != 1 || got.ActiveAlarms != 3 {
 		t.Fatalf("unexpected counts: acc=%+v summary=%+v", acc, got)
 	}
 	if got.CurrentPowerKW == nil || *got.CurrentPowerKW != 75.5 {

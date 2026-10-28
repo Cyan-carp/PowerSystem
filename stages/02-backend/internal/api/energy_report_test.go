@@ -32,7 +32,8 @@ func energyReportDB(t *testing.T) *gorm.DB {
 	}
 	for _, query := range []string{
 		`CREATE TABLE devices (id INTEGER PRIMARY KEY, device_code TEXT, name TEXT, dev_type TEXT, vendor TEXT, is_simulated BOOLEAN, reference_vendor TEXT, reference_model TEXT, station_code TEXT, group_name TEXT, deleted_at DATETIME, created_at DATETIME, updated_at DATETIME)`,
-		`CREATE TABLE energy_daily (device_id INTEGER, day TEXT, kwh REAL, segments_count INTEGER, updated_at DATETIME)`,
+		`CREATE TABLE energy_dirty_days(device_id INTEGER,day TEXT,changed_at DATETIME)`,
+		`CREATE TABLE energy_daily (device_id INTEGER, day TEXT, kwh REAL, segments_count INTEGER, source_quality TEXT DEFAULT 'verified', covered_ms INTEGER, gap_count INTEGER, max_gap_ms INTEGER, updated_at DATETIME)`,
 	} {
 		if err := db.Exec(query).Error; err != nil {
 			t.Fatal(err)
@@ -338,5 +339,25 @@ func TestEnergyReportNoAggregatedRecords(t *testing.T) {
 		if day.KWh != nil || day.ValidDeviceCount != 0 || day.Complete {
 			t.Fatalf("day=%+v", day)
 		}
+	}
+}
+
+func TestEnergyReportDirtyNeverComplete(t *testing.T) {
+	db := energyReportDB(t)
+	seedEnergyDevice(t, db, 1, "INV-1001", "ST-01")
+	seedEnergyDaily(t, db, 1, "2026-10-01", 1.0, 1, time.Now())
+	if e := db.Exec("UPDATE energy_daily SET covered_ms=86400000,gap_count=0,max_gap_ms=5000").Error; e != nil {
+		t.Fatal(e)
+	}
+	if e := db.Exec("INSERT INTO energy_dirty_days(device_id,day) VALUES(1,'2026-10-01')").Error; e != nil {
+		t.Fatal(e)
+	}
+	server := &Server{db: db, fleetCatalog: testFleetCatalog(t)}
+	status, report := getEnergyReport(t, energyReportRouter(server), "?start_date=2026-10-01&end_date=2026-10-02")
+	if status != 200 || report.Complete || report.Daily[0].CoverageComplete {
+		t.Fatal("dirty presented as complete", status, report)
+	}
+	if len(report.Missing) != 1 || report.Missing[0].Reason != "dirty_pending" {
+		t.Fatal("dirty provenance hidden", report.Missing)
 	}
 }
