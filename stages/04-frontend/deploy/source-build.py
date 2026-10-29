@@ -25,7 +25,7 @@ SERVICES = {
 REQUIRED = (
     'stages/02-backend/internal/api/agent_runs.go',
     'stages/02-backend/internal/api/agent_artifacts.go',
-    'stages/04-frontend/src/views/AgentSchedulesView.vue',
+    'stages/04-frontend/src/views/SchedulesView.vue',
     'stages/08-agent-rag/rag_agent/run_api.py',
     'stages/08-agent-rag/rag_agent/artifacts.py',
     'stages/09-ops-agent/ops_agent/schedule_contract.py',

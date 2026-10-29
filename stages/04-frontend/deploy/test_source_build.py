@@ -82,7 +82,7 @@ class SourceBuildTests(unittest.TestCase):
     def test_stage_tar_cannot_read_unmanifested_workspace(self):
         packed, recipe = sb.build_tar(self.source, 'frontend')
         with tarfile.open(fileobj=io.BytesIO(packed)) as archive:
-            self.assertIn('src/views/AgentSchedulesView.vue', archive.getnames())
+            self.assertIn('src/views/SchedulesView.vue', archive.getnames())
             self.assertFalse(any(n.startswith('stages/') for n in archive.getnames()))
         self.assertEqual(recipe, 'Dockerfile')
 
