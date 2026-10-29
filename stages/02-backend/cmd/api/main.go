@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"flag"
+	"fmt"
 	"log"
 	"os"
 	"os/signal"
@@ -24,8 +25,13 @@ import (
 
 func main() {
 	migrateOnly := flag.Bool("migrate-only", false, "apply database schema and seed demo devices, then exit")
+	migrationTimeout := flag.Duration("migration-timeout", 30*time.Second, "offline migrate-only budget (30s to 15m); never changes server startup budget")
 	createAdmin := flag.String("create-admin", "", "create an admin using a password from stdin (server-local operation)")
 	flag.Parse()
+	startupBudget, err := migrationStartupBudget(*migrateOnly, *migrationTimeout)
+	if err != nil {
+		log.Fatal(err)
+	}
 	cfg, err := config.Load("api")
 	if err != nil {
 		log.Fatal(err)
@@ -39,7 +45,7 @@ func main() {
 	defer logger.Sync()
 	root, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	startup, cancelStartup := context.WithTimeout(root, 30*time.Second)
+	startup, cancelStartup := context.WithTimeout(root, startupBudget)
 	defer cancelStartup()
 	logger.Info("api_startup", zap.String("phase", "schema"))
 	pg, err := store.PostgresContext(startup, cfg)
@@ -99,4 +105,16 @@ func main() {
 	if err = server.Run(root); err != nil {
 		logger.Fatal("api", zap.Error(err))
 	}
+}
+
+// Large-table schema work is an explicit, offline operation. A normal API
+// invocation always keeps the S02 thirty-second initialization budget.
+func migrationStartupBudget(offline bool, requested time.Duration) (time.Duration, error) {
+	if !offline && requested != 30*time.Second {
+		return 0, fmt.Errorf("migration-timeout requires migrate-only")
+	}
+	if requested < 30*time.Second || requested > 15*time.Minute {
+		return 0, fmt.Errorf("migration-timeout must be between 30s and 15m")
+	}
+	return requested, nil
 }

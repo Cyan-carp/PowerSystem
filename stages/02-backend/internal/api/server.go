@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -38,6 +39,9 @@ type Server struct {
 	ingressOnce  sync.Once
 	ingressQueue chan mqtt.Message
 	ingressDone  chan struct{}
+	ingressAcks  chan *orderedAdmission
+	ingressSlots chan struct{}
+	ingressHead  atomic.Int64
 
 	cfg          config.Config
 	db           *gorm.DB
@@ -282,8 +286,12 @@ func (s *Server) Handler() http.Handler { return s.router }
 func (s *Server) subscribe(ctx context.Context) error {
 	s.ingressOnce.Do(func() {
 		s.ingressQueue = make(chan mqtt.Message, 128)
+		s.ingressAcks = make(chan *orderedAdmission, 128)
+		s.ingressSlots = make(chan struct{}, 128)
 		s.ingressDone = make(chan struct{})
 		var receivers sync.WaitGroup
+		receivers.Add(1)
+		go func() { defer receivers.Done(); s.ackAdmissions(ctx) }()
 		for n := 0; n < 4; n++ {
 			receivers.Add(1)
 			go func() {
@@ -352,15 +360,7 @@ func (s *Server) subscribe(ctx context.Context) error {
 // The bounded volatile admission buffer owns no queue truth: messages remain
 // unacknowledged until the database commits, and QoS1 owns crash redelivery.
 func (s *Server) acceptTelemetry(_ mqtt.Client, m mqtt.Message) {
-	if len(m.Payload()) > 64*1024 {
-		m.Ack()
-		return
-	}
-	select {
-	case <-s.runContext.Done():
-		return
-	case s.ingressQueue <- m:
-	}
+	s.enqueueAdmission(s.runContext, m)
 }
 func (s *Server) receive(_ mqtt.Client, message mqtt.Message) bool {
 	measured := time.Now()

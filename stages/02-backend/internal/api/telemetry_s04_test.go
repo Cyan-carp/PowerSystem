@@ -61,6 +61,12 @@ func s04new(t *testing.T) *s04Fixture {
 	}
 	f := &s04Fixture{t: t}
 	f.cfg = config.Config{PostgresDSN: s04DSN, RedisAddr: "127.0.0.1:16392", TDURL: "http://127.0.0.1:16042", TDUser: "root", TDPassword: "taosdata", TDDatabase: "tr_s04", Broker: "tcp://127.0.0.1:11884", ClientID: "tr-s04-api", JWTSecret: strings.Repeat("s", 32), SimulationAlarmMode: "off"}
+	if broker := os.Getenv("TR_S04_DURABLE_BROKER"); broker != "" {
+		if broker != "tcp://127.0.0.1:11886" {
+			t.Fatal("dedicated durable broker only")
+		}
+		f.cfg.Broker = broker
+	}
 	var e error
 	f.db, e = store.Postgres(f.cfg)
 	s04must(t, e)

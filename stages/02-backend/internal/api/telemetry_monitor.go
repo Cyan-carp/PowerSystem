@@ -321,6 +321,17 @@ func (s *Server) serveTelemetryMetrics(c *gin.Context) {
 	for key, value := range values {
 		fmt.Fprintf(&b, "powersystem_telemetry_%s %g\n", key, value)
 	}
+	fmt.Fprintf(&b, "powersystem_telemetry_admission_inflight %d\n", len(s.ingressSlots))
+	fmt.Fprintf(&b, "powersystem_telemetry_admission_queued %d\n", len(s.ingressQueue))
+	fmt.Fprintf(&b, "powersystem_telemetry_admission_waiting_ack %d\n", len(s.ingressAcks))
+	headAge := float64(0)
+	if head := s.ingressHead.Load(); head > 0 {
+		headAge = time.Since(time.Unix(0, head)).Seconds()
+	}
+	fmt.Fprintf(&b, "powersystem_telemetry_admission_head_age_seconds %g\n", headAge)
+	for _, key := range []string{"ingress_ack_requested", "ingress_oversize"} {
+		fmt.Fprintf(&b, "powersystem_telemetry_%s_total %d\n", key, m.counts[key])
+	}
 	for _, key := range []string{"start", "probe", "loop", "advance", "success", "redis_write", "cancelled", "commit_unknown", "gate_disabled", "gate_enabled", "gate_sql_error", "gate_missing", "ws_drop", "ws_slow", "ws_write_timeout", "td_probe_attempt", "td_probe_success", "td_probe_timeout", "td_probe_error", "td_probe_skipped", "scheduler_visit", "scheduler_wrap", "scheduler_budget", "retry", "quarantine", "td_circuit_attempt", "td_circuit_skip", "redis_circuit_attempt", "redis_circuit_skip"} {
 		at := m.times[key]
 		fmt.Fprintf(&b, "powersystem_telemetry_%s_total %d\n", key, m.counts[key])
