@@ -1524,6 +1524,28 @@ def rollback_maintenance_matches(receipt_path, path, pointer, rows):
     require(states(rows) == receipt['after'], 'backup_maintenance_post_resume_drift')
 
 
+MAINTENANCE_RESTARTS = ('agent-rag', 'ops-agent', 'gateway')
+
+
+def only_maintenance_restarts(before, after):
+    """The gate may lag by exactly one paused-backup window, never by anything else.
+
+    A recovery that follows a previous failed backup pauses on the state that failure
+    left behind, so the acceptance gate still holds one generation earlier. Only the
+    three services a maintenance window is allowed to restart may differ, and only in
+    their start time: identity, image and restart count must be untouched.
+    """
+    if set(before) != set(after):
+        return False
+    for name, expected in before.items():
+        actual = after[name]
+        if any(expected.get(key) != actual.get(key) for key in ('id', 'image', 'restarts')):
+            return False
+        if expected.get('started_at') != actual.get('started_at') and name not in MAINTENANCE_RESTARTS:
+            return False
+    return True
+
+
 def verify_failed_backup_resume(a):
     """Full gate after a proven failed-backup resume; never a backup success."""
     path, manifest = active()
@@ -1533,14 +1555,27 @@ def verify_failed_backup_resume(a):
     require(receipt_path.is_file() and not receipt_path.is_symlink() and
             receipt_path.resolve().parent == BACKUP_DIR, 'backup_maintenance_receipt_path_invalid')
     receipt_path = receipt_path.resolve()
-    rollback_maintenance_matches(receipt_path, path, pointer, rows)
     receipt = read(receipt_path)
+    gate_states = read(path / pointer['gate_file'])['states']
+    if receipt.get('before') != gate_states:
+        require(receipt.get('observed_before') == receipt.get('before'),
+                'backup_maintenance_baseline_mismatch')
+        require(only_maintenance_restarts(gate_states, receipt['before']),
+                'backup_maintenance_baseline_mismatch')
+    require(receipt.get('version') == 1 and receipt.get('active') == pointer,
+            'backup_maintenance_receipt_mismatch')
+    resumed = datetime.datetime.fromisoformat(receipt['resumed_at'])
+    require(resumed.tzinfo is not None and 0 <= time.time() - resumed.timestamp() <= 86400,
+            'backup_maintenance_receipt_expired')
+    maintenance_states_match(receipt['before'], receipt['after'], receipt.get('telemetry'))
+    healthy(rows)
+    require(states(rows) == receipt['after'], 'backup_maintenance_post_resume_drift')
     archive = Path(str(receipt_path).removesuffix('.v4-maintenance.json'))
     timing_path = Path(str(archive).removesuffix('.tar.gz.gpg')+'.timing.json')
     timing = read(timing_path)
     require(receipt.get('archive') is None and not archive.exists() and
             timing.get('status') == 'failed' and timing.get('archive_bytes') == 0 and
-            not timing.get('uploads') and timing.get('failed_stage') in ('queues_snapshot', 'v4_rows'),
+            not timing.get('uploads') and timing.get('failed_stage') in ('queues_snapshot', 'v4_rows', 'release_assets'),
             'failed_backup_resume_not_proven')
     # No container is changed. A failing gate leaves the old pointer untouched.
     accepted_gate = gate(path, [], states(rows))
