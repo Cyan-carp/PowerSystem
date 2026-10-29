@@ -175,7 +175,8 @@ class CapsuleTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             store = root/'runtime/source-builds'
-            names = set(sources.REQUIRED) | {recipe for _, recipe in sources.SERVICES.values()}
+            names = (set(sources.REQUIRED) | {group[0] for group in sources.REQUIRED_ANY}
+                     | {recipe for _, recipe in sources.SERVICES.values()})
             source_manifest = {'format': 1, 'revision': 'a'*40,
                                'files': {name: {'sha256': sources.sha(b'synthetic-source'), 'mode': 420}
                                          for name in names}}

@@ -30,7 +30,8 @@ class SourceBuildTests(unittest.TestCase):
         self.manifest = {'format': 1, 'revision': 'a'*40,
                          'reviewed_overlays': [], 'reviewed_deletions': [], 'files': {}}
         self.data = {name: ('fixture:'+name).encode() for name in
-                     {*sb.REQUIRED, *(recipe for _, recipe in sb.SERVICES.values())}}
+                     {*sb.REQUIRED, *(group[0] for group in sb.REQUIRED_ANY),
+                      *(recipe for _, recipe in sb.SERVICES.values())}}
         self.data['stages/09-ops-agent/ops_agent/main.py'] = b'fixture ops'
         self.data['stages/04-frontend/obsolete.js'] = b'fixture old'
         self.make_snapshot()
@@ -69,6 +70,30 @@ class SourceBuildTests(unittest.TestCase):
         (self.source/sb.REQUIRED[0]).write_bytes(b'pre-V4 source')
         with self.assertRaisesRegex(sb.SourceError, 'source_file_changed'):
             sb.verify(self.source)
+
+    def test_snapshot_frozen_before_the_view_rename_still_verifies(self):
+        # The 2026-10-29 rename must not invalidate snapshots frozen under the previous
+        # filename: release_assets verifies exactly those for the running images.
+        current, previous = sb.REQUIRED_ANY[0]
+        self.data[previous] = self.data.pop(current)
+        self.make_snapshot()
+        self.assertEqual(len(self.data), sb.verify(self.source)['files'])
+        self.assertFalse((self.source/current).exists())
+
+    def test_snapshot_with_neither_view_name_blocks(self):
+        for name in sb.REQUIRED_ANY[0]:
+            self.data.pop(name, None)
+        self.manifest['files'] = {n: {'sha256': sb.sha(v), 'mode': 0o644}
+                                  for n, v in self.data.items()}
+        source = self.store/'contexts'/sb.digest(self.manifest)
+        source.mkdir(parents=True)
+        for name, value in self.data.items():
+            path = source/name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(value)
+        sb.write_new(source/sb.MANIFEST, self.manifest)
+        with self.assertRaisesRegex(sb.SourceError, 'source_v4_files_missing'):
+            sb.verify(source)
 
     def test_ops_tar_contains_all_three_stage_contracts(self):
         packed, recipe = sb.build_tar(self.source, 'ops-agent')

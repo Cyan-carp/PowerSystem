@@ -25,7 +25,6 @@ SERVICES = {
 REQUIRED = (
     'stages/02-backend/internal/api/agent_runs.go',
     'stages/02-backend/internal/api/agent_artifacts.go',
-    'stages/04-frontend/src/views/SchedulesView.vue',
     'stages/08-agent-rag/rag_agent/run_api.py',
     'stages/08-agent-rag/rag_agent/artifacts.py',
     'stages/09-ops-agent/ops_agent/schedule_contract.py',
@@ -35,6 +34,13 @@ REQUIRED = (
     'stages/10-security-agent/security_agent/action_review.py',
     'stages/10-security-agent/security_agent/ops_review.py',
     'stages/10-security-agent/security_agent/schedule_review.py',
+)
+# The schedules view was renamed on 2026-10-29 (AgentSchedulesView.vue -> SchedulesView.vue).
+# Snapshots frozen before the rename still carry the old name and remain valid evidence
+# for the images built from them, so either name proves the same V4 wiring.
+REQUIRED_ANY = (
+    ('stages/04-frontend/src/views/SchedulesView.vue',
+     'stages/04-frontend/src/views/AgentSchedulesView.vue'),
 )
 MANIFEST = 'source-manifest.json'
 IMAGE_ID = re.compile(r'sha256:[a-f0-9]{64}')
@@ -161,6 +167,7 @@ def verify(source):
             bool(REVISION.fullmatch(manifest.get('revision', ''))), 'source_manifest_invalid')
     files = manifest.get('files', {})
     require(all(name in files for name in REQUIRED) and
+            all(any(name in files for name in group) for group in REQUIRED_ANY) and
             all(recipe in files for _, recipe in SERVICES.values()), 'source_v4_files_missing')
     actual = set()
     for path in source.rglob('*'):
