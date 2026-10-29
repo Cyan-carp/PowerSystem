@@ -6,6 +6,7 @@ import tempfile
 import time
 import unittest
 from contextlib import closing
+from unittest import mock
 
 spec = importlib.util.spec_from_file_location('queue_snapshot', Path(__file__).with_name('snapshot_queues.py'))
 module = importlib.util.module_from_spec(spec)
@@ -65,6 +66,75 @@ class QueueSnapshotTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             with self.assertRaises(FileNotFoundError):
                 module.locate('gateway.sqlite', Path(folder))
+
+    def test_live_writer_is_read_through_the_pinned_transaction(self):
+        with tempfile.TemporaryDirectory() as folder:
+            source, target = Path(folder)/'live.sqlite', Path(folder)/'copy.sqlite'
+            with closing(sqlite3.connect(source)) as live:
+                live.execute('PRAGMA journal_mode=WAL')
+                live.execute('CREATE TABLE queue(id INTEGER PRIMARY KEY)')
+                live.execute('INSERT INTO queue VALUES(1)')
+                live.commit()
+                # The writer is still open, so -shm exists and only mode=ro may be used.
+                self.assertTrue(source.with_name('live.sqlite-shm').exists())
+                module.snapshot_one(source, target, time.monotonic()+10)
+            with closing(sqlite3.connect(target)) as restored:
+                self.assertEqual([(1,)], restored.execute('SELECT * FROM queue').fetchall())
+
+    def test_stopped_writer_database_without_shm_is_still_readable(self):
+        # The backup pauses telemetry, so the gateway is stopped when its queue is
+        # snapshotted: WAL mode, no -shm, no -wal. mode=ro refuses that file.
+        with tempfile.TemporaryDirectory() as folder:
+            source, target = Path(folder)/'gateway.sqlite', Path(folder)/'copy.sqlite'
+            with closing(sqlite3.connect(source)) as live:
+                live.execute('PRAGMA journal_mode=WAL')
+                live.execute('CREATE TABLE queue(id INTEGER PRIMARY KEY,payload TEXT)')
+                live.executemany('INSERT INTO queue VALUES(?,?)', [(1, 'a'), (2, 'b')])
+                live.commit()
+            self.assertFalse(source.with_name('gateway.sqlite-shm').exists())
+            self.assertFalse(source.with_name('gateway.sqlite-wal').exists())
+            module.snapshot_one(source, target, time.monotonic()+10)
+            with closing(sqlite3.connect(target)) as restored:
+                self.assertEqual([(1, 'a'), (2, 'b')],
+                                 restored.execute('SELECT * FROM queue ORDER BY id').fetchall())
+
+    def _fail_pinned_open_only(self):
+        real_connect = sqlite3.connect
+
+        def connect(database, *args, **kwargs):
+            if 'mode=ro' in str(database) and 'immutable' not in str(database):
+                raise sqlite3.OperationalError('unable to open database file')
+            return real_connect(database, *args, **kwargs)
+        return mock.patch.object(module.sqlite3, 'connect', connect)
+
+    def test_pinned_open_falls_back_to_immutable_for_a_quiesced_file(self):
+        with tempfile.TemporaryDirectory() as folder:
+            source, target = Path(folder)/'gateway.sqlite', Path(folder)/'copy.sqlite'
+            with closing(sqlite3.connect(source)) as live:
+                live.execute('PRAGMA journal_mode=WAL')
+                live.execute('CREATE TABLE queue(id INTEGER PRIMARY KEY)')
+                live.execute('INSERT INTO queue VALUES(7)')
+                live.commit()
+            with self._fail_pinned_open_only():
+                module.snapshot_one(source, target, time.monotonic()+10)
+            with closing(sqlite3.connect(target)) as restored:
+                self.assertEqual([(7,)], restored.execute('SELECT * FROM queue').fetchall())
+
+    def test_pinned_open_refuses_a_wal_that_would_need_recovery(self):
+        # A non-empty -wal without -shm cannot be read immutably without dropping the
+        # pages it still holds, so the snapshot must fail instead of losing them.
+        with tempfile.TemporaryDirectory() as folder:
+            source, target = Path(folder)/'gateway.sqlite', Path(folder)/'copy.sqlite'
+            with closing(sqlite3.connect(source)) as live:
+                live.execute('PRAGMA journal_mode=WAL')
+                live.execute('CREATE TABLE queue(id INTEGER PRIMARY KEY)')
+                live.commit()
+            source.with_name('gateway.sqlite-wal').write_bytes(b'unrecovered-wal-frames')
+            with self._fail_pinned_open_only():
+                with self.assertRaises(RuntimeError) as caught:
+                    module.snapshot_one(source, target, time.monotonic()+10)
+            self.assertIn('queue_snapshot_wal_recovery_required', str(caught.exception))
+            self.assertFalse(target.exists())
 
 
 if __name__ == '__main__':

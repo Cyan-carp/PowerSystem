@@ -35,18 +35,52 @@ def locate(name, root):
     return max(candidates, key=lambda path: (path.stat().st_mtime, len(path.parts)))
 
 
+def open_pinned(source):
+    """A read transaction pinned on the queue file, or a refusal to fabricate one.
+
+    A live writer keeps ``-shm`` next to a WAL database, so ``mode=ro`` gives a
+    consistent pinned view: live appends must not restart a multi-GB incremental
+    backup from page zero indefinitely.
+
+    A service that is cleanly stopped (the backup pauses telemetry so the gateway is
+    down for the whole dump) leaves the same WAL-mode database behind **without**
+    ``-shm``, and SQLite then refuses ``mode=ro`` with ``unable to open database
+    file`` even though every byte is present. ``immutable=1`` is the documented way to
+    read such a file, but it also tells SQLite to ignore a ``-wal`` file, so it is
+    only used when that file is absent or empty — a non-empty ``-wal`` without
+    ``-shm`` would need real WAL recovery and must not be silently truncated.
+    """
+    source = Path(source)
+    wal = source.with_name(source.name + '-wal')
+    quiesced = not (wal.exists() and wal.stat().st_size)
+    candidates = [f"file:{source}?mode=ro"]
+    if quiesced:
+        candidates.append(f"file:{source}?mode=ro&immutable=1")
+    error = None
+    for uri in candidates:
+        live = None
+        try:
+            live = sqlite3.connect(uri, uri=True, timeout=5)
+            live.execute('BEGIN')
+            live.execute('SELECT rootpage FROM sqlite_schema LIMIT 1').fetchall()
+            return live, live.execute('PRAGMA page_count').fetchone()[0]
+        except sqlite3.OperationalError as exc:
+            error = exc
+            if live is not None:
+                live.close()
+    if not quiesced:
+        raise RuntimeError('queue_snapshot_wal_recovery_required') from error
+    raise RuntimeError(f'queue_snapshot_unreadable: {error}')
+
+
 def snapshot_one(source, destination, deadline):
     started = time.monotonic()
     def check_budget(*_):
         if time.monotonic() >= deadline:
             raise TimeoutError('queue_snapshot_budget_exceeded')
     check_budget()
-    # Pin a WAL read transaction. Live appends must not restart a multi-GB
-    # incremental backup from page zero indefinitely.
-    with closing(sqlite3.connect(f"file:{source}?mode=ro", uri=True, timeout=5)) as live:
-        live.execute('BEGIN')
-        live.execute('SELECT rootpage FROM sqlite_schema LIMIT 1').fetchall()
-        pages = live.execute('PRAGMA page_count').fetchone()[0]
+    live, pages = open_pinned(source)
+    with closing(live):
         with closing(sqlite3.connect(destination)) as snapshot:
             live.backup(snapshot, pages=2048, progress=check_budget, sleep=.1)
         live.rollback()
