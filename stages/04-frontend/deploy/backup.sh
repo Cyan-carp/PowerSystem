@@ -109,7 +109,20 @@ v4_state_file="$staging/v4-writer-state.json"
 telemetry_state_file="$staging/telemetry-backup-state.json"
 telemetry_resume() {
   [ -f "$telemetry_state_file" ] || return 0
-  python3 "$project_dir/stages/04-frontend/deploy/telemetry-maintenance.py" resume --state "$telemetry_state_file"
+  python3 "$project_dir/stages/04-frontend/deploy/telemetry-maintenance.py" resume --state "$telemetry_state_file" || return 1
+  # Telemetry readiness is fail-closed: while maintenance is on the API answers 503 on
+  # /api/v1/ping, so Docker marks it unhealthy, and the verdict is only re-evaluated on
+  # the next health interval after the gateway is back. The resume gate that follows
+  # reads that same verdict, so wait for the real status to converge rather than
+  # relaxing the gate. Bounded, and still fails when readiness never returns.
+  local deadline=$((SECONDS+90))
+  while [ -n "$(docker ps --filter health=unhealthy --format '{{.Names}}')" ]; do
+    if [ "$SECONDS" -ge "$deadline" ]; then
+      echo 'Containers still unhealthy after telemetry resume' >&2
+      return 1
+    fi
+    sleep 3
+  done
 }
 v4_resume() {
   [ -f "$v4_state_file" ] || return 0
