@@ -25,7 +25,7 @@ from urllib.parse import unquote
 ROOT = Path(__file__).resolve().parents[2]
 VAULT = ROOT / "notes"
 MANIFEST = ROOT / "tools/note-governance/workspace-links.json"
-CHECKLIST = VAULT / "02-工程规范边界与验收治理/项目验收与收尾清单.md"
+CHECKLIST = VAULT / "02-工程规范边界与验收治理/项目验收与收尾清单"
 VALID_STATUS = {"现行", "历史", "废弃", "草稿"}
 VALID_SCOPE = {
     "第一版",
@@ -176,7 +176,7 @@ def main() -> int:
     if not CHECKLIST.exists():
         errors.append("acceptance checklist is missing")
     else:
-        for number, line in enumerate(CHECKLIST.read_text(encoding="utf-8-sig").splitlines(), 1):
+        for number, line in enumerate("\n".join(p.read_text(encoding="utf-8-sig") for p in sorted(CHECKLIST.glob("*.md"))).splitlines(), 1):
             if re.match(r"^\s*- \[ \]", line) and "来源：" not in line:
                 errors.append(f"unchecked checklist item lacks source at line {number}")
 

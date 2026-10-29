@@ -5,17 +5,21 @@ on:
     paths:
       - "notes/**"
       - "tools/note-governance/**"
-      - "shared-memory/**"
-      - "stages/**"
-      - "deploy/**"
+      - "README.md"
+      - "AGENTS.md"
+      - "SKILL.md"
+      - "stages/**/*.md"
+      - "deploy/**/*.md"
       - ".github/workflows/notes-check.yml"
   pull_request:
     paths:
       - "notes/**"
       - "tools/note-governance/**"
-      - "shared-memory/**"
-      - "stages/**"
-      - "deploy/**"
+      - "README.md"
+      - "AGENTS.md"
+      - "SKILL.md"
+      - "stages/**/*.md"
+      - "deploy/**/*.md"
       - ".github/workflows/notes-check.yml"
   workflow_dispatch:
 

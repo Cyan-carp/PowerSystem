@@ -2,11 +2,19 @@
 set -euo pipefail
 
 project_dir=${POWERSYSTEM_DIR:-/opt/powersystem}
+if [ "$project_dir" != /opt/powersystem ]; then
+  echo 'Production backup requires the registered /opt/powersystem root' >&2; exit 2
+fi
 # A backup and an application deployment must not snapshot different releases.
 production_state="$project_dir/runtime/production-stack"
+if [ ! -d "$production_state" ]; then
+  echo 'Registered production state directory is required' >&2; exit 2
+fi
 if [ -d "$production_state" ]; then
   exec 9>"$production_state/deployment.lock"
   flock -sn 9 || { echo 'Production deployment in progress; backup stopped' >&2; exit 2; }
+  exec 8>"$production_state/backup.lock"
+  flock -n 8 || { echo 'Another backup is in progress; backup stopped' >&2; exit 2; }
 fi
 env_file="$project_dir/.env"
 compose_file="$project_dir/stages/04-frontend/deploy/compose.yaml"
@@ -48,8 +56,14 @@ exit_status=0
 staging_bytes=0
 archive_bytes=0
 parallel_upload_pid=""
-parallel_uploads=${POWERSYSTEM_BACKUP_PARALLEL_UPLOADS:-0}
-gzip_threads=${POWERSYSTEM_BACKUP_GZIP_THREADS:-1}
+default_parallel_uploads=0
+if [ -n "$secondary_target" ] && [ "${POWERSYSTEM_BACKUP_LOCAL_ONLY:-0}" != 1 ]; then
+  default_parallel_uploads=1
+fi
+default_gzip_threads=1
+if command -v pigz >/dev/null 2>&1; then default_gzip_threads=4; fi
+parallel_uploads=${POWERSYSTEM_BACKUP_PARALLEL_UPLOADS:-$default_parallel_uploads}
+gzip_threads=${POWERSYSTEM_BACKUP_GZIP_THREADS:-$default_gzip_threads}
 case "$parallel_uploads" in 0|1) ;; *) echo 'Invalid backup upload mode' >&2; exit 2 ;; esac
 case "$gzip_threads" in 1|2|4) ;; *) echo 'Invalid backup gzip thread count' >&2; exit 2 ;; esac
 if [ "$gzip_threads" != 1 ]; then command -v pigz >/dev/null; fi
@@ -92,6 +106,11 @@ cleanup() {
 
 # Resume only the writers that were actually running before the pause.
 v4_state_file="$staging/v4-writer-state.json"
+telemetry_state_file="$staging/telemetry-backup-state.json"
+telemetry_resume() {
+  [ -f "$telemetry_state_file" ] || return 0
+  python3 "$project_dir/stages/04-frontend/deploy/telemetry-maintenance.py" resume --state "$telemetry_state_file"
+}
 v4_resume() {
   [ -f "$v4_state_file" ] || return 0
   local writer writers expected actual ready attempt state
@@ -148,7 +167,15 @@ finish() {
     cp -p -- "$v4_state_file" "$backup_dir/$run_id.v4-resume-required.json"
     chmod 600 "$backup_dir/$run_id.v4-resume-required.json"
     echo 'V4 writer resume failed; recovery identity retained' >&2
-  elif [ "$rc" -ne 0 ] && [ "${v4_active:-0}" = 1 ] && [ -f "$staging/v4-maintenance.json" ]; then
+  fi
+  if ! telemetry_resume; then
+    rc=1
+    preserve_staging=1
+    stage_name=telemetry_resume
+    cp -p -- "$telemetry_state_file" "$backup_dir/$run_id.telemetry-resume-required.json"
+    echo 'Telemetry writer resume failed; freeze and recovery state retained' >&2
+  fi
+  if [ "$rc" -ne 0 ] && [ -f "$staging/v4-maintenance.json" ]; then
     # Retain real before/after evidence even when failure precedes compression.
     if python3 - "$project_dir" "$staging/v4-maintenance.json" <<'PY'
 import importlib.util,pathlib,sys
@@ -180,6 +207,13 @@ PY
     echo "Backup timing helper missing at $timing_helper; no timing record" >&2
   fi
   rm -f -- "$stage_log"
+  if [ "$preserve_staging" = 0 ]; then
+    if [ -f "$staging/queue-helper-recovery-required.json" ]; then
+      cp -p -- "$staging/queue-helper-recovery-required.json" "$backup_dir/$run_id.queue-helper-recovery-required.json"
+      preserve_staging=1
+      rc=1
+    fi
+  fi
   if [ "$preserve_staging" = 0 ]; then
     cleanup
   else
@@ -221,7 +255,8 @@ import importlib.util,json,pathlib,sys
 spec=importlib.util.spec_from_file_location('backup_frozen_controller',pathlib.Path(sys.argv[1])/'stages/04-frontend/deploy/production-stack.py')
 module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
 path,manifest=module.active()
-assert not (module.STATE_DIR/'pending.json').exists()
+if (module.STATE_DIR/'pending.json').exists():
+    module.telemetry_repair().backup_context(module)
 print(json.dumps(module.compose(path)))
 PY
   )
@@ -266,6 +301,7 @@ PY
   rag_vectors_done=1
   stage_end "$(bytes_of "$staging/rag-vectors.tar")"
 
+  python3 "$project_dir/stages/04-frontend/deploy/telemetry-maintenance.py" pause --state "$telemetry_state_file"
   stage_begin v4_pause
   : > "$staging/v4-ops-before.json"
   if docker inspect "$v4_ops_container" >/dev/null 2>&1; then
@@ -308,6 +344,9 @@ PY
 fi
 
 stage_begin postgres_dump
+if [ ! -f "$telemetry_state_file" ]; then
+  python3 "$project_dir/stages/04-frontend/deploy/telemetry-maintenance.py" pause --state "$telemetry_state_file"
+fi
 "${dc[@]}" exec -T postgres pg_dump -U powersystem -d powersystem -Fc > "$staging/postgres.dump"
 stage_end "$(bytes_of "$staging/postgres.dump")"
 
@@ -428,13 +467,17 @@ if [ -d "$production_state" ]; then
   # These files can contain resolved secrets. They enter the AES256 archive only.
   cp -a "$production_state" "$staging/production-stack"
   cp "$project_dir/stages/04-frontend/deploy/production-stack.py" "$staging/production-stack/controller.py"
+  for helper in telemetry-maintenance.py telemetry-transition.py telemetry-monitoring.py telemetry-repair.py; do
+    cp "$project_dir/stages/04-frontend/deploy/$helper" "$staging/production-stack/$helper"
+  done
   stage_end "$(bytes_of "$staging/production-stack")"
   stage_begin release_assets
   python3 "$project_dir/stages/04-frontend/deploy/backup-release-assets.py" --output "$staging"
   stage_end "$(bytes_of "$staging/release-assets")"
 fi
 v4_resume
-if [ "$v4_active" = 1 ]; then
+telemetry_resume
+if [ -f "$staging/v4-maintenance.json" ]; then
   python3 - "$project_dir" "$staging/v4-maintenance.json" <<'PY'
 import importlib.util,pathlib,sys
 sys.dont_write_bytecode=True
@@ -514,7 +557,7 @@ fi
 if [ "$upload_failed" -ne 0 ]; then
   exit 1
 fi
-if [ "$v4_active" = 1 ]; then
+if [ -f "$staging/v4-maintenance.json" ]; then
   python3 - "$project_dir" "$staging/v4-maintenance.json" "$backup_dir/$run_id.tar.gz.gpg" <<'PY'
 import importlib.util,pathlib,sys
 sys.dont_write_bytecode=True

@@ -1,0 +1,157 @@
+/**
+ * 设计令牌：浅色企业控制台（对齐 C 参考稿，ui-ux-pro-max 规范化）。
+ * 只在这里写色值与圆角，组件里一律引变量。
+ */
+
+:root {
+  color-scheme: light;
+
+  /* 底色与面：整页压暗一档，白卡才立得住（参考稿的底是浅灰蓝，不是发白） */
+  --bg: #eef1f7;
+  --bg-deep: #e6eaf2;
+  --card: #ffffff;
+  --card-soft: #f6f8fc;
+  --card-hover: #fafbfe;
+  --line: #e3e8f1;
+  --line-soft: #edf0f6;
+  --line-strong: #d2dae7;
+
+  /* 文字：参考稿没有“淡灰字”——层级只靠字号与字重区分，颜色一律接近黑 */
+  --ink: #0b1322;
+  --ink-2: #161f2e;
+  --ink-3: #2b3546;
+  --ink-4: #3d4759;
+  /* 仅用于输入占位、禁用态这类“非内容”文字 */
+  --ink-placeholder: #8d97a8;
+
+  /* 主色：参考稿是饱和的宝蓝，浅一档就会发灰，统一压到 2563eb 这一深蓝 */
+  --brand: #2563eb;
+  --brand-deep: #1d4ed8;
+  --brand-soft: #e4ecfd;
+  --brand-line: #b9ccf8;
+  --brand-glow: rgba(37, 99, 235, 0.24);
+
+  /* 语义色 */
+  --ok: #10b981;
+  --ok-deep: #059669;
+  --ok-soft: #ecfdf5;
+  --warn: #f59e0b;
+  --warn-deep: #b45309;
+  --warn-soft: #fffbeb;
+  --bad: #ef4444;
+  --bad-deep: #b91c1c;
+  --bad-soft: #fef2f2;
+  --info: #2563eb;
+  --info-soft: #e4ecfd;
+  --violet: #8b5cf6;
+  --violet-soft: #f5f3ff;
+
+  /* 形状：比直角柔和一档（14/18px 太圆，4/5px 太硬，取 8px 作卡片基准） */
+  --r-xl: 10px;
+  --r-lg: 8px;
+  --r-md: 6px;
+  --r-sm: 5px;
+  --r-pill: 999px;
+
+  /* 阴影：主体压在下缘，卡片才“浮起来”（参考稿的卡片影集中在底部） */
+  --shadow-1: 0 1px 2px rgba(16, 24, 40, 0.05), 0 3px 6px -2px rgba(16, 24, 40, 0.06),
+    0 12px 22px -12px rgba(16, 24, 40, 0.18);
+  --shadow-2: 0 2px 6px rgba(16, 24, 40, 0.06), 0 14px 30px -10px rgba(16, 24, 40, 0.18);
+  --shadow-3: 0 18px 48px rgba(16, 24, 40, 0.18), 0 4px 12px rgba(16, 24, 40, 0.08);
+
+  /* 字号 */
+  --font: "Inter", "Segoe UI Variable Text", "Segoe UI", -apple-system, BlinkMacSystemFont,
+    "PingFang SC", "Microsoft YaHei", "Hiragino Sans GB", sans-serif;
+  --font-num: var(--font);
+
+  --rail-w: 64px;
+  --top-h: 60px;
+  --dock-w: 420px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  /* 底色压暗一档后不再叠大块白，避免上半页和下半页割裂 */
+  background:
+    radial-gradient(1100px 520px at 8% -12%, #fbfcfe 0%, rgba(251, 252, 254, 0) 58%),
+    linear-gradient(180deg, #f2f5fa 0%, var(--bg) 46%, #e9edf5 100%);
+  background-attachment: fixed;
+  color: var(--ink);
+  font-family: var(--font);
+  font-size: 13px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+h1,
+h2,
+h3,
+p,
+figure {
+  margin: 0;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+}
+
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+::selection {
+  background: var(--brand-soft);
+  color: var(--brand-deep);
+}
+
+/* 数字统一等宽位，避免同一列跳动 */
+.num {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+}
+
+/* 细滚动条：控制台里滚动区多，粗条会抢视线 */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #ccd4e2 transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: #ccd4e2;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+  border-radius: 6px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}

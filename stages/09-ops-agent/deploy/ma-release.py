@@ -7,7 +7,7 @@ NEW_SERVICES=('ops-agent','security-agent','ops-executor')
 BASE_FILES=('stages/04-frontend/deploy/compose.yaml','stages/07-agent/deploy/agent.compose.yaml','stages/07-agent/deploy/search.compose.yaml','stages/08-agent-rag/deploy/production.compose.yaml')
 OVERLAY='stages/09-ops-agent/deploy/production.compose.yaml'
 COLLECTOR_AUTH=Path('/var/lib/powersystem-ops-read/.ssh/authorized_keys')
-ALLOWED=('stages/02-backend/','stages/04-frontend/','stages/08-agent-rag/','stages/09-ops-agent/','stages/10-security-agent/','notes/02-工程规范边界与验收治理/','notes/03-平台使用运维与二次开发手册/','notes/01-项目调研规划与开发建设记录/第二版-智能体升级/','规范/','手册/','内容/第二版-智能体升级/')
+ALLOWED=('stages/02-backend/','stages/04-frontend/','stages/08-agent-rag/','stages/09-ops-agent/','stages/10-security-agent/','notes/02-工程规范边界与验收治理/','notes/03-平台使用运维与二次开发手册/','notes/01-项目调研规划与开发建设记录/02-第二版-智能体升级/','规范/','手册/','内容/02-第二版-智能体升级/')
 KNOWLEDGE_FILES=('notes/05-设备知识设计素材与历史归档资产/设备知识/SUN2000-100KTL-M2-仿真参考.md','资产/设备知识/SUN2000-100KTL-M2-仿真参考.md')
 
 def command(argv,**kw):

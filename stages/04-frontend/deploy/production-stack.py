@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import signal
 import socket
 import subprocess
 import sys
@@ -39,13 +40,15 @@ FILES = (
 )
 APPLICATIONS = {'api', 'frontend', 'agent', 'agent-rag', 'ops-agent',
                 'security-agent', 'ops-executor', 'simulator', 'feishu-adapter',
-                'gateway', 'ai-predict'}
+                'gateway', 'ai-predict', 'prometheus', 'alertmanager'}
 ID = re.compile(r'sha256:[a-f0-9]{64}')
 CHUNK = re.compile(r'-[A-Za-z0-9_-]{6,12}\.(?:js|css)$')
 NAME = re.compile(r'[a-z0-9][a-z0-9-]{0,63}')
 BACKUP_DIR = Path('/var/backups/powersystem')
 FAST_TIER = 'frontend-fast'
+STANDARD_TIER = 'standard-fast'
 FULL_TIER = 'full'
+STANDARD_SERVICES = {'api', 'gateway', 'frontend', 'agent-rag', 'ops-agent', 'security-agent'}
 MAX_FAST_BASELINE_AGE = 86400
 # One-off, owner-authorized deferral of the pre-deployment full backup. Only these
 # two explicitly named candidates may carry it, and only at the full tier. This is
@@ -97,6 +100,56 @@ def read(path):
     return json.loads(Path(path).read_text(encoding='utf-8'))
 
 
+def telemetry_protocol():
+    helper = Path(__file__).with_name('telemetry-maintenance.py')
+    require(helper.is_file(), 'telemetry_maintenance_helper_required')
+    spec = importlib.util.spec_from_file_location('powersystem_telemetry_maintenance', helper)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def telemetry_context():
+    from types import SimpleNamespace
+    return SimpleNamespace(command=command, inspect=inspect, healthy=healthy, states=states,
+                           read=read, write=write, STATE_DIR=STATE_DIR, BACKUP_DIR=BACKUP_DIR,
+                           ROOT=ROOT, PROJECT=PROJECT, require=require, compose=compose, sha=sha, now=now,
+                           telemetry_protocol=telemetry_protocol, telemetry_context=telemetry_context,
+                           telemetry_monitoring=telemetry_monitoring, release=release, Blocked=Blocked)
+
+
+def telemetry_transition():
+    helper = Path(__file__).with_name('telemetry-transition.py')
+    require(helper.is_file(), 'telemetry_transition_helper_required')
+    spec = importlib.util.spec_from_file_location('powersystem_telemetry_transition', helper)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def telemetry_monitoring():
+    helper = Path(__file__).with_name('telemetry-monitoring.py')
+    require(helper.is_file(), 'telemetry_monitoring_helper_required')
+    spec = importlib.util.spec_from_file_location('powersystem_telemetry_monitoring', helper)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def telemetry_repair():
+    helper = Path(__file__).with_name('telemetry-repair.py')
+    spec = importlib.util.spec_from_file_location('powersystem_telemetry_repair', helper)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def telemetry_repair_context():
+    # Backup imports this module without registering its temporary module name.
+    from types import SimpleNamespace
+    return SimpleNamespace(**globals())
+
+
 def write(path, value):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -107,8 +160,39 @@ def write(path, value):
     os.replace(temp, path)
 
 
-def command(args, log=None, env=None):
-    result = subprocess.run(args, capture_output=True, timeout=600, env=env)
+CANCEL_SAFE_COMMANDS = False
+
+
+def cancel_safe_run(args, **kwargs):
+    timeout = kwargs.pop('timeout')
+    kwargs.pop('capture_output')
+    with subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                          start_new_session=True, **kwargs) as child:
+        try:
+            stdout, stderr = child.communicate(timeout=timeout)
+        except BaseException:
+            # Compose is a CLI/plugin process group. Prove that group has exited
+            # before inspecting and stopping its newly created containers.
+            try:os.killpg(child.pid, signal.SIGTERM)
+            except ProcessLookupError:pass
+            try:child.communicate(timeout=30)
+            except subprocess.TimeoutExpired:
+                try:os.killpg(child.pid, signal.SIGKILL)
+                except ProcessLookupError:pass
+                child.communicate(timeout=5)
+            raise
+        return subprocess.CompletedProcess(args,child.returncode,stdout,stderr)
+
+
+def command(args, log=None, env=None, timeout=600):
+    try:
+        runner=cancel_safe_run if CANCEL_SAFE_COMMANDS else subprocess.run
+        result = runner(args, capture_output=True, timeout=timeout, env=env)
+    except subprocess.TimeoutExpired as error:
+        if log:
+            Path(log).write_bytes((error.stdout or b'')+(error.stderr or b''))
+            Path(log).chmod(0o600)
+        raise Blocked('command_timeout:'+Path(args[0]).name) from None
     if log:
         Path(log).write_bytes(result.stdout + result.stderr)
         Path(log).chmod(0o600)
@@ -364,6 +448,119 @@ def verified_fast_capsule(archive, manifest, pointer):
             'fast_capsule_before_candidate')
     baseline = choose_fast_baseline(pointer)
     require(receipt.get('baseline') == baseline, 'fast_capsule_baseline_changed')
+    return receipt, baseline
+
+
+def standard_assessment(source, name, parent, images):
+    """Bind the compatible tier to actual tested images and retained test evidence."""
+    document = read(owned(source))
+    require(document.get('format') == 1 and document.get('kind') == 'compatible-release/v1' and
+            document.get('candidate') == name and document.get('parent') == parent and
+            document.get('tested_images') == images, 'standard_assessment_binding_mismatch')
+    require(document.get('rpo_seconds') == MAX_FAST_BASELINE_AGE and
+            document.get('rollback_compatible') is True and
+            document.get('production_config_matched') is True,
+            'standard_compatibility_and_rpo_required')
+    for field in ('schema_changed', 'data_repair', 'persistent_semantics_changed', 'permissions_changed',
+                  'storage_changed', 'contracts_changed'):
+        require(document.get(field) is False, 'standard_high_risk_change:' + field)
+    tests = document.get('tests')
+    require(isinstance(tests, list) and bool(tests), 'standard_targeted_tests_required')
+    evidence = []
+    for test in tests:
+        require(isinstance(test, dict) and isinstance(test.get('name'), str) and
+                bool(test['name'].strip()) and type(test.get('exit_code')) is int and
+                test['exit_code'] == 0, 'standard_targeted_test_failed')
+        path = owned(test['evidence'])
+        require(path.is_relative_to(ROOT/'runtime') or path.is_relative_to(ROOT/'artifacts'),
+                'standard_evidence_outside_runtime')
+        require(path.stat().st_size > 0 and sha(path) == test.get('sha256'),
+                'standard_evidence_changed')
+        evidence.append(path)
+    return document, evidence
+
+
+def protected_source_files(files, service):
+    roots = {'api': ('02-backend',), 'gateway': ('02-backend',),
+             'frontend': ('04-frontend',), 'agent-rag': ('08-agent-rag',),
+             'ops-agent': ('08-agent-rag', '09-ops-agent', '10-security-agent'),
+             'security-agent': ('10-security-agent',)}[service]
+    protected = {}
+    for name, record in files.items():
+        parts = Path(name).parts
+        if len(parts) < 3 or parts[1] not in roots:
+            continue
+        lower = name.lower()
+        if (lower.endswith('.sql') or any(word in lower for word in
+                ('migrat', 'schema', 'contract', 'permission', 'policy')) or
+                Path(name).name in {'Dockerfile', 'go.mod', 'go.sum', 'package.json',
+                                    'package-lock.json', 'requirements.txt', 'pyproject.toml',
+                                    'uv.lock', 'poetry.lock'}):
+            protected[name] = record
+    return protected
+
+
+def validate_standard_config(config, args, env, parent, services, overrides, source_builds):
+    require(parent is not None and bool(services) and services <= STANDARD_SERVICES and
+            set(overrides) == services, 'standard_image_changes_only')
+    previous = release(parent)
+    old = read(previous/'private/compose.json')
+    require(args == read(previous/'private/origin-args.json') and
+            env == read(previous/'manifest.json')['origin_environment'],
+            'standard_origin_changed')
+    receipts = {item['service']: item for item in source_builds}
+    store = ROOT/'runtime/source-builds'
+    for service in sorted(services):
+        before = old['services'][service]['image']
+        after = config['services'][service]['image']
+        require(before != after and service in receipts, 'standard_new_receipt_required:' + service)
+        prior_path = store/'receipts'/(before[7:]+'.json')
+        require(prior_path.is_file(), 'standard_parent_source_required:' + service)
+        prior = read(prior_path)
+        require(prior.get('image') == before and prior.get('service') == service and
+                bool(re.fullmatch(r'[a-f0-9]{64}', prior.get('source_sha256', ''))),
+                'standard_parent_source_required:' + service)
+        metadata = json.loads(command(['docker', 'image', 'inspect', before]))[0]
+        labels = metadata.get('Config', {}).get('Labels') or {}
+        require(metadata.get('Id') == before and
+                labels.get('io.powersystem.source.sha256') == prior['source_sha256'] and
+                labels.get('io.powersystem.source.service') == service,
+                'standard_parent_image_source_mismatch:' + service)
+        original = read(store/'contexts'/prior['source_sha256']/'source-manifest.json')
+        current = read(store/'contexts'/receipts[service]['source_sha256']/'source-manifest.json')
+        require(digest(original) == prior['source_sha256'] and
+                digest(current) == receipts[service]['source_sha256'], 'standard_source_changed')
+        require(protected_source_files(original['files'], service) ==
+                protected_source_files(current['files'], service),
+                'standard_protected_source_changed:' + service)
+        old['services'][service]['image'] = after
+    require(escaped(config) == old, 'standard_configuration_changed')
+
+
+def verified_standard_capsule(archive, manifest, pointer):
+    require(manifest.get('backup_tier') == STANDARD_TIER and
+            manifest.get('controller_sha256') == sha(__file__), 'standard_controller_changed')
+    archive = Path(archive).resolve()
+    require(archive.parent == BACKUP_DIR and bool(re.fullmatch(
+        r'powersystem-release-\d{8}T\d{6}Z\.tar\.gz\.gpg', archive.name)), 'standard_capsule_path_invalid')
+    receipt = read(Path(str(archive)+'.receipt.json'))
+    images = {s: manifest['images'][s] for s in manifest['services']}
+    require(receipt.get('status') == 'ok' and receipt.get('archive') == archive.name and
+            receipt.get('release') == manifest['release'] and
+            receipt.get('parent') == manifest['parent'] and
+            receipt.get('manifest_sha256') == digest(manifest) and
+            receipt.get('images') == images and receipt.get('uploads') == ['primary', 'secondary'],
+            'standard_capsule_identity_mismatch')
+    require(sha(archive) == receipt.get('sha256'), 'standard_capsule_checksum_mismatch')
+    require(archive.stat().st_mtime >= datetime.datetime.fromisoformat(
+        manifest['created_at']).timestamp(), 'standard_capsule_before_candidate')
+    # Keep the exact baseline selected by the capsule, even when a newer scheduled
+    # backup finishes meanwhile. Validate its eligibility and age again.
+    baseline = verified_full_baseline(BACKUP_DIR/receipt['baseline']['archive'])
+    boundary = activation_time(pointer, release(pointer['release'])).timestamp()
+    require(datetime.datetime.fromisoformat(baseline['snapshot_started_at']).timestamp() >= boundary or
+            pointer.get('backup_baseline') == baseline['archive'], 'standard_baseline_incompatible')
+    require(receipt['baseline'] == baseline, 'standard_capsule_baseline_changed')
     return receipt, baseline
 
 
@@ -952,8 +1149,11 @@ def validate_fast_frontend_config(config, args, env, parent, services, overrides
 
 
 def freeze(name, args_path, parent, services, overrides, backup_tier=FULL_TIER,
-           allow_asset_shrink=False, defer_backup=None):
+           allow_asset_shrink=False, defer_backup=None, telemetry_evidence=None, frozen_repair=None,
+           assessment=None):
     defer_source = defer_doc = None
+    require(not set(services) & {'prometheus', 'alertmanager'} or telemetry_evidence is not None,
+            'monitoring_change_requires_telemetry_plan')
     if defer_backup:
         # Fail before any Docker work when the authorization is not usable.
         defer_source, defer_doc, _ = read_backup_deferral(
@@ -963,12 +1163,17 @@ def freeze(name, args_path, parent, services, overrides, backup_tier=FULL_TIER,
         span['arguments'] = len(args)
     with track('freeze.inspect_running'):
         rows = inspect()
-        healthy(rows)
+        if frozen_repair:
+            require(name == 'tr-s04-20261028-r4', 'telemetry_repair_candidate_invalid')
+            telemetry_repair().admit(telemetry_repair_context(), frozen_repair)
+        else:
+            healthy(rows)
     with track('freeze.compose_config') as span:
         config = json.loads(command(args + ['config', '--format', 'json']))
         validate(config)
         span['services'] = len(config['services'])
     require(set(rows) == set(config['services']) - {'backup-helper'}, 'project_service_set_changed')
+    telemetry_monitoring().inherit(telemetry_context(), parent, config, rows, services)
     with track('freeze.pin_anonymous_volumes'):
         # Pin image-declared anonymous data volumes too; never silently replace them.
         for service, row in rows.items():
@@ -1011,6 +1216,13 @@ def freeze(name, args_path, parent, services, overrides, backup_tier=FULL_TIER,
     with track('freeze.source_builds') as span:
         source_builds = check_source_builds(config, rows, services)
         span['verified'] = len(source_builds)
+    transition_document = None
+    transition = telemetry_transition()
+    if telemetry_evidence is not None:
+        require(defer_backup is None, 'telemetry_transition_requires_new_full_backup')
+        transition_document = transition.validate(telemetry_context(), read(owned(telemetry_evidence)),
+                                                  parent, services, backup_tier, source_builds, name)
+    transition.require_if_needed(telemetry_context(), source_builds, transition_document)
     if 'frontend' in overrides:
         # A build from a stale source tree silently drops route chunks. Compare the
         # logical asset names with the serving image before any candidate is written.
@@ -1022,7 +1234,14 @@ def freeze(name, args_path, parent, services, overrides, backup_tier=FULL_TIER,
                     'frontend_assets_missing:' + ','.join(missing))
     # Fail here rather than after a fresh 650 MB backup and two remote uploads.
     preflight(config, env)
-    if backup_tier == FAST_TIER:
+    assessment_doc = assessment_files = None
+    if backup_tier == STANDARD_TIER:
+        require(assessment is not None, 'standard_assessment_required')
+        validate_standard_config(config, args, env, parent, services, overrides, source_builds)
+        assessment_doc, assessment_files = standard_assessment(
+            assessment, name, parent, {s: config['services'][s]['image'] for s in services})
+        choose_fast_baseline(read(STATE_DIR/'active.json'))
+    elif backup_tier == FAST_TIER:
         validate_fast_frontend_config(config, args, env, parent, services, overrides)
         choose_fast_baseline(read(STATE_DIR / 'active.json'))
     else:
@@ -1031,6 +1250,8 @@ def freeze(name, args_path, parent, services, overrides, backup_tier=FULL_TIER,
     require(not path.exists(), 'release_already_exists')
     with track('freeze.write_candidate'):
         path.mkdir(parents=True, mode=0o700)
+        monitoring_files = (telemetry_monitoring().prepare(telemetry_context(), path, transition_document,
+                                                          config, rows) if transition_document else [])
         write(path / 'private/compose.json', escaped(config))
         write(path / 'private/origin-args.json', args)
         for source, target in [
@@ -1039,10 +1260,24 @@ def freeze(name, args_path, parent, services, overrides, backup_tier=FULL_TIER,
         ]:
             shutil.copyfile(source, target)
             target.chmod(0o600)
-        files = ['private/compose.json', 'private/origin-args.json', 'gate.py', 'registry-helper.py']
+        files = ['private/compose.json', 'private/origin-args.json', 'gate.py', 'registry-helper.py']+monitoring_files
+        if assessment_doc is not None:
+            write(path/'compatible-assessment.json', assessment_doc)
+            files.append('compatible-assessment.json')
+            for index, evidence in enumerate(assessment_files):
+                relative = 'evidence/test-' + str(index) + '.log'
+                (path/'evidence').mkdir(exist_ok=True, mode=0o700)
+                shutil.copyfile(evidence, path/relative)
+                files.append(relative)
         if defer_source is not None:
             files.append(DEFERRAL_FILE)
             deferred = bind_backup_deferral(path, name, parent, defer_source, defer_doc)
+        if transition_document is not None:
+            write(path/'telemetry-transition.json', transition_document)
+            files.append('telemetry-transition.json')
+        if frozen_repair:
+            shutil.copyfile(owned(frozen_repair), path/'telemetry-repair.json')
+            files.append('telemetry-repair.json')
         m = {'manifest_version': 1, 'release': name, 'created_at': now(), 'parent': parent,
              'backup_tier': backup_tier,
              'controller_sha256': sha(__file__),
@@ -1053,6 +1288,10 @@ def freeze(name, args_path, parent, services, overrides, backup_tier=FULL_TIER,
              'private_references': references(config, env), 'before': states(rows)}
         if defer_source is not None:
             m['backup_deferral'] = deferred
+        if transition_document is not None:
+            m['telemetry_transition'] = {'sha256': sha(path/'telemetry-transition.json')}
+        if frozen_repair:
+            m['telemetry_repair'] = {'sha256': sha(path/'telemetry-repair.json')}
         write(path / 'manifest.json', m)
     with track('freeze.roundtrip'):
         # Docker parses the frozen JSON but no container or HTTP check is run here.
@@ -1080,12 +1319,22 @@ def current_matches(path, m):
     require(states(inspect()) == gate['states'], 'running_baseline_drift')
 
 
-def maintenance_states_match(before, after):
+def maintenance_states_match(before, after, telemetry=None):
     """A full backup may restart only its two writers, never recreate them."""
     require(set(before) == set(after), 'backup_maintenance_service_set_changed')
+    gateway_maintained = False
+    if telemetry is not None:
+        protocol = telemetry_protocol()
+        try:
+            gateway_maintained = protocol.validate_receipt(before, after, telemetry)
+        except protocol.TelemetryBlocked as error:
+            raise Blocked(str(error)) from None
+        except (KeyError, TypeError, ValueError):
+            raise Blocked('telemetry_backup_receipt_invalid') from None
     for service, expected in before.items():
         actual = after[service]
-        keys = ('id', 'image', 'restarts') if service in ('agent-rag', 'ops-agent') else expected.keys()
+        keys = ('id', 'image', 'restarts') if (service in ('agent-rag', 'ops-agent') or
+                                            service == 'gateway' and gateway_maintained) else expected.keys()
         require(all(actual.get(k) == expected[k] for k in keys),
                 'backup_maintenance_identity_changed:' + service)
 
@@ -1131,8 +1380,18 @@ def failed_backup_resume_chain(release_path, rows, evidence_path):
     # backup.sh's timing started_at has whole-second precision; freeze has micros.
     require(start.tzinfo is not None and start.timestamp()+1>=frozen_at.timestamp()
             and 0<=time.time()-end.timestamp()<=86400, 'failed_backup_evidence_expired')
-    current=states(rows);maintenance_states_match(gate_before,current)
-    for name in ('agent-rag','ops-agent'):
+    current=states(rows)
+    draft_path=Path(str(BACKUP_DIR/timing['archive'])+'.v4-maintenance.json')
+    telemetry=None
+    if draft_path.is_file():
+        draft=read(draft_path)
+        require(draft.get('active')==read(STATE_DIR/'active.json') and
+                draft.get('before')==gate_before and draft.get('after')==current,
+                'failed_backup_resume_draft_unbound')
+        telemetry=draft.get('telemetry')
+    maintenance_states_match(gate_before,current,telemetry)
+    restarted_services=('agent-rag','ops-agent','gateway') if telemetry else ('agent-rag','ops-agent')
+    for name in restarted_services:
         restarted=datetime.datetime.fromisoformat(current[name]['started_at'].replace('Z','+00:00'))
         require(start.timestamp()<=restarted.timestamp()<=end.timestamp()+5, 'failed_backup_restart_outside_window')
     return {'before':gate_before,'observed_before':current,'started_at':max(start,frozen_at).isoformat(),
@@ -1154,6 +1413,22 @@ def backup_maintenance_snapshot(path, after=False, archive=None):
         return
     release_path, manifest = active()
     rows = inspect()
+    if (STATE_DIR/'pending.json').exists():
+        repair = telemetry_repair()
+        if not after:
+            proof_path, proof, rows = repair.backup_context(telemetry_repair_context())
+            write(path, {'version':1,'active':read(STATE_DIR/'active.json'),'before':states(rows),
+                'started_at':now(),'frozen_repair_sha256':sha(proof_path),'repair_candidate':proof['candidate']})
+        else:
+            value=read(path)
+            repair.backup_context(telemetry_repair_context(),states_after=states(rows))
+            maintenance_states_match(value['before'],states(rows))
+            telemetry=telemetry_protocol().receipt(telemetry_context(),path.parent/'telemetry-backup-state.json')
+            require(telemetry is not None and telemetry.get('kind')==repair.FORMAT and
+                    telemetry.get('phase')=='preserved_frozen', 'telemetry_frozen_backup_unproven')
+            value.update(after=states(rows),resumed_at=now(),telemetry=telemetry)
+            write(path,value)
+        return
     healthy(rows)
     if not after:
         observation={'before':states(rows),'started_at':now()}
@@ -1168,7 +1443,13 @@ def backup_maintenance_snapshot(path, after=False, archive=None):
         value = read(path)
         require(value['active'] == read(STATE_DIR / 'active.json'),
                 'backup_maintenance_active_changed')
-        maintenance_states_match(value['before'], states(rows))
+        protocol = telemetry_protocol()
+        telemetry = protocol.receipt(telemetry_context(), path.parent/'telemetry-backup-state.json')
+        if protocol.schema(telemetry_context(), rows)['s04']:
+            require(telemetry is not None, 'telemetry_backup_protocol_required')
+        maintenance_states_match(value['before'], states(rows), telemetry)
+        if telemetry is not None:
+            value['telemetry'] = telemetry
         value.update(after=states(rows), resumed_at=now())
         write(path, value)
 
@@ -1184,10 +1465,21 @@ def verify_backup_maintenance(a):
             receipt.get('sha256') == baseline['sha256'], 'backup_maintenance_receipt_mismatch')
     old_gate = read(path / pointer['gate_file'])
     require(receipt['before'] == old_gate['states'], 'backup_maintenance_baseline_mismatch')
-    maintenance_states_match(receipt['before'], receipt['after'])
+    maintenance_states_match(receipt['before'], receipt['after'], receipt.get('telemetry'))
     rows = inspect()
     healthy(rows)
     require(states(rows) == receipt['after'], 'backup_maintenance_post_resume_drift')
+    if getattr(a, 'phase', None) == 'reconcile-backup':
+        # Reconcile only a successful, precisely bound scheduled maintenance.
+        # There is no application deployment and no new functional acceptance.
+        accepted_gate = gate(path, [], states(rows), maintenance_only=True)
+        write(path/('backup-maintenance-'+str(time.time_ns())+'.json'), {
+            'previous_pointer': pointer, 'receipt': receipt, 'gate_file': accepted_gate,
+            'inherited_gate_file': pointer['gate_file'], 'https_wss_rerun': False,
+            'kind': 'successful_backup_state_reconciliation'})
+        set_active(path, accepted_gate, pointer.get('backup_baseline'),
+                   pointer.get('published_at') or activation_time(pointer, path).isoformat())
+        return
     migrated = manifest.get('migration', {}).get('format') == 1
     if migrated:
         require(read(path / 'migration-baseline.json').get('passed') is True,
@@ -1227,9 +1519,37 @@ def rollback_maintenance_matches(receipt_path, path, pointer, rows):
             'backup_maintenance_receipt_expired')
     require(receipt['before'] == read(path / pointer['gate_file'])['states'],
             'backup_maintenance_baseline_mismatch')
-    maintenance_states_match(receipt['before'], receipt['after'])
+    maintenance_states_match(receipt['before'], receipt['after'], receipt.get('telemetry'))
     healthy(rows)
     require(states(rows) == receipt['after'], 'backup_maintenance_post_resume_drift')
+
+
+def verify_failed_backup_resume(a):
+    """Full gate after a proven failed-backup resume; never a backup success."""
+    path, manifest = active()
+    pointer = read(STATE_DIR/'active.json')
+    rows = inspect()
+    receipt_path = Path(a.receipt)
+    require(receipt_path.is_file() and not receipt_path.is_symlink() and
+            receipt_path.resolve().parent == BACKUP_DIR, 'backup_maintenance_receipt_path_invalid')
+    receipt_path = receipt_path.resolve()
+    rollback_maintenance_matches(receipt_path, path, pointer, rows)
+    receipt = read(receipt_path)
+    archive = Path(str(receipt_path).removesuffix('.v4-maintenance.json'))
+    timing_path = Path(str(archive).removesuffix('.tar.gz.gpg')+'.timing.json')
+    timing = read(timing_path)
+    require(receipt.get('archive') is None and not archive.exists() and
+            timing.get('status') == 'failed' and timing.get('archive_bytes') == 0 and
+            not timing.get('uploads') and timing.get('failed_stage') in ('queues_snapshot', 'v4_rows'),
+            'failed_backup_resume_not_proven')
+    # No container is changed. A failing gate leaves the old pointer untouched.
+    accepted_gate = gate(path, [], states(rows))
+    write(path/('failed-backup-resume-'+str(time.time_ns())+'.json'), {
+        'previous_pointer': pointer, 'receipt_sha256': sha(receipt_path),
+        'timing_sha256': sha(timing_path), 'gate_file': accepted_gate,
+        'backup_passed': False, 'kind': 'failed_backup_resume_requalification'})
+    set_active(path, accepted_gate, pointer.get('backup_baseline'),
+               pointer.get('published_at') or activation_time(pointer, path).isoformat())
 
 
 def maintenance_receipt(archive, m, pm, archive_sha):
@@ -1260,7 +1580,7 @@ def maintenance_receipt(archive, m, pm, archive_sha):
             bool(pointer.get('gate_file')), 'backup_maintenance_parent_mismatch')
     require(read(release(m['parent']) / pointer['gate_file']).get('states') == receipt['before'],
             'backup_maintenance_baseline_mismatch')
-    maintenance_states_match(receipt['before'], receipt['after'])
+    maintenance_states_match(receipt['before'], receipt['after'], receipt.get('telemetry'))
     require(receipt['before'] == m['before'], 'backup_maintenance_candidate_mismatch')
     try:
         started = datetime.datetime.fromisoformat(receipt['started_at'])
@@ -1318,7 +1638,8 @@ def prepare(a):
     args_path = a.from_args or previous / 'private/origin-args.json'
     freeze(a.id, args_path, previous.name, services, overrides, a.tier,
            getattr(a, 'allow_asset_shrink', False),
-           getattr(a, 'defer_backup_authorization', None))
+           getattr(a, 'defer_backup_authorization', None),
+           getattr(a, 'telemetry_transition', None), assessment=getattr(a, 'assessment', None))
 
 
 def drain():
@@ -1445,7 +1766,7 @@ def healthy_parent_already_deployed(path, services):
     return True
 
 
-def deploy(path, services):
+def deploy(path, services, startup_seconds=480):
     with track('deploy.immutable'):
         m = immutable(path)
     log = path / ('up-' + str(time.time_ns()) + '.log')
@@ -1461,7 +1782,7 @@ def deploy(path, services):
             known_wait = api_startup_wait_diagnostic(diagnostic)
             if str(error) != 'command_failed:docker' or not known_wait:
                 raise
-            wait_initial_api(m, services)
+            wait_initial_api(m, services, startup_seconds)
             span['api_initialization_grace_used'] = True
         span['log_bytes'] = log.stat().st_size if log.is_file() else 0
     with track('deploy.nginx'):
@@ -1475,7 +1796,7 @@ def deploy(path, services):
                            for service in sorted(services) if service in rows}
 
 
-def gate(path, services, before):
+def gate(path, services, before, maintenance_only=False):
     with track('gate.immutable'):
         m = immutable(path)
     with track('gate.inspect'):
@@ -1504,9 +1825,16 @@ def gate(path, services, before):
     with track('gate.https_wss') as span:
         # Per-entry timings come from gate.py when that frozen copy supports them.
         evidence = path / ('gate-timing-' + str(time.time_ns()) + '.json')
-        command([sys.executable, str(path / 'gate.py'), '/etc/powersystem/demo-password'],
-                path / ('https-wss-' + str(time.time_ns()) + '.log'),
-                env=dict(os.environ, POWERSYSTEM_GATE_TIMING=str(evidence)))
+        gate_env = dict(os.environ, POWERSYSTEM_GATE_TIMING=str(evidence))
+        # A frozen legacy gate ignores this variable and therefore keeps its
+        # original full checks. No old candidate becomes weaker after an update.
+        gate_env['POWERSYSTEM_GATE_PROFILE'] = ('standard' if
+            m.get('backup_tier') == STANDARD_TIER else 'full')
+        if not maintenance_only:
+            command([sys.executable, str(path / 'gate.py'), '/etc/powersystem/demo-password'],
+                    path / ('https-wss-' + str(time.time_ns()) + '.log'), env=gate_env)
+        else:
+            span['inherited_existing_acceptance'] = True
         if evidence.is_file():
             try:
                 value = read(evidence)
@@ -1522,7 +1850,11 @@ def gate(path, services, before):
         immutable(path)
         name = 'accepted-' + str(time.time_ns()) + '.json'
         write(path / name, {'passed': True, 'manifest_sha256': digest(m), 'states': states(rows),
-                            'kind': 'automatic_https_wss_gate', 'accepted_at': now()})
+                            'kind': ('maintenance_state_reconciliation' if maintenance_only else
+                                     'automatic_https_wss_gate'), 'accepted_at': now(),
+                            'tests_rerun': not maintenance_only,
+                            'profile': ('maintenance' if maintenance_only else
+                                'standard' if m.get('backup_tier') == STANDARD_TIER else 'full')})
     return name
 
 
@@ -1531,6 +1863,31 @@ def restore_transaction(transaction):
     with track('rollback.verify_previous'):
         previous_pointer = read(previous / 'acceptance-pointer.json')
         accepted(previous, previous_pointer)
+    protocol = telemetry_protocol()
+    transition = telemetry_transition()
+    guarded = transition.needs_schema_guard(telemetry_context(), transaction)
+    try:
+        if guarded:
+            try:
+                transition.ensure_migrator_stopped(telemetry_context(), release(transaction['candidate']))
+            except Blocked:
+                protocol.halt_forward_recovery(telemetry_context(), inspect(), transaction,
+                    {'state': 'unknown'}, 'telemetry_migrator_requires_manual_recovery')
+            protocol.refuse_unsafe_parent(telemetry_context(), previous, transaction)
+            transition.restore_pre_schema_gate(telemetry_context(), release(transaction['candidate']))
+    except (protocol.TelemetryBlocked, Blocked) as error:
+        if set(transaction.get('services', [])) & {'prometheus', 'alertmanager'}:
+            # Monitoring can use its immutable parent configuration without ever
+            # starting a historical telemetry worker against the forward schema.
+            try:
+                deploy(previous, ['prometheus', 'alertmanager'])
+                write(STATE_DIR/'telemetry-monitoring-recovered.json', {
+                    'passed': False, 'business_recovered': False, 'at': now(),
+                    'monitoring_parent': previous.name, 'pending_retained': True})
+            except Exception:
+                write(STATE_DIR/'telemetry-monitoring-recovery-failed.json', {
+                    'passed': False, 'at': now(), 'pending_retained': True})
+        raise Blocked(str(error)) from None
     services = transaction['services']
     with track('rollback.drain'):
         drain()
@@ -1559,11 +1916,16 @@ def publish(a):
         candidate = release(a.id)
         m = immutable(candidate)
     require(m['parent'] == previous.name, 'stale_or_unrelated_candidate')
+    transition = telemetry_transition()
+    transition_document = transition.frozen(telemetry_context(), candidate, m)
+    transition.require_if_needed(telemetry_context(), m.get('source_builds', []), transition_document)
+    if transition_document is not None:
+        transition.before_cutover(telemetry_context())
     services = m['services']
     require(bool(services) and set(services).issubset(APPLICATIONS), 'invalid_release_services')
     archive = Path(a.backup).resolve() if a.backup else None
     tier = m.get('backup_tier', FULL_TIER)
-    require(tier in (FULL_TIER, FAST_TIER), 'unknown_backup_tier')
+    require(tier in (FULL_TIER, FAST_TIER, STANDARD_TIER), 'unknown_backup_tier')
     baseline = None
     maintenance = None
     deferral = None
@@ -1574,6 +1936,11 @@ def publish(a):
             deferral = frozen_backup_deferral(candidate, m, previous.name)
             span['authorization_sha256'] = deferral['sha256']
         archive_sha = None
+    elif tier == STANDARD_TIER:
+        with track('publish.verify_standard_capsule') as span:
+            receipt, baseline = verified_standard_capsule(archive, m, read(STATE_DIR/'active.json'))
+            archive_sha = receipt['sha256']
+            span['bytes'] = archive.stat().st_size
     elif tier == FAST_TIER:
         with track('publish.verify_fast_capsule') as span:
             receipt, baseline = verified_fast_capsule(
@@ -1645,10 +2012,15 @@ def publish(a):
             transaction['backup_sha256'] = archive_sha
         write(STATE_DIR / 'pending.json', transaction)
     try:
+        if transition_document is not None:
+            with track('publish.telemetry_schema'):
+                transition.apply(telemetry_context(), candidate, m, transaction)
         with track('publish.deploy'):
             deploy(candidate, services)
         with track('publish.gate'):
             accepted = gate(candidate, services, transaction['before'])
+        with track('publish.planned_silence_cleanup'):
+            telemetry_monitoring().cleanup_silence(telemetry_context(), candidate)
         with track('publish.activate'):
             set_active(candidate, accepted, baseline['archive'] if baseline else None)
             (STATE_DIR / 'pending.json').unlink()
@@ -1658,7 +2030,10 @@ def publish(a):
                   {'passed': False, 'error_type': type(error).__name__,
                    'reason': str(error) if isinstance(error, Blocked) else None, 'at': now()})
         # Keep pending.json if rollback itself fails; subsequent releases stay blocked.
-        restore_transaction(transaction)
+        try:
+            restore_transaction(transaction)
+        finally:
+            telemetry_monitoring().cleanup_silence(telemetry_context(), candidate, strict=False)
         raise Blocked('release_failed_and_previous_release_restored') from None
 
 
@@ -1666,6 +2041,104 @@ def verify_candidate(a):
     path = release(a.id)
     m = immutable(path)
     preflight(read(path / 'private/compose.json'), m['origin_environment'])
+
+
+def resume_frozen_telemetry(a):
+    """Resume the exact migrated candidate, preserving its failed transaction."""
+    require(a.id in ('tr-s04-20261028-r3','tr-s04-20261028-r4') and a.attempt in ('r1', 'r2', 'r3'),
+            'telemetry_resume_scope_invalid')
+    candidate = release(a.id)
+    m = immutable(candidate)
+    pending = STATE_DIR/'pending.json'
+    recovery = STATE_DIR/'telemetry-forward-recovery-required.json'
+    evidence_path = owned(a.evidence)
+    require(evidence_path.is_relative_to(ROOT/'runtime'), 'telemetry_resume_evidence_scope')
+    proof = read(evidence_path)
+    transaction = read(pending)
+    previous, pm = active()
+    require(proof.get('format') == 'telemetry-same-candidate-resume/v1' and
+            proof.get('candidate') == a.id and proof.get('attempt') == a.attempt and
+            proof.get('manifest_sha256') == digest(m) and proof.get('pending_sha256') == sha(pending) and
+            proof.get('recovery_sha256') == sha(recovery) and
+            proof.get('active') == read(STATE_DIR/'active.json') and
+            proof.get('owner_instruction') == '继续完成任务', 'telemetry_resume_proof_unbound')
+    require(transaction['candidate'] == a.id and transaction['previous'] == m['parent'] == previous.name and
+            set(transaction['services']) == {'api', 'gateway', 'prometheus', 'alertmanager'} and
+            transaction['backup_tier'] == FULL_TIER, 'telemetry_resume_transaction_invalid')
+    require(proof.get('tools') == {n: sha(Path(__file__).with_name(n)) for n in
+            ('production-stack.py', 'telemetry-monitoring.py')}, 'telemetry_resume_tool_binding_changed')
+    transition = telemetry_transition()
+    document = transition.frozen(telemetry_context(), candidate, m)
+    require(document is not None and document['failure_policy'] == 'freeze', 'telemetry_resume_plan_required')
+    protocol = telemetry_protocol()
+    rows = inspect()
+    failed = read(recovery)
+    require(failed.get('phase') == 'frozen' and failed.get('maintenance_enabled') is True and
+            failed.get('legacy_worker_started') is False and not failed.get('errors') and
+            states(rows) == proof.get('states'), 'telemetry_resume_frozen_state_changed')
+    for name in ('api', 'gateway'):
+        row = rows[name]
+        labels = row['Config']['Labels']
+        require(not row['State']['Running'] and not row['State'].get('OOMKilled') and
+                row['Image'] == m['images'][name] and row['RestartCount'] == 0 and
+                labels.get('com.docker.compose.project') == PROJECT and
+                labels.get('com.docker.compose.service') == name and
+                labels.get('com.docker.compose.project.config_files') == str(candidate/'private/compose.json'),
+                'telemetry_resume_writer_identity_changed')
+    healthy({n: r for n, r in rows.items() if n not in ('api', 'gateway')})
+    require(protocol.schema(telemetry_context(), rows)['s04'], 'telemetry_resume_schema_not_ready')
+    require(protocol.gate(telemetry_context(), rows) == proof.get('freeze_gate') and
+            proof['freeze_gate']['enabled'] is True, 'telemetry_resume_gate_ownership_changed')
+    state = read(candidate/'telemetry-transition-state.json')
+    require(state.get('phase') == 'ready_for_workers' and
+            protocol.stop_owned_migrator(telemetry_context(), candidate, state)['stop_proven'],
+            'telemetry_resume_migration_not_finished')
+    archive = BACKUP_DIR/transaction['predeployment_backup']
+    require(sha(archive) == transaction['backup_sha256'], 'telemetry_resume_backup_changed')
+    if m.get('telemetry_repair'):
+        telemetry_repair().backup_receipt(telemetry_repair_context(),candidate,m,archive)
+    else:
+        require(maintenance_receipt(archive, m, pm, transaction['backup_sha256']) is not None,
+                'telemetry_resume_original_backup_unbound')
+    source = ROOT/'runtime/source-builds/contexts'/document['source_sha256']
+    command([sys.executable, str(Path(__file__).with_name('source-build.py')), 'verify', '--source', str(source)])
+    preflight(read(candidate/'private/compose.json'), m['origin_environment'])
+    drain()
+    attempt = 'resume-'+a.attempt
+    record_path = candidate/(attempt+'.json')
+    require(not record_path.exists(), 'telemetry_resume_attempt_already_recorded')
+    shutil.copyfile(recovery, candidate/('forward-recovery-before-'+attempt+'.json'))
+    shutil.copyfile(pending, candidate/('pending-before-'+attempt+'.json'))
+    record = {'passed': False, 'started_at': now(), 'candidate': a.id, 'attempt': attempt,
+              'evidence_sha256': sha(evidence_path), 'pending_sha256': sha(pending),
+              'manifest_sha256': digest(m), 'tools': proof['tools'], 'phase': 'admitting'}
+    write(record_path, record)
+    try:
+        telemetry_monitoring().create_silence(telemetry_context(), candidate, document, attempt)
+        record['released_gate'] = protocol.change_gate(telemetry_context(), rows, proof['freeze_gate'], False)
+        record['phase'] = 'starting'; write(record_path, record)
+        deploy(candidate, transaction['services'], startup_seconds=480 if m.get('telemetry_repair') else 60)
+        accepted_gate = gate(candidate, transaction['services'], proof['states'])
+        telemetry_monitoring().cleanup_silence(telemetry_context(), candidate, attempt=attempt)
+        require(sha(pending) == record['pending_sha256'], 'telemetry_resume_pending_changed')
+        set_active(candidate, accepted_gate)
+        pending.unlink()
+        shutil.copyfile(recovery,candidate/('recovery-before-accept-'+attempt+'.json'))
+        write(recovery,{'phase':'resolved','candidate':a.id,'at':now(),
+            'previous_recovery_sha256':sha(candidate/('recovery-before-accept-'+attempt+'.json'))})
+        record.update(passed=True, phase='accepted', gate_file=accepted_gate, finished_at=now())
+        write(record_path, record)
+    except BaseException as error:
+        record.update(phase='failed', error_type=type(error).__name__, finished_at=now())
+        write(record_path, record)
+        try:
+            protocol.halt_forward_recovery(telemetry_context(), inspect(), transaction,
+                {'s01': True, 's04': True}, 'telemetry_same_candidate_resume_failed')
+        except protocol.TelemetryBlocked:
+            pass
+        finally:
+            telemetry_monitoring().cleanup_silence(telemetry_context(), candidate, strict=False, attempt=attempt)
+        raise Blocked('telemetry_same_candidate_resume_failed_frozen') from None
 
 
 def main():
@@ -1679,16 +2152,34 @@ def main():
     plan.add_argument('--from-args')
     plan.add_argument('--service', action='append')
     plan.add_argument('--image', action='append')
-    plan.add_argument('--tier', choices=(FULL_TIER, FAST_TIER), default=FULL_TIER)
+    plan.add_argument('--tier', choices=(FULL_TIER, FAST_TIER, STANDARD_TIER), default=FULL_TIER)
+    plan.add_argument('--assessment', help='image-bound compatibility and targeted-test assessment for standard-fast')
     plan.add_argument('--allow-asset-shrink', action='store_true')
     plan.add_argument('--defer-backup-authorization')
+    plan.add_argument('--telemetry-transition', help='frozen offline migration and owner-accepted freeze-on-failure evidence')
     check = sub.add_parser('preflight')
     check.add_argument('--id', required=True)
     activate = sub.add_parser('publish')
     activate.add_argument('--id', required=True)
     activate.add_argument('--backup')
+    resume_telemetry = sub.add_parser('resume-telemetry')
+    resume_telemetry.add_argument('--id', required=True)
+    resume_telemetry.add_argument('--attempt', required=True, choices=('r1', 'r2', 'r3'))
+    resume_telemetry.add_argument('--evidence', required=True)
+    repair_prepare = sub.add_parser('prepare-telemetry-repair')
+    repair_prepare.add_argument('--id', required=True)
+    repair_prepare.add_argument('--evidence', required=True)
+    repair_prepare.add_argument('--image', action='append', required=True)
+    repair_prepare.add_argument('--telemetry-transition', required=True)
+    repair_publish = sub.add_parser('publish-telemetry-repair')
+    repair_publish.add_argument('--id', required=True)
+    repair_publish.add_argument('--backup', required=True)
     maintenance = sub.add_parser('verify-backup')
     maintenance.add_argument('--backup', required=True)
+    reconcile = sub.add_parser('reconcile-backup')
+    reconcile.add_argument('--backup', required=True)
+    resume = sub.add_parser('verify-resume')
+    resume.add_argument('--receipt', required=True)
     rollback = sub.add_parser('rollback')
     rollback.add_argument('--backup-maintenance')
     sub.add_parser('status')
@@ -1707,6 +2198,13 @@ def main():
     watch = sub.add_parser('timing')
     watch.add_argument('--limit', type=int, default=10)
     a = parser.parse_args()
+    if a.phase in ('publish-telemetry-repair','resume-telemetry'):
+        global CANCEL_SAFE_COMMANDS
+        CANCEL_SAFE_COMMANDS=True
+        def interrupted(_signum,_frame):
+            raise Blocked('telemetry_release_cancelled')
+        signal.signal(signal.SIGTERM,interrupted)
+        signal.signal(signal.SIGINT,interrupted)
     registered_business_host('release')
     os.umask(0o077)
     STATE_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -1723,7 +2221,15 @@ def main():
             if a.phase == 'status':
                 pointer = (read(STATE_DIR / 'active.json')
                            if (STATE_DIR / 'active.json').exists() else None)
-                print(json.dumps({'active': pointer, 'pending': pending.exists()}))
+                actual_images = {s: row['Image'] for s, row in inspect().items()}
+                expected = (read(release(pointer['release'])/'manifest.json')['images']
+                            if pointer else {})
+                print(json.dumps({'active': pointer, 'pending': pending.exists(),
+                                  'actual_images': actual_images,
+                                  'images_match_accepted': actual_images == expected,
+                                  'transaction': ({k: v for k, v in read(pending).items()
+                                      if k in ('candidate', 'previous', 'services', 'started_at')}
+                                      if pending.exists() else None)}))
                 return
             if a.phase == 'rollback':
                 if not pending.exists():
@@ -1736,10 +2242,26 @@ def main():
                     require(bool(cm['parent']) and bool(cm['services']), 'no_previous_release')
                     accepted(release(cm['parent']),
                              read(release(cm['parent']) / 'acceptance-pointer.json'))
+                    protocol = telemetry_protocol()
+                    try:
+                        transaction = {'kind': 'explicit_parent_rollback', 'candidate': current.name,
+                                       'services': cm['services']}
+                        if telemetry_transition().needs_schema_guard(telemetry_context(), transaction):
+                            protocol.refuse_unsafe_parent(telemetry_context(), release(cm['parent']), transaction)
+                    except protocol.TelemetryBlocked as error:
+                        raise Blocked(str(error)) from None
                     write(pending, {'previous': cm['parent'], 'candidate': current.name,
                                     'services': cm['services'], 'before': states(inspect()),
                                     'started_at': now(), 'kind': 'explicit_parent_rollback'})
                 restore_transaction(read(pending))
+            elif a.phase == 'resume-telemetry':
+                require(pending.exists(), 'telemetry_resume_pending_required')
+                resume_frozen_telemetry(a)
+            elif a.phase in ('prepare-telemetry-repair','publish-telemetry-repair'):
+                require(pending.exists(), 'telemetry_repair_pending_required')
+                repair=telemetry_repair()
+                if a.phase=='prepare-telemetry-repair':repair.prepare(sys.modules[__name__],a)
+                else:repair.publish(sys.modules[__name__],a)
             else:
                 require(not pending.exists(), 'unfinished_release_requires_rollback')
                 if a.phase.startswith('migration-'):
@@ -1754,6 +2276,8 @@ def main():
                     return
                 {'prepare': prepare, 'bootstrap': bootstrap, 'preflight': verify_candidate,
                  'verify-backup': verify_backup_maintenance,
+                 'reconcile-backup': verify_backup_maintenance,
+                 'verify-resume': verify_failed_backup_resume,
                  'publish': publish}[a.phase](a)
     except Exception as error:
         persist_timing('failed', error)

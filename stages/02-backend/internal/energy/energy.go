@@ -107,20 +107,46 @@ type dirtyDay struct {
 	ChangedAt time.Time
 }
 
+// sourceSamplesSQL intentionally contains no disjunction on business_state.
+// With `business_state='success' OR business_state IS NULL` the planner
+// bitmap-unioned the device-wide partial indexes (idx_inbox_restore /
+// idx_inbox_success) and then filtered ts_ms on the heap, reading a whole
+// device history instead of one day. COALESCE keeps the exact same row set and
+// lets idx_inbox_energy (device_id,ts_ms,id) WHERE processed_at IS NOT NULL
+// serve device and day range as index conditions in index order.
+const sourceSamplesSQL = `SELECT ts_ms,(payload->>'power')::double precision AS power
+FROM telemetry_inbox WHERE device_id=? AND processed_at IS NOT NULL AND COALESCE(business_state,'success')='success'
+AND ts_ms>=? AND ts_ms<=? ORDER BY ts_ms,id`
+
+// uncertainExistsSQL only answers "is any sample not success". The previous
+// count(*) could not use any index for the state predicate and therefore
+// fetched every row of the device-day on each rebuild; EXISTS stops at the
+// first such row and returns the same verdict.
+const uncertainExistsSQL = `SELECT EXISTS(SELECT 1 FROM telemetry_inbox WHERE device_id=? AND ts_ms>=? AND ts_ms<=? AND business_state IS DISTINCT FROM 'success')`
+
 // RebuildPending refreshes a bounded number of dirty days. A concurrent new
 // sample keeps its dirty marker so the next pass corrects the daily total.
+// One slow or failing day must not starve the rest of the queue: completed
+// days are already committed by rebuildDay, so the round continues and the
+// first error is reported afterwards.
 func RebuildPending(ctx context.Context, db *gorm.DB, limit int) (int, error) {
 	var days []dirtyDay
 	if err := db.WithContext(ctx).Raw(`SELECT device_id,day::text AS day,changed_at
 FROM energy_dirty_days ORDER BY changed_at LIMIT ?`, limit).Scan(&days).Error; err != nil {
 		return 0, err
 	}
+	rebuilt := 0
+	var firstErr error
 	for _, d := range days {
 		if err := rebuildDay(ctx, db, d); err != nil {
-			return 0, err
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
 		}
+		rebuilt++
 	}
-	return len(days), nil
+	return rebuilt, firstErr
 }
 
 func rebuildDay(ctx context.Context, db *gorm.DB, d dirtyDay) error {
@@ -129,63 +155,29 @@ func rebuildDay(ctx context.Context, db *gorm.DB, d dirtyDay) error {
 		return err
 	}
 	start, end := date.UnixMilli(), date.AddDate(0, 0, 1).UnixMilli()
-	rows, err := db.WithContext(ctx).Raw(`SELECT ts_ms,(payload->>'power')::double precision AS power
-FROM telemetry_inbox WHERE device_id=? AND processed_at IS NOT NULL AND (business_state='success' OR business_state IS NULL)
-AND ts_ms>=? AND ts_ms<=? ORDER BY ts_ms,id`, d.DeviceID, start-maxGapMs, end+maxGapMs).Rows()
+	rows, err := db.WithContext(ctx).Raw(sourceSamplesSQL, d.DeviceID, start-maxGapMs, end+maxGapMs).Rows()
 	if err != nil {
 		return err
 	}
 	defer rows.Close()
-	var left, right *Sample
-	kwh := 0.0
-	segments := 0
-	var covered, gaps, maxGap int64
-	accumulate := func() {
-		if left == nil || right == nil || min(right.TS, end) <= max(left.TS, start) {
-			return
-		}
-		gap := right.TS - left.TS
-		if gap > maxGap {
-			maxGap = gap
-		}
-		if gap > maxGapMs {
-			gaps++
-			return
-		}
-		value, n := calculateDay([]Sample{*left, *right}, start, end)
-		kwh += value
-		segments += n
-		if n > 0 {
-			covered += min(right.TS, end) - max(left.TS, start)
-		}
-	}
+	samples := make([]Sample, 0, 64)
 	for rows.Next() {
 		var sample Sample
 		if err := rows.Scan(&sample.TS, &sample.Power); err != nil {
 			return err
 		}
-		if right == nil {
-			right = &sample
-			continue
-		}
-		if sample.TS == right.TS {
-			right = &sample
-			continue
-		}
-		accumulate()
-		left = right
-		right = &sample
+		samples = append(samples, sample)
 	}
-	accumulate()
 	if err := rows.Err(); err != nil {
 		return err
 	}
-	var uncertain int64
-	if err := db.WithContext(ctx).Raw(`SELECT count(*) FROM telemetry_inbox WHERE device_id=? AND ts_ms>=? AND ts_ms<=? AND (business_state IS NULL OR business_state<>'success')`, d.DeviceID, start-maxGapMs, end+maxGapMs).Scan(&uncertain).Error; err != nil {
+	window := summarizeWindow(samples, start, end)
+	var uncertain bool
+	if err := db.WithContext(ctx).Raw(uncertainExistsSQL, d.DeviceID, start-maxGapMs, end+maxGapMs).Row().Scan(&uncertain); err != nil {
 		return err
 	}
 	quality := "verified"
-	if uncertain > 0 || gaps > 0 {
+	if uncertain || window.Gaps > 0 {
 		quality = "provisional"
 	}
 	return db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
@@ -201,11 +193,64 @@ AND ts_ms>=? AND ts_ms<=? ORDER BY ts_ms,id`, d.DeviceID, start-maxGapMs, end+ma
 			}
 		}
 		if err := tx.Exec(`INSERT INTO energy_daily(device_id,day,kwh,segments_count,source_quality,covered_ms,gap_count,max_gap_ms,updated_at) VALUES(?,?,?,?,?,?,?,?,now())
-ON CONFLICT(device_id,day) DO UPDATE SET kwh=excluded.kwh,segments_count=excluded.segments_count,source_quality=excluded.source_quality,covered_ms=excluded.covered_ms,gap_count=excluded.gap_count,max_gap_ms=excluded.max_gap_ms,updated_at=now()`, d.DeviceID, d.Day, kwh, segments, quality, covered, gaps, maxGap).Error; err != nil {
+ON CONFLICT(device_id,day) DO UPDATE SET kwh=excluded.kwh,segments_count=excluded.segments_count,source_quality=excluded.source_quality,covered_ms=excluded.covered_ms,gap_count=excluded.gap_count,max_gap_ms=excluded.max_gap_ms,updated_at=now()`, d.DeviceID, d.Day, window.KWh, window.Segments, quality, window.CoveredMS, window.Gaps, window.MaxGapMS).Error; err != nil {
 			return err
 		}
 		return tx.Exec(`DELETE FROM energy_dirty_days WHERE device_id=? AND day=? AND changed_at<=?`, d.DeviceID, d.Day, d.ChangedAt).Error
 	})
+}
+
+// windowSummary is the persisted outcome of folding one device-day.
+type windowSummary struct {
+	KWh       float64
+	Segments  int
+	CoveredMS int64
+	Gaps      int64
+	MaxGapMS  int64
+}
+
+// summarizeWindow folds a device-day window. Input must be ordered by ts_ms and
+// may extend one maxGapMs past the day on either side so that boundary
+// segments interpolate; rows outside the day only contribute through those
+// segments. Duplicate timestamps keep the later row.
+func summarizeWindow(samples []Sample, start, end int64) windowSummary {
+	var out windowSummary
+	var left, right *Sample
+	accumulate := func() {
+		if left == nil || right == nil || min(right.TS, end) <= max(left.TS, start) {
+			return
+		}
+		gap := right.TS - left.TS
+		if gap > out.MaxGapMS {
+			out.MaxGapMS = gap
+		}
+		if gap > maxGapMs {
+			out.Gaps++
+			return
+		}
+		value, n := calculateDay([]Sample{*left, *right}, start, end)
+		out.KWh += value
+		out.Segments += n
+		if n > 0 {
+			out.CoveredMS += min(right.TS, end) - max(left.TS, start)
+		}
+	}
+	for i := range samples {
+		sample := &samples[i]
+		if right == nil {
+			right = sample
+			continue
+		}
+		if sample.TS == right.TS {
+			right = sample
+			continue
+		}
+		accumulate()
+		left = right
+		right = sample
+	}
+	accumulate()
+	return out
 }
 
 func ReadSummary(ctx context.Context, db *gorm.DB, now time.Time) (Summary, error) {

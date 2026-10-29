@@ -22,7 +22,7 @@ def inspect(service):
 def baseline_sources(root):
     """Preflight the isolated notes layout without moving server runtime data."""
     saved = set()
-    version_notes = 'notes/01-项目调研规划与开发建设记录/第二版-智能体升级'
+    version_notes = 'notes/01-项目调研规划与开发建设记录/02-第二版-智能体升级'
     for folder in ('stages/02-backend', 'stages/04-frontend', 'stages/08-agent-rag', version_notes):
         for path in (root/folder).rglob('*'):
             if path.is_file() and not any(part in ('node_modules', 'dist', '__pycache__', '.venv', '.git', 'private', 'runtime', 'artifacts', '.env') for part in path.relative_to(root).parts):

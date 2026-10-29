@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import argparse
 import os
 import re
 import subprocess
@@ -16,7 +17,15 @@ ROOT = Path(__file__).resolve().parents[2]
 MANIFEST = ROOT / "tools/note-governance/workspace-links.json"
 PROXY_DIR = ROOT / "notes/06-代码工作区导航与链接映射"
 REPOSITORY_BASE = "https://github.com/Cyan-carp/PowerSystem"
+GENERATED_DATE = date.today().isoformat()
 ADDITIONAL_TARGETS = (
+    "stages/04-frontend/deploy/observe-telemetry.py",
+    "stages/04-frontend/deploy/test_observe_telemetry.py",
+    "artifacts/telemetry-repair-20261029-r1",
+    "stages/04-frontend/deploy/frontend-release-backup.py",
+    "stages/04-frontend/deploy/test_compatible_release.py",
+    ".github/workflows/release-checks.yml",
+    "artifacts/workflow-efficiency-20261028-r1",
     "stages/11-desktop-client/README.md",
     "README.md",
     "artifacts/stage8-agent-rag/server-20261011/evidence/acceptance/browser-quality.json",
@@ -47,7 +56,7 @@ def tracked(path: str) -> bool:
 def proxy_name(path: str) -> str:
     if path == "README.md":
         return "root-README.md"
-    safe = re.sub(r"[^0-9A-Za-z._\-\u4e00-\u9fff]+", "-", path.replace("/", "-")).strip("-")
+    safe = re.sub(r"[^0-9A-Za-z._\-\u4e00-\u9fff]+", "-", path.replace("/", "-")).strip("-.")
     return safe if safe.casefold().endswith(".md") else safe + ".md"
 
 
@@ -63,7 +72,7 @@ def relative_target(path: str) -> str:
 def proxy_source(entry: dict[str, object]) -> str:
     path = str(entry["workspace_path"])
     is_private_artifact = path.startswith("artifacts/")
-    updated = date.today().isoformat() if not entry["tracked"] and not is_private_artifact else "2026-10-23"
+    updated = GENERATED_DATE if not entry["tracked"] and not is_private_artifact else "2026-10-23"
     repository_url = entry.get("repository_url")
     repository_yaml = str(repository_url) if repository_url else "null"
     is_dir = (ROOT / path).is_dir()
@@ -110,6 +119,13 @@ def proxy_source(entry: dict[str, object]) -> str:
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--date', type=date.fromisoformat,
+                        help='explicit client-local date for newly generated proxy metadata')
+    args = parser.parse_args()
+    global GENERATED_DATE
+    if args.date:
+        GENERATED_DATE = args.date.isoformat()
     old_entries = json.loads(MANIFEST.read_text(encoding="utf-8")) if MANIFEST.exists() else []
     old_proxy = {str(item["workspace_path"]): str(item["proxy"]) for item in old_entries}
     targets = list(dict.fromkeys([str(item["workspace_path"]) for item in old_entries] + list(ADDITIONAL_TARGETS)))

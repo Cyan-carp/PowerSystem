@@ -11,6 +11,7 @@ import os
 import socket
 import ssl
 import sys
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -58,7 +59,12 @@ def main():
         password = source.read().strip()
     if not password:
         raise RuntimeError("demo credential file is empty")
-    for host in ("8.138.42.212", "8.138.10.222"):
+    profile = os.environ.get('POWERSYSTEM_GATE_PROFILE', 'full')
+    if profile not in ('full', 'standard'):
+        raise RuntimeError('unknown gate profile')
+    hosts = ('www.cyancarp.cn',) if profile == 'standard' else ('8.138.42.212', '8.138.10.222')
+    started = time.monotonic()
+    for host in hosts:
         for path in ("/api/v1/devices", "/api/v1/agent/sessions", "/api/v1/agent/tasks"):
             try:
                 request(host, path)
@@ -113,6 +119,11 @@ def main():
         if not response_line.startswith("HTTP/1.1 101 "):
             raise RuntimeError(f"{host} WSS status: {response_line}")
         print(f"{host} WSS=101", flush=True)
+    timing = os.environ.get('POWERSYSTEM_GATE_TIMING')
+    if timing:
+        with open(timing, 'w', encoding='utf-8') as output:
+            json.dump({'profile': profile, 'hosts': list(hosts),
+                       'total_seconds': round(time.monotonic()-started, 3)}, output)
 
 
 if __name__ == "__main__":

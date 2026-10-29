@@ -16,7 +16,7 @@ Obsidian vault = a normal folder on disk.
 - 从笔记进入代码、部署脚本或私有证据时，只链接 `notes/06-代码工作区导航与链接映射/` 下的代理页。
 - 工作区结构变化后运行 `python tools/note-governance/build_workspace_links.py`，重新计算代理页相对路径；不得写入本机绝对路径。
 - 修改笔记结构后依次运行 `python tools/note-governance/check_notes.py` 和 `python tools/note-graph/build_graph.py`。
-- 目录、生命周期元数据、唯一命名与移动同步的强制规则，以 `notes/02-工程规范边界与验收治理/项目工程规范.md` 为准。
+- 目录、生命周期元数据、唯一命名与移动同步的强制规则，以 `notes/02-工程规范边界与验收治理/项目工程规范/00-索引·项目工程规范.md` 为准。
 
 Vault structure (typical)
 
@@ -168,4 +168,3 @@ A: 请参考已知限制章节了解具体限制。
 - **外部API**: 部分功能（如网络请求）可能受到外部API的限制，如访问频率限制、数据量限制等。
 - **脚本执行**: obsidian-cli命令不支持直接执行外部脚本，需要通过exec命令行执行能力来实现。
 ---
-

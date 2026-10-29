@@ -1,20 +1,19 @@
 /**
- * V4-S04 run client.
+ * V4-S04 运行客户端（迁自 stages/04-frontend 覆盖前的 lib/agent-runs.ts）。
  *
- * The Go gateway relays the internal service body verbatim (`c.Data(...)`), so
- * the run endpoints return raw JSON, not the `{code,message,data}` envelope used
- * by the legacy routes. This module therefore uses a private fetch instead of
- * `request()`: it keeps the same JWT header, 401 session cleanup and HTTP error
- * semantics, but parses the raw body.
+ * Go 网关对 `/agent/runs*` 是 `c.Data(...)` 原样透传内部服务，因此这些接口返回
+ * 裸 JSON，不是 `{ code, message, data }` 信封。所以本模块用私有 fetch，不走
+ * `api.ts` 的 request()：同样的 Authorization 头、同样的 401 出口、同样的 HTTP
+ * 错误语义，但按裸 JSON 解析。
  *
- * `seq`, `turn_id` and `last_seq` are 64-bit integers on the server. Integer
- * lexemes of 16+ digits are quoted before `JSON.parse` so values above 2^53 do
- * not round-trip through a JavaScript number; values that fit are returned as
- * numbers.
+ * `seq` / `turn_id` / `last_seq` 在服务端是 64 位整数。解析前先把 16 位以上
+ * 的整数字面量加引号，避免超过 2^53 的值在 JS number 里丢精度；能安全表示的
+ * 仍然返回 number。
  *
- * The JWT is only ever sent in the Authorization header, never in a URL.
+ * JWT 只走 Authorization 头，绝不进 URL（EventSource 无法自定义头，所以流式
+ * 读取用 fetch + ReadableStream 自己解 SSE，而不是 EventSource）。
  */
-import { clearSession, token } from './auth'
+import { authToken, notifyUnauthorized } from './auth'
 
 const PROTOCOL = 'assistant/v4-draft1'
 const MAX_BACKOFF_MS = 8000
@@ -31,7 +30,7 @@ export type RunStatus =
   | 'cancelled'
   | 'pending_reconciliation'
 
-/** Exact 64-bit integer: a number when safe, the original lexeme otherwise. */
+/** 精确 64 位整数：安全范围内是 number，否则是原始字面量。 */
 export type Seq = string | number
 
 export type RunConnectionState = 'connecting' | 'live' | 'reconnecting' | 'stopped'
@@ -111,8 +110,8 @@ export interface RunEvent {
 }
 
 /**
- * Projection returned by GET /api/v1/agent/runs/:id. The field set is frozen by
- * the v4 contract; the client replaces whole snapshots instead of mutating them.
+ * `GET /api/v1/agent/runs/:id` 的投影。字段集由 v4 契约固定；
+ * 客户端整体替换快照，不做局部修补。
  */
 export interface RunSnapshot {
   authority_sync_status?: 'pending_reconciliation'
@@ -177,7 +176,7 @@ const ACTION_FIELDS = [
 
 const ARTIFACT_FIELDS = ['artifact_id', 'name', 'mime_type', 'size', 'sha256', 'expires_at', 'status'] as const
 
-/** Binding expected from the caller; every later read must still match it. */
+/** 调用方声明并须在后续每次读取中持续匹配的绑定。 */
 interface SnapshotExpectation {
   protocol?: string
   run_id?: string
@@ -199,23 +198,31 @@ export async function getRun(id: string, signal?: AbortSignal): Promise<RunSnaps
   return readSnapshot(id, { run_id: id }, signal)
 }
 
-/** Returns the server's real snapshot; no optimistic terminal state is invented. */
+/** 只返回服务端真实快照，不臆造终态。 */
 export async function cancelRun(id: string, signal?: AbortSignal): Promise<RunSnapshot> {
   const raw = await runJson(`/api/v1/agent/runs/${encodeURIComponent(id)}/cancel`, { method: 'POST', signal })
   return normalizeSnapshot(raw, { run_id: id })
 }
 
-export async function decideAction(run: RunSnapshot, actionId: string, approvalId: string, planHash: string, decision: 'approve' | 'reject'): Promise<RunSnapshot> {
-  const identity = token.value
-  const raw = await runJson(`/api/v1/agent/runs/${encodeURIComponent(run.run_id)}/actions/${encodeURIComponent(actionId)}/decision`, { method: 'POST', body: JSON.stringify({ decision, approval_id: approvalId, plan_hash: planHash }) })
-  if (token.value !== identity) throw new RunProtocolError('identity_changed')
+export async function decideAction(
+  run: RunSnapshot,
+  actionId: string,
+  approvalId: string,
+  planHash: string,
+  decision: 'approve' | 'reject',
+): Promise<RunSnapshot> {
+  const identity = authToken.value
+  const raw = await runJson(
+    `/api/v1/agent/runs/${encodeURIComponent(run.run_id)}/actions/${encodeURIComponent(actionId)}/decision`,
+    { method: 'POST', body: JSON.stringify({ decision, approval_id: approvalId, plan_hash: planHash }) },
+  )
+  if (authToken.value !== identity) throw new RunProtocolError('identity_changed')
   return normalizeSnapshot(raw, { run_id: run.run_id, session_id: run.session_id, turn_id: run.turn_id })
 }
 
 /**
- * Pure reducer for one run snapshot. It never touches session/turn history and
- * never mutates its input. Unknown fields and event types are dropped so raw
- * tool payloads or internal reasoning cannot reach the workbench.
+ * 单个运行快照的纯 reducer。它不碰会话/轮次历史，也不修改入参。未知字段与未知
+ * 事件类型一律丢弃，保证原始工具载荷或内部推理不会漏到工作台。
  */
 export function applyRunEvent(snapshot: RunSnapshot, event: RunEvent): RunSnapshot {
   if (event.protocol !== snapshot.protocol) throw new RunProtocolError('protocol_mismatch')
@@ -229,8 +236,7 @@ export function applyRunEvent(snapshot: RunSnapshot, event: RunEvent): RunSnapsh
   if (seq !== last + 1n) throw new RunProtocolError('seq_gap')
 
   const next: RunSnapshot = { ...snapshot, last_seq: event.seq }
-  // Sanitize here as well as in the SSE parser so the exported reducer cannot be
-  // used to surface internal reasoning or raw tool payloads.
+  // 解析器里已经洗过一遍，这里再洗一次：导出的 reducer 也不能成为泄漏通道。
   const data = sanitizeData(event.type, event.data)
 
   switch (event.type) {
@@ -300,16 +306,13 @@ export function applyRunEvent(snapshot: RunSnapshot, event: RunEvent): RunSnapsh
 }
 
 /**
- * Consume one run's SSE stream until a terminal state or cancellation.
+ * 消费一个运行的 SSE 流，直到终态或被取消。
  *
- * The caller owns `snapshot`; every `onSnapshot` call receives a complete run
- * snapshot (never a partial patch and never session history). The initial
- * snapshot and every recovery read (GET after a cursor error, a protocol
- * violation or a clean close, plus the final snapshot) must keep the same
- * run/turn/session/protocol binding, otherwise the stream is aborted instead of
- * displaying foreign state.
+ * 快照由调用方持有；每次 `onSnapshot` 拿到的都是完整快照（不是局部补丁，也不是
+ * 会话历史）。初始快照与之后的每次恢复读取都必须保持同一组
+ * run/turn/session/protocol 绑定，否则直接中止，绝不显示别人的状态。
  *
- * Disconnects back off with a bounded delay and never cancel the run.
+ * 断线按有界退避重连，绝不取消运行本身。
  */
 export async function consumeRun(
   id: string,
@@ -361,9 +364,8 @@ export async function consumeRun(
           }
           break
         }
-        // A clean close without a terminal event is still a disconnect: check
-        // the authoritative snapshot before retrying so a missed terminal event
-        // cannot spin forever.
+        // 没有终态事件的正常关闭仍算断线：先读一次权威快照再重试，
+        // 否则漏掉终态事件就会一直空转。
         const fresh = await readSnapshot(id, expect, signal)
         current = fresh
         onSnapshot(fresh)
@@ -376,9 +378,7 @@ export async function consumeRun(
         if (status === 401 || status === 403 || status === 404) throw error
         const cursorExpired = error instanceof RunHttpError && (status === 400 || status === 410)
         if (cursorExpired || error instanceof RunProtocolError) {
-          // Only a run that keeps violating the contract without producing any
-          // event is treated as unrecoverable; a stream that made progress
-          // resets the budget.
+          // 只有「一直违约且一个事件都没产出」才算不可恢复；有进展就重置预算。
           if (progressed) recoveries = 0
           recoveries += 1
           if (recoveries > MAX_RECOVERIES) throw error
@@ -412,10 +412,10 @@ async function streamOnce(
   signal: AbortSignal | undefined,
 ): Promise<'terminal' | 'closed'> {
   const headers = new Headers({ Accept: 'text/event-stream' })
-  if (token.value) headers.set('Authorization', `Bearer ${token.value}`)
+  if (authToken.value) headers.set('Authorization', `Bearer ${authToken.value}`)
   const response = await fetch(eventsUrl(id, start.last_seq), { method: 'GET', headers, signal, cache: 'no-store' })
   if (!response.ok) {
-    if (response.status === 401) logout()
+    if (response.status === 401) notifyUnauthorized()
     throw new RunHttpError(response.status, await errorCodeFromResponse(response))
   }
   const mediaType = (response.headers?.get('Content-Type') ?? '').toLowerCase()
@@ -453,7 +453,7 @@ async function streamOnce(
     if (buffer.trim() && consume(buffer)) return 'terminal'
     return 'closed'
   } finally {
-    try { await reader.cancel() } catch { /* stream already closed */ }
+    try { await reader.cancel() } catch { /* 流已关闭 */ }
     reader.releaseLock()
   }
 }
@@ -543,8 +543,7 @@ function applyText(current: string, currentVersion: number, version: number, off
     if (offset !== 0) throw new RunProtocolError('reset_offset')
     base = ''
   } else if (version !== currentVersion) {
-    // A version change must rebuild from zero; otherwise the persisted body and
-    // the incoming delta belong to different answers.
+    // 版本变化必须从零重建，否则已存正文与新 delta 属于两份不同回答。
     throw new RunProtocolError('answer_version_mismatch')
   }
 
@@ -593,7 +592,7 @@ function normalizeRefs(value: unknown): ResultRef[] {
   })
 }
 
-/** Whitelist projection so an upstream action cannot leak unrelated fields. */
+/** 白名单投影：上游动作不能顺带漏出无关字段。 */
 function normalizeAction(value: unknown): RunAction | null {
   if (!isRecord(value)) return null
   const action: RunAction = {}
@@ -653,11 +652,11 @@ function normalizeError(value: unknown): RunError | null {
   return Object.keys(error).length ? error : null
 }
 
-/** Private fetch: the run routes return raw JSON, not the legacy envelope. */
+/** 私有 fetch：运行路由返回裸 JSON，不是旧版信封。 */
 export async function runJson(path: string, init: RequestInit = {}): Promise<unknown> {
   const headers = new Headers(init.headers)
   if (init.body) headers.set('Content-Type', 'application/json')
-  if (token.value) headers.set('Authorization', `Bearer ${token.value}`)
+  if (authToken.value) headers.set('Authorization', `Bearer ${authToken.value}`)
   let response: Response
   try {
     response = await fetch(path, { ...init, headers })
@@ -672,7 +671,7 @@ export async function runJson(path: string, init: RequestInit = {}): Promise<unk
     throw new RunHttpError(response.status, `http_${response.status}`)
   }
   if (!response.ok) {
-    if (response.status === 401) logout()
+    if (response.status === 401) notifyUnauthorized()
     throw new RunHttpError(response.status, errorCode(body, response.status))
   }
   try {
@@ -700,10 +699,8 @@ function parseReceipt(raw: unknown): RunReceipt {
 }
 
 /**
- * Strict projection of the raw snapshot. Nothing is cast: every field is
- * validated, unknown fields are dropped, and the run/turn/session/protocol
- * binding is compared against the caller's expectation before the value can be
- * displayed.
+ * 原始快照的严格投影：不做任何强制类型转换，每个字段都校验，未知字段丢弃，
+ * run/turn/session/protocol 绑定与调用方期望比对通过后才允许显示。
  */
 function normalizeSnapshot(raw: unknown, expect: SnapshotExpectation = {}): RunSnapshot {
   if (!isRecord(raw)) throw new RunProtocolError('invalid_snapshot')
@@ -772,11 +769,11 @@ function normalizeTerminalEvent(value: unknown, expect: SnapshotExpectation): Ru
 }
 
 /**
- * Preserve 64-bit `seq`/`last_seq`/`turn_id` lexemes when raw JSON is parsed.
- * Only 16+ digit values are quoted; smaller integers stay numbers.
+ * 解析原始 JSON 时保住 64 位的 `seq` / `last_seq` / `turn_id` 字面量。
+ * 只给 16 位以上的整数加引号，小整数仍是 number。
  */
 function quoteIntegers(raw: string): string {
-  // Scan JSON strings as complete tokens, never rewrite quoted answer content.
+  // 按完整 token 扫描 JSON 字符串，绝不改写已引号内的正文内容。
   let output = '', copied = 0
   for (let i = 0; i < raw.length; i++) {
     if (raw[i] !== '"') continue
@@ -804,7 +801,7 @@ function seqText(value: Seq): string {
   return typeof value === 'number' ? String(Math.trunc(value)) : value
 }
 
-/** Exact 64-bit value: number when it fits, otherwise the original lexeme. */
+/** 精确 64 位值：能安全表示就是 number，否则保留原始字面量。 */
 function seqValue(value: unknown, code: string): Seq {
   if (typeof value === 'number') {
     if (!Number.isSafeInteger(value) || value < 0) throw new RunProtocolError(code)
@@ -849,7 +846,7 @@ function asStatus(value: unknown): RunStatus | undefined {
   ) ? value : undefined
 }
 
-function isTerminalStatus(status: RunStatus): boolean {
+export function isTerminalStatus(status: RunStatus): boolean {
   return status === 'succeeded' || status === 'partial' || status === 'failed' || status === 'cancelled'
 }
 
@@ -890,12 +887,7 @@ function wait(ms: number, signal?: AbortSignal): Promise<void> {
   })
 }
 
-function logout(): void {
-  clearSession()
-  if (typeof window !== 'undefined') window.location.replace('/login')
-}
-
-/** Error bodies may be the gateway envelope or a raw upstream error object. */
+/** 错误体可能是网关信封，也可能是上游原始错误对象。 */
 function errorCode(body: string, status: number): string {
   try {
     const parsed = JSON.parse(body) as unknown
@@ -906,7 +898,7 @@ function errorCode(body: string, status: number): string {
       if (message) return message
       if (typeof parsed.code === 'number') return String(parsed.code)
     }
-  } catch { /* non-JSON error body */ }
+  } catch { /* 非 JSON 错误体 */ }
   return `http_${status}`
 }
 

@@ -7,13 +7,105 @@ tags:
 
 # 第 15 周服务器部署
 
+> 当前运行状态只见[唯一状态页](../../../notes/00-当前系统状态.md)。日常开发与普通兼容修复优先阅读下方“分级开发与普通兼容发布”；后文带日期的旧批次只作历史，初装命令不能覆盖现网。规则见[上传规范](../../../notes/02-工程规范边界与验收治理/项目工程规范/05-上传服务器规范.md)，本次实现与验证见[流程提效记录](../../../notes/04-系统部署发布备份与变更记录/部署与运维日志/05-发布工具链与文档治理/54-开发测试发布与备份流程提效.md)。
+
+## 分级开发与普通兼容发布
+
+### 步骤1 · 按影响完成开发验证与一次构建
+
+本地迭代只做受影响检查，不连接生产、不新建全备。按本页“完整源码快照与构建回执”使用source-build导出明确提交及已审增量，统一LF、验证完整来源并构建一次；构建完成的固定镜像直接进入prepare，不在publish重新build/pull。
+
+普通兼容档为`standard-fast`：仅替换已支持应用镜像，不改配置/权限/schema/契约或持久化语义；full仍为CLI默认。原`frontend-fast`继续兼容。新档在服务器安装相同工具前不可使用；实际启用状态见唯一状态页。迁移、ACK/幂等语义、数据修复等采用full和受影响专项。
+
+### 步骤2 · 核对生产与有效数据恢复点
+
+```bash
+python3 /opt/powersystem/stages/04-frontend/deploy/production-stack.py status
+```
+
+同时读取active、actual_images、images_match_accepted及transaction。pending存在时先沿原事务接续；本次流程改造不清r4的未验事务。标准档要求24小时内双端成功且与已验应用兼容的全量基线，可沿兼容快发布链继承；基线不合格先等/补定时全备，不把旧包冒称新备份。
+
+若成功定时全备仅造成有精确回执的写者停复，使用其实际密文路径做短重核：
+
+```bash
+python3 /opt/powersystem/stages/04-frontend/deploy/production-stack.py reconcile-backup --backup /var/backups/powersystem/<本次成功全备>.tar.gz.gpg
+```
+
+该命令只核原版本、成功回执、容器身份/镜像/重启数、配置及健康，保留published_at，不重建服务，不声称新HTTPS测试。失败备份、未知漂移、全体重启及pending均不适用；原verify-backup完整门禁入口继续保留。
+
+### 步骤3 · 保存与测试镜像绑定的兼容评估
+
+在runtime本轮目录保存JSON，以下是格式示例，必须替换候选/父版、真实镜像ID、实际测试证据路径及摘要。测试证据由本轮真实执行产生，不能复制示例假装通过；生产配置核对包含影响本次行为的durable会话、并发和超时等。
+
+```json
+{
+  "format": 1,
+  "kind": "compatible-release/v1",
+  "candidate": "<本次候选>",
+  "parent": "<现查已验父版>",
+  "tested_images": {"api": "sha256:<实际64位镜像摘要>"},
+  "rpo_seconds": 86400,
+  "rollback_compatible": true,
+  "production_config_matched": true,
+  "schema_changed": false,
+  "data_repair": false,
+  "persistent_semantics_changed": false,
+  "permissions_changed": false,
+  "storage_changed": false,
+  "contracts_changed": false,
+  "tests": [{
+    "name": "<受影响入口定向检查>",
+    "exit_code": 0,
+    "evidence": "/opt/powersystem/runtime/<本轮>/targeted-test.log",
+    "sha256": "<该证据实际SHA256>"
+  }]
+}
+```
+
+选择普通档须确认本次最多24小时数据恢复点可接受。控制器自动比较父/候选完整来源中的SQL、迁移、schema、契约、策略/权限与构建依赖保护项；存在变化就拒绝普通档。评估不是任意强制放行开关，未知风险应改full。
+
+### 步骤4 · 冻结、生成构件小包并发布
+
+```bash
+python3 /opt/powersystem/stages/04-frontend/deploy/production-stack.py prepare --id <本次候选> --tier standard-fast --image api=<已审固定镜像> --assessment /opt/powersystem/runtime/<本轮>/compatible-assessment.json
+python3 /opt/powersystem/stages/04-frontend/deploy/frontend-release-backup.py --id <本次候选>
+python3 /opt/powersystem/stages/04-frontend/deploy/production-stack.py publish --id <本次候选> --backup /var/backups/powersystem/<上一步实际输出的powersystem-release密文>.tar.gz.gpg
+```
+
+小包沿用既有脚本入口，由候选档位自动选择：standard-fast保存变更应用镜像、完整源码/回执、冻结配置/评估/测试证据与匹配控制器依赖；frontend-fast保持旧格式。新包加密、内层摘要读取及双端上传通过后签发回执。普通发布不再重复导出数据库、队列或向量，数据依赖所引用全备；小包仍需双端成功，不把上传队列当已完成副本。
+
+普通档保留全服务身份/健康/配置检查与排空，公网检查主域名登录、匿名401、核心只读业务、会话/任务及可用详情、ticket/WSS；full与旧frontend-fast保留双IP完整门禁。改反向代理、鉴权、端口或权限不能借普通档缩减检查。失败按已验父版恢复，schema不兼容则按原专项冻结前滚。
+
+### 步骤5 · 按范围记录与恢复
+
+日常修复一份变更记录；运行变化写唯一状态，接口/用法/资产变化才更新相应文档，里程碑才完整交接。数据库定时全备、周期恢复和长观察独立安排，受影响的恢复链变更保留专项验证。
+
+普通小包的离线核对：
+
+```bash
+python3 /opt/powersystem/stages/04-frontend/deploy/frontend-release-backup.py --verify /var/backups/powersystem/<实际构件小包>.tar.gz.gpg
+```
+
+它只解密流式读取与核哈，不提取秘密、不加载镜像、不改指针。灾难恢复先按原脚本在隔离环境恢复全量基线，再核小包payload摘要，导入application-images.tar并逐个核对实际image ID；按内含source-builds恢复对应来源，按tools恢复匹配工具，核冻结文件及私有引用后重建完整编排。全量基线未覆盖的卷/基础设施镜像仍按原恢复计划补齐。首次生产使用标准档前完成该组合的Linux隔离短核对，不重跑未受影响业务全矩阵。
+
+### 本地与CI定向验证
+
+```bash
+python3 -m unittest discover -s stages/04-frontend/deploy -p 'test_production_stack*.py'
+python3 -m unittest discover -s stages/04-frontend/deploy -p 'test_compatible_release.py'
+python3 -m unittest discover -s stages/04-frontend/deploy -p 'test_backup_upload_parallel.py'
+bash -n stages/04-frontend/deploy/backup.sh
+```
+
+Windows可用Python3.12+的`-X utf8`运行同样测试。发布工具CI仅由对应路径触发；笔记检查由笔记/规范/README结构变化触发，不因每次业务源码编辑重跑全Vault。
+
 告警官方v2与每日五次演示批次使用完整冻结编排叠加`interpretation-official.compose.yaml`，不能单独运行或覆盖原有问答/运维配置。专属密钥在`/etc/powersystem/interpret-deepseek-key`，只挂阶段7 Agent；新密钥纳入既有加密备份。受控分步驱动见阶段7`scripts/interpretation-remote.py`，仍经production-stack的prepare→新备份→publish；清理额外持有部署锁并冻结业务写入、留存可读密文快照，不重置序列或清Redis。实际状态见[发布与清理记录](../../../notes/04-系统部署发布备份与变更记录/部署与运维日志/03-智能体与模型调用链/30-官方独立告警解读与每日五次演示.md)。
 
 > 2026-10-14当前：SEC-M4本机限定签收及r6追加准入通过；MA-C32～C35和最终文档门槛已完成，MA-M4及联合阶段四在声明范围正式技术签收。服务器r6/v5、恢复维护修订3；本机唯一批准动作保留，写窗口关闭，生产仅登记R0。
 
-> **2026-10-11现行问答增量**：指定公网入口为`https://8.138.42.212/agent`。阶段8已接管通用问答，生产使用阶段4主编排、阶段7 Agent/搜索、阶段8生产编排及发布目录固定镜像文件；旧告警解读继续由阶段7运行。现行操作见[[notes/01-项目调研规划与开发建设记录/第二版-智能体升级/问答及调度业务主智能体/当前方案-Agent与RAG重建/02-技术选型与架构设计/04-服务器部署与回退]]，正式结果见[[notes/01-项目调研规划与开发建设记录/第二版-智能体升级/问答及调度业务主智能体/当前方案-Agent与RAG重建/03-功能开发与阶段交付/04-完整Agent与会话/05-RAG服务器发布测试与交付]]。以下初装步骤不能直接用于覆盖当前运行配置。
+> **2026-10-11现行问答增量**：指定公网入口为`https://8.138.42.212/agent`。阶段8已接管通用问答，生产使用阶段4主编排、阶段7 Agent/搜索、阶段8生产编排及发布目录固定镜像文件；旧告警解读继续由阶段7运行。现行操作见[[notes/01-项目调研规划与开发建设记录/02-第二版-智能体升级/问答及调度业务主智能体/当前方案-Agent与RAG重建/02-技术选型与架构设计/04-服务器部署与回退]]，正式结果见[[notes/01-项目调研规划与开发建设记录/02-第二版-智能体升级/问答及调度业务主智能体/当前方案-Agent与RAG重建/03-功能开发与阶段交付/04-完整Agent与会话/05-RAG服务器发布测试与交付]]。以下初装步骤不能直接用于覆盖当前运行配置。
 
-> 本目录编排 R730xd 上的阶段四演示环境。上级总索引见 [README.md](../README.md)，阶段笔记见 [04-第15周·部署上线](../../../notes/01-项目调研规划与开发建设记录/第一版-平台主体/05-功能开发与阶段交付/04-前端、上线与沉淀/04-第15周·部署上线.md)。数据库与模拟器使用新的持久卷，不迁移本机验收库。模型文件 `model.json`、`metadata.json` 来自本机被 Git 忽略的 `artifacts/stage3-AI预测/model/`，上线时另行传至服务器 `runtime/model/`。
+> 本目录编排 R730xd 上的阶段四演示环境。上级总索引见 [README.md](../README.md)，阶段笔记见 [04-第15周·部署上线](../../../notes/01-项目调研规划与开发建设记录/01-第一版-平台主体/05-功能开发与阶段交付/04-前端、上线与沉淀/04-第15周·部署上线.md)。数据库与模拟器使用新的持久卷，不迁移本机验收库。模型文件 `model.json`、`metadata.json` 来自本机被 Git 忽略的 `artifacts/stage3-AI预测/model/`，上线时另行传至服务器 `runtime/model/`。
 
 ## 一、目录与配置
 
@@ -46,15 +138,15 @@ localPort = 18080
 remotePort = 3667
 ```
 
-旧公网演示地址为 `http://8.138.10.222:3667`。2026-09-29 第一版现场已为 `8.138.10.222:443` 安装可信 IP 证书：云端 [cloud-ip-https.conf](cloud-ip-https.conf) 在 Nginx 终止 TLS，向本机 FRP 端口转发；[cloud-public-firewall.service](cloud-public-firewall.service) 拦截外部直连 3667；[cloud-cert-renew.timer](cloud-cert-renew.timer) 定时续期。外部证书校验和 `/api/v1/ping` 成功，旧 HTTP 直连超时。域名不要求。更换云主机、IP 或续期方式后须重新核对证书、Nginx、IPv4/IPv6 防火墙和 WebSocket，不能只复制此配置就视为安全通过。现场明细见[阶段六测试与交付](../../../notes/01-项目调研规划与开发建设记录/第一版-平台主体/05-功能开发与阶段交付/06-公网安全与恢复能力/03-阶段六测试与交付.md)。
+旧公网演示地址为 `http://8.138.10.222:3667`。2026-09-29 第一版现场已为 `8.138.10.222:443` 安装可信 IP 证书：云端 [cloud-ip-https.conf](cloud-ip-https.conf) 在 Nginx 终止 TLS，向本机 FRP 端口转发；[cloud-public-firewall.service](cloud-public-firewall.service) 拦截外部直连 3667；[cloud-cert-renew.timer](cloud-cert-renew.timer) 定时续期。外部证书校验和 `/api/v1/ping` 成功，旧 HTTP 直连超时。域名不要求。更换云主机、IP 或续期方式后须重新核对证书、Nginx、IPv4/IPv6 防火墙和 WebSocket，不能只复制此配置就视为安全通过。现场明细见[阶段六测试与交付](../../../notes/01-项目调研规划与开发建设记录/01-第一版-平台主体/05-功能开发与阶段交付/06-公网安全与恢复能力/03-阶段六测试与交付.md)。
 
 ## 三、监控、备份与恢复
 
-Prometheus 每 15 秒采集 API 和主机指标，规则包含 API 不可用及磁盘使用率超过 80%；已移除需要宿主机高权限挂载的 cAdvisor。Grafana 看板由本目录配置自动装载。阶段五的设备/AI 业务事件由 PostgreSQL 投递表交给内网适配器，失败会重试；平台监控事件仍由 Alertmanager 发送。2026-09-29 旧 API 暂停/恢复与新业务链路均已核对，见[阶段五测试与交付](../../../notes/01-项目调研规划与开发建设记录/第一版-平台主体/05-功能开发与阶段交付/05-飞书告警通知/03-阶段五测试与交付.md)。
+Prometheus 每 15 秒采集 API 和主机指标，规则包含 API 不可用及磁盘使用率超过 80%；已移除需要宿主机高权限挂载的 cAdvisor。Grafana 看板由本目录配置自动装载。阶段五的设备/AI 业务事件由 PostgreSQL 投递表交给内网适配器，失败会重试；平台监控事件仍由 Alertmanager 发送。2026-09-29 旧 API 暂停/恢复与新业务链路均已核对，见[阶段五测试与交付](../../../notes/01-项目调研规划与开发建设记录/01-第一版-平台主体/05-功能开发与阶段交付/05-飞书告警通知/03-阶段五测试与交付.md)。
 
-两台服务器 SSH 安全基线按“盘点现况 → 安装并验证公钥 → 保持第二管理会话 → `sshd -t` 校验 → 关闭 root 密码登录 → 从新会话复测”的顺序执行。保留原会话直至新会话和应急入口验证成功；复核 FRP、备份专用 SFTP 和原有代理不受影响。本轮按此顺序完成，两端 root 仅允许公钥；未来如要改用非 root 管理员，应先验证其 sudo 和应急访问。现场结果记入 [P0 收尾记录](../../../notes/01-项目调研规划与开发建设记录/第一版-平台主体/05-功能开发与阶段交付/04-前端、上线与沉淀/06-P0收尾与M4验收记录.md)。
+两台服务器 SSH 安全基线按“盘点现况 → 安装并验证公钥 → 保持第二管理会话 → `sshd -t` 校验 → 关闭 root 密码登录 → 从新会话复测”的顺序执行。保留原会话直至新会话和应急入口验证成功；复核 FRP、备份专用 SFTP 和原有代理不受影响。本轮按此顺序完成，两端 root 仅允许公钥；未来如要改用非 root 管理员，应先验证其 sudo 和应急访问。现场结果记入 [P0 收尾记录](../../../notes/01-项目调研规划与开发建设记录/01-第一版-平台主体/05-功能开发与阶段交付/04-前端、上线与沉淀/06-P0收尾与M4验收记录.md)。
 
-云服务器使用 SFTP 专用账号 `powersystem-backup` 保存密文，R730xd 的私钥路径为 `/etc/powersystem/backup-ed25519`。执行 `backup.sh` 前须显式设置 `POWERSYSTEM_BACKUP_TARGET` 或私有 `/etc/powersystem/backup-target`；脚本不含公开默认目标。备份包括 PostgreSQL、TDengine、网关与模拟器 SQLite 队列、模型、`.env` 与三个通知私有文件，整体以 GPG AES256 加密后传至接收端。备份口令须在 R730xd 之外另行保管，不包含在密文包内。现场已核对专用 SFTP 目录、更新前后两份密文的异地 SHA256、独立恢复数据与私有文件；`powersystem-backup.timer` 已启用。2026-09-29 项目所有者已反馈完成服务器外独立离线口令副本及 `MATCH` 核对，见 [阶段六测试与交付](../../../notes/01-项目调研规划与开发建设记录/第一版-平台主体/05-功能开发与阶段交付/06-公网安全与恢复能力/03-阶段六测试与交付.md)。
+云服务器使用 SFTP 专用账号 `powersystem-backup` 保存密文，R730xd 的私钥路径为 `/etc/powersystem/backup-ed25519`。执行 `backup.sh` 前须显式设置 `POWERSYSTEM_BACKUP_TARGET` 或私有 `/etc/powersystem/backup-target`；脚本不含公开默认目标。备份包括 PostgreSQL、TDengine、网关与模拟器 SQLite 队列、模型、`.env` 与三个通知私有文件，整体以 GPG AES256 加密后传至接收端。备份口令须在 R730xd 之外另行保管，不包含在密文包内。现场已核对专用 SFTP 目录、更新前后两份密文的异地 SHA256、独立恢复数据与私有文件；`powersystem-backup.timer` 已启用。2026-09-29 项目所有者已反馈完成服务器外独立离线口令副本及 `MATCH` 核对，见 [阶段六测试与交付](../../../notes/01-项目调研规划与开发建设记录/01-第一版-平台主体/05-功能开发与阶段交付/06-公网安全与恢复能力/03-阶段六测试与交付.md)。
 
 第二云接入时可另设 `/etc/powersystem/backup-secondary-target` 或 `POWERSYSTEM_BACKUP_SECONDARY_TARGET`，脚本将同一密文上传两处；任一上传失败均保留本地密文并返回失败。第二云专用 FRP 客户端、备份接收端和域名待备案配置见[独立云服务器部署](../../../notes/04-系统部署发布备份与变更记录/独立云服务器部署/00-索引·独立云服务器部署.md)，旧共享 FRP 不在此次变更范围。
 
@@ -79,11 +171,11 @@ bash stages/04-frontend/deploy/restore-verify.sh /var/backups/powersystem/powers
 
 新版备份在发现 Agent 服务凭据后增加三个私有文件、审计及完整 Redis RDB；PostgreSQL 全库备份自然包含新增任务、结果与已读表。恢复验证使用独立 Redis 卷，旧备份不要求存在新文件。回退关闭新增链路并恢复原镜像及 Alertmanager 配置，保留新增表和业务卷；禁止生产 `down -v`。
 
-详细操作和实际验收见[阶段二部署笔记](../../../notes/01-项目调研规划与开发建设记录/第二版-智能体升级/问答及调度业务主智能体/废案-旧智能体方案/02-功能开发与阶段交付/02-告警智能解读与大屏联动/04-服务器部署与故障隔离.md)。目前源码方案已实现，服务器切换状态以测试与交付笔记为准。
+详细操作和实际验收见[阶段二部署笔记](../../../notes/01-项目调研规划与开发建设记录/02-第二版-智能体升级/问答及调度业务主智能体/废案-旧智能体方案/02-功能开发与阶段交付/02-告警智能解读与大屏联动/04-服务器部署与故障隔离.md)。目前源码方案已实现，服务器切换状态以测试与交付笔记为准。
 
 ## 多智能体发布规划入口（2026-10-12历史）
 
-后续阶段9部署/恢复设计见[[notes/01-项目调研规划与开发建设记录/第二版-智能体升级/多智能体协作建设/02-技术选型与架构设计/06-部署、观测、备份与回退]]。当前只是规划，未新增Compose服务、端口、数据库或发布动作；生产继续使用本README现行入口。新服务只在项目内网，沿用prepare/build/activate/rollback和实际备份隔离恢复，本次不提供可执行的新增生产命令。
+后续阶段9部署/恢复设计见[[notes/01-项目调研规划与开发建设记录/02-第二版-智能体升级/多智能体协作建设/02-技术选型与架构设计/06-部署、观测、备份与回退]]。当前只是规划，未新增Compose服务、端口、数据库或发布动作；生产继续使用本README现行入口。新服务只在项目内网，沿用prepare/build/activate/rollback和实际备份隔离恢复，本次不提供可执行的新增生产命令。
 
 ## 五分区目录兼容（2026-10-13本机修复）
 
@@ -93,7 +185,7 @@ backup.sh读取资产/设备知识/手册来源清单.json，尚未迁移的服�
 
 ## 2026-10-11 BND-M2增量发布
 
-BND-M2已在R730XD验收发布，公网入口8.138.42.212。本机及最终Linux Agent98项、前端19项、类型构建和Go全包通过；最终公网11类/19项、重启历史10项、实际公网浏览器9项、源码/镜像实际回退、最终加密备份隔离恢复及300秒固定镜像观察通过。五页阶段二笔记已同步，未提交或推送Git。正式证据见[[notes/01-项目调研规划与开发建设记录/第二版-智能体升级/问答及调度业务主智能体/智能体边界建设/04-功能开发与阶段交付/02-日常问题调用边界/03-阶段2测试与交付]]；指定入口https://8.138.42.212/agent，业务仍在R730XD。只切换API、前端和通用Agent，其他业务容器及持久卷保持原基线。更新前和最终本地加密包均完成摘要核对，最终包完成独立隔离恢复；本轮使用LOCAL_ONLY，不把此结果写成新云异地上传完成。
+BND-M2已在R730XD验收发布，公网入口8.138.42.212。本机及最终Linux Agent98项、前端19项、类型构建和Go全包通过；最终公网11类/19项、重启历史10项、实际公网浏览器9项、源码/镜像实际回退、最终加密备份隔离恢复及300秒固定镜像观察通过。五页阶段二笔记已同步，未提交或推送Git。正式证据见[[notes/01-项目调研规划与开发建设记录/02-第二版-智能体升级/问答及调度业务主智能体/智能体边界建设/04-功能开发与阶段交付/02-日常问题调用边界/03-阶段2测试与交付]]；指定入口https://8.138.42.212/agent，业务仍在R730XD。只切换API、前端和通用Agent，其他业务容器及持久卷保持原基线。更新前和最终本地加密包均完成摘要核对，最终包完成独立隔离恢复；本轮使用LOCAL_ONLY，不把此结果写成新云异地上传完成。
 
 备份Agent配置时沿当前compose环境中实际RAG_ENV_FILE读取，禁止假设与compose.env同目录。增量发布及验收命令统一见[[stages/08-agent-rag/README]]。
 
@@ -125,23 +217,23 @@ docker exec powersystem-stage4-frontend-1 nginx -t
 docker exec powersystem-stage4-frontend-1 nginx -s reload
 ```
 
-配置校验失败时停止，不以reload退出码判定恢复。核对API/前端容器ID、镜像与静态资产版本保持，使用既有可信HTTPS入口验证ping200，并在本人已登录页面检查WSS实时连接正常；模型请求502另按模型链故障取证。维护修订3补单/双/三参数恢复入口计数校验，隔离恢复十项结果及失败保留见[[notes/01-项目调研规划与开发建设记录/第二版-智能体升级/多智能体协作建设/06-联合发布验收/02-服务器发布与恢复验收/03-MA-M4测试与交付]]。
+配置校验失败时停止，不以reload退出码判定恢复。核对API/前端容器ID、镜像与静态资产版本保持，使用既有可信HTTPS入口验证ping200，并在本人已登录页面检查WSS实时连接正常；模型请求502另按模型链故障取证。维护修订3补单/双/三参数恢复入口计数校验，隔离恢复十项结果及失败保留见[[notes/01-项目调研规划与开发建设记录/02-第二版-智能体升级/多智能体协作建设/06-联合发布验收/02-服务器发布与恢复验收/03-MA-M4测试与交付]]。
 
 ## 2026-10-16 · 回答可读性增量发布
 
-[[notes/01-项目调研规划与开发建设记录/第二版-智能体升级/问答及调度业务主智能体/当前方案-Agent与RAG重建/04-增量优化与补充交付/01-回答可读性与任务结果展示/03-测试与交付]]记录本批实际结果。该批生产指针assistant-readability-20261016-r1，通过本页唯一入口及双HTTPS/WSS门禁；直接上一版本interpretation-layout-20261016-r1保留，仅frontend重建。既有Executor同ID、同镜像登记重载，API及其他镜像保持。免重复测试不跳过必要构建和发布门禁，实际rollback未触发。
+[[notes/01-项目调研规划与开发建设记录/02-第二版-智能体升级/问答及调度业务主智能体/当前方案-Agent与RAG重建/04-增量优化与补充交付/01-回答可读性与任务结果展示/03-测试与交付]]记录本批实际结果。该批生产指针assistant-readability-20261016-r1，通过本页唯一入口及双HTTPS/WSS门禁；直接上一版本interpretation-layout-20261016-r1保留，仅frontend重建。既有Executor同ID、同镜像登记重载，API及其他镜像保持。免重复测试不跳过必要构建和发布门禁，实际rollback未触发。
 
 ## 相关笔记
 
-第三阶段发布使用[阶段七发布脚本与命令](../../07-agent/README.md)，统一备份同时保存受控知识索引、未命中问题持久目录与可选搜索密钥；恢复核对索引哈希与 JSONL 格式。实际镜像、回退和观察结果见[第三阶段交付](../../../notes/01-项目调研规划与开发建设记录/第二版-智能体升级/问答及调度业务主智能体/废案-旧智能体方案/02-功能开发与阶段交付/03-使用引导与值班问答/05-V2-M3测试与交付.md)。
+第三阶段发布使用[阶段七发布脚本与命令](../../07-agent/README.md)，统一备份同时保存受控知识索引、未命中问题持久目录与可选搜索密钥；恢复核对索引哈希与 JSONL 格式。实际镜像、回退和观察结果见[第三阶段交付](../../../notes/01-项目调研规划与开发建设记录/02-第二版-智能体升级/问答及调度业务主智能体/废案-旧智能体方案/02-功能开发与阶段交付/03-使用引导与值班问答/05-V2-M3测试与交付.md)。
 
 - 阶段四总索引：[README.md](../README.md)
 - 运维与使用：[平台运维与二次开发手册](../../../notes/03-平台使用运维与二次开发手册/平台运维与二次开发手册.md) · [平台使用手册](../../../notes/03-平台使用运维与二次开发手册/平台使用手册.md)
-- 部署证据：[04-第15周·部署上线](../../../notes/01-项目调研规划与开发建设记录/第一版-平台主体/05-功能开发与阶段交付/04-前端、上线与沉淀/04-第15周·部署上线.md) · [05-运维与恢复](../../../notes/01-项目调研规划与开发建设记录/第一版-平台主体/05-功能开发与阶段交付/04-前端、上线与沉淀/05-运维与恢复.md)
-- P0 收尾：[06-P0收尾与M4验收记录](../../../notes/01-项目调研规划与开发建设记录/第一版-平台主体/05-功能开发与阶段交付/04-前端、上线与沉淀/06-P0收尾与M4验收记录.md)
-- M4 测试与交付：[07-M4测试与交付](../../../notes/01-项目调研规划与开发建设记录/第一版-平台主体/05-功能开发与阶段交付/04-前端、上线与沉淀/07-M4测试与交付.md)
-- 飞书通知：[阶段五运行说明](../../05-feishu-notification/README.md) · [阶段五测试与交付](../../../notes/01-项目调研规划与开发建设记录/第一版-平台主体/05-功能开发与阶段交付/05-飞书告警通知/03-阶段五测试与交付.md)
-- 安全恢复：[阶段六运行说明](../../06-security-recovery/README.md) · [阶段六测试与交付](../../../notes/01-项目调研规划与开发建设记录/第一版-平台主体/05-功能开发与阶段交付/06-公网安全与恢复能力/03-阶段六测试与交付.md)
+- 部署证据：[04-第15周·部署上线](../../../notes/01-项目调研规划与开发建设记录/01-第一版-平台主体/05-功能开发与阶段交付/04-前端、上线与沉淀/04-第15周·部署上线.md) · [05-运维与恢复](../../../notes/01-项目调研规划与开发建设记录/01-第一版-平台主体/05-功能开发与阶段交付/04-前端、上线与沉淀/05-运维与恢复.md)
+- P0 收尾：[06-P0收尾与M4验收记录](../../../notes/01-项目调研规划与开发建设记录/01-第一版-平台主体/05-功能开发与阶段交付/04-前端、上线与沉淀/06-P0收尾与M4验收记录.md)
+- M4 测试与交付：[07-M4测试与交付](../../../notes/01-项目调研规划与开发建设记录/01-第一版-平台主体/05-功能开发与阶段交付/04-前端、上线与沉淀/07-M4测试与交付.md)
+- 飞书通知：[阶段五运行说明](../../05-feishu-notification/README.md) · [阶段五测试与交付](../../../notes/01-项目调研规划与开发建设记录/01-第一版-平台主体/05-功能开发与阶段交付/05-飞书告警通知/03-阶段五测试与交付.md)
+- 安全恢复：[阶段六运行说明](../../06-security-recovery/README.md) · [阶段六测试与交付](../../../notes/01-项目调研规划与开发建设记录/01-第一版-平台主体/05-功能开发与阶段交付/06-公网安全与恢复能力/03-阶段六测试与交付.md)
 
 ## 2026-10-15 前端 UI 增量发布
 
@@ -187,7 +279,7 @@ python3 /opt/powersystem/runtime/api-recovery-20261015-r1/verify-auth-wss.py /et
 
 ## 生产发布唯一入口（2026-10-15）
 
-设计原理、逐条要求与审查边界见[[notes/02-工程规范边界与验收治理/生产发布防回退与自动验收门禁规范]]；本页只维护具体操作命令和参数。
+设计原理、逐条要求与审查边界见[[02-工程规范边界与验收治理/项目工程规范/08-发布工具与故障恢复说明]]；本页只维护具体操作命令和参数。
 
 长期约束统一见[[notes/02-工程规范边界与验收治理/项目工程规范/02-发布仓库与界面验收规范#生产发布防回退与自动验收门禁（2026-10-15，强制）]]。入口为`/opt/powersystem/stages/04-frontend/deploy/production-stack.py`，状态目录为`/opt/powersystem/runtime/production-stack/`，仅在指定R730XD以root运行。
 
@@ -221,6 +313,8 @@ python3 /opt/powersystem/stages/04-frontend/deploy/production-stack.py status
 
 ### 后续发布
 
+本节保留full路径示例；兼容普通修复按本页开头standard-fast流程执行，不要求每次重复导出全平台数据。
+
 设备扩容追加层为本目录 `fleet.compose.yaml`：为 API 与模拟器只读装载同一正式清单，保留 `scheduled` 及原模拟器账本。该文件必须叠加在当前完整编排末尾，并通过 `--from-args` 提交给统一入口；不得单独启动。清单建议使用 `runtime/production-stack/fleet-manifests/<批次>.json` 的版本化路径并设置 `POWERSYSTEM_FLEET_FILE`，或生成等价的绝对路径 JSON 覆盖层，以纳入现有备份和 `/run/` 只读引用摘要校验。
 
 扩容不修改智能体 R0/写关闭配置。台账导入是单独授权的数据事务，应用回退不自动删除已导入设备和遥测。上线后的短核对入口为：
@@ -231,13 +325,17 @@ python3 /opt/powersystem/stages/04-frontend/deploy/check-fleet-live.py --output 
 
 检查只读设备、场站、总览和告警，最多等一分钟接收当前遥测，不请求模型或执行容量测试。脚本登录使用现有服务器私有口令文件，不输出密码、JWT 或完整响应。
 
-独立长观察（2026-10-21 新增，不发压、不重启服务）：
+开发阶段观察（所有者2026-10-29调整）：取消原两小时待办和后续AI驻守长观察，真实服务器自然运行；遇到真实问题按[错误与功能定位清单](../../../notes/04-系统部署发布备份与变更记录/部署与运维日志/05-发布工具链与文档治理/57-开发阶段运行错误与功能定位清单.md)反馈。需要遥测短观察时，由本人在业务VM启动：
 
 ```sh
-python3 watch-fleet-soak.py --duration 7200 --interval 60 --output-dir /path/to/new-evidence-dir
+python3 /opt/powersystem/stages/04-frontend/deploy/observe-telemetry.py \
+  --duration 300 --interval 10 \
+  --output-dir /opt/powersystem/runtime/telemetry-observation-$(date -u +%Y%m%dT%H%M%SZ)
 ```
 
-仅在已有本机服务和私有口令文件的服务器执行；输出目录必须不存在。输出 `samples.jsonl` / `summary.json`，核对固定 143/140/3、`partial`、错误和延迟，中断不判通过。离线测试：`python -m unittest discover -s stages/04-frontend/deploy -p test_watch_fleet_soak.py`（仓库根执行）。本次容量控制器与私有 Compose 只存于忽略的 `artifacts/fleet-capacity-20261021-r1/`，不能拿生产 Compose 或旧 `m4-load-setup.sql` 直接写生产；实际进度与边界见[容量与长时间测试记录](../../../notes/01-项目调研规划与开发建设记录/第三版-设备扩容/03-容量与稳定性验证/08-容量与长时间测试记录.md)。
+仅在实际业务VM以有Docker读取权限的管理用户执行，输出目录必须不存在；不开放新端口。脚本只读指标、原始积压/逐设备队首、能源质量/更新及TD实际最新样本（每轮5台轮转），写入 `samples.jsonl` / `summary.json`；把两份文件交回Codex复核。每条SQL3秒、HTTP2—3秒、日志有界投影，失败也留记录；超慢轮次可能使总耗时略超参数，中断与缺项均不判通过。退出0为当次短观察通过，1为异常/未完成，不自动验收、清pending、重启或修数据。不含口令、JWT、原始载荷或完整日志；现有容器环境内TD凭据只用于本机精确只读查询，绝不写输出。离线测试：`python -m unittest discover -s stages/04-frontend/deploy -p test_observe_telemetry.py`（仓库根执行）。
+
+原 `watch-fleet-soak.py`保留为总览接口历史诊断器，默认也改五分钟，不再作为长稳前置。历史容量夹具与原批次证据保留，不能拿生产Compose或旧m4-load-setup.sql直接写生产；历史数字见[容量与长时间测试记录](../../../notes/01-项目调研规划与开发建设记录/03-第三版-设备扩容/03-容量与稳定性验证/08-容量与长时间测试记录.md)，不要求为本次修复重跑。
 
 先独立构建并审查新镜像。API、gateway、frontend、agent-rag、ops-agent、security-agent 使用下面的完整源码快照流程；服务器 `/opt/powersystem/stages/` 保留历史资料及运行引用，**不能用作构建上下文**。旧目录的五个主 Dockerfile 在服务器上是拒绝直接构建的提示文件；仓库中的 Dockerfile 不变。gateway 与 API 共用 02 的 Dockerfile，工具为 gateway 固定传入 `APP=gateway`，不改变现行网关构建方式。
 
@@ -418,7 +516,7 @@ S09产物目录须显式设置`RAG_ARTIFACT_HOST_DIR`，指向经定位核对的
 
 V4全备会停复两个写者，`StartedAt`因此改变。`backup.sh`保留绑定当前已验指针、暂停前全服务状态及同ID复服状态的`.v4-maintenance.json`旁车；只有RAG/Ops启动时间可以改变，镜像、ID、重启次数及其他服务不变。
 
-**下一次发布不再需要先重签**：`publish` 会读取候选自带全备的回执并完成两处基线判定（见上节）。`verify-backup` 保留给另一种情形——已发布版本跑完全备后，当前指针的门禁快照与运行状态不再相等，需要重跑完整门禁换发指针。它重签时会继承原 `published_at`，不会把快路径的全备边界推到重签时刻。门禁失败回直接已验父版；不是删除漂移检查或通用重新签收入口。工具已按本批批准范围安装，实际发布/观察状态只见唯一状态页。
+**full候选自带全备时**：publish按其回执完成两处基线判定。已发布版本的成功定时全备若只造成精确登记的停复变化，可用本页开头reconcile-backup短重核继承原功能验收，不默认重跑完整HTTPS；需要完整重验时仍用下列verify-backup。两者保持原published_at；失败或未知漂移按原事务诊断，不删除pending。实际工具启用状态只见唯一状态页。
 
 ```bash
 python3 /opt/powersystem/stages/04-frontend/deploy/production-stack.py verify-backup \
@@ -434,9 +532,9 @@ python3 /opt/powersystem/stages/04-frontend/deploy/production-stack.py rollback 
 
 普通发布/回退仍用本页既有命令。最终全备、适用隔离恢复和维护复核全部结束后，才重新固定连续30分钟观察窗口。新规范知识资料以冻结字节挂到`/run/v4-knowledge`，不覆盖旧资料挂载；该新根被控制器和实际RAG配置备份按文件摘要覆盖。
 
-### 本轮full备份显式并行选项
+### 全量备份并行与压缩参数
 
-在主副目标均已核实、未与部署事务并发时，可仅对当次规范backup.sh显式设置POWERSYSTEM_BACKUP_PARALLEL_UPLOADS=1和POWERSYSTEM_BACKUP_GZIP_THREADS=4。前者用同一密文同时传既有两端，必须都成功；后者要求已有pigz，输出仍是标准gzip。未设置时保留原顺序上传与单线程gzip。两端各记时，timing总时长按最大offset结束值，不把重叠耗时相加。中断仅清理本次进程组；异常30秒不退则失败并保留.upload-recovery-required.json与私有快照，核归属后恢复，不冒充成功双副本。每批仍按本页统一控制器/full顺序及独立端上实长/摘要核对，不扩出站。
+在主副目标均已核实且非local-only时，新的backup.sh默认将同一密文并行上传既有两端，必须都成功；已安装pigz时默认4线程标准gzip，否则用单线程gzip。可显式设置POWERSYSTEM_BACKUP_PARALLEL_UPLOADS=0或POWERSYSTEM_BACKUP_GZIP_THREADS=1降低资源占用，旧的1和4配置继续有效。两端各记时，总时长按最大结束offset，不把重叠耗时相加；异常时保留归属进程与恢复记录，不冒充双副本成功。现有备份格式/范围不变，不扩出站；定时备份与普通发布分别管理。
 
 
 ## 独立VM生产主机与迁机验收
@@ -468,3 +566,57 @@ python3 /opt/powersystem/stages/04-frontend/deploy/production-stack.py rollback 
 全备的`release-assets/`保存当前frontend固定镜像tar、五应用完整源码快照/构建回执与固定镜像映射；`verify-release-backup-assets.py`只验证来源、镜像内容及摘要，不激活生产指针。它不声称所有基础设施镜像和未列卷都已归档。MA的`actual_release_configuration`从四个实际服务的只读`/run/`挂载逐文件归档，含S06动作key；源限于runtime。两项既有`/etc/powersystem` API secrets只按精确source/target映射并核实与已有config归档摘要一致，不扩为任意文件读取。恢复逐份核哈，不挂生产凭据、不运行V4动作/调度worker。
 
 任何采集阶段失败，复服后也保留真实失败计时和维护草稿，不能用草稿替代成功备份。若旧失败在保留草稿前退出，受限失败复服连续性检查仅在明确证据路径、原候选基线等于已验父版、无密文/无上传、仅RAG/Ops同ID/镜像/重启数变化时，允许下一次真实全备记录连续维护链；它不签发验收。仍须新的成功双端全备和原完整发布门禁，禁止把此机制当成通用漂移豁免。
+
+## 遥测前滚发布（TR，2026-10-28）
+
+实际状态见[唯一状态页](../../../notes/00-当前系统状态.md)，本轮授权与实际证据见[日志53](../../../notes/04-系统部署发布备份与变更记录/部署与运维日志/05-发布工具链与文档治理/53-遥测可靠性修复发布与前滚门禁.md)。标准自动回旧版不适用于014已提交且父版不兼容的情况：本轮所有者已明确接受失败时冻结遥测写入、保留pending并前滚恢复，不启动旧worker、不降schema。该选择不是跳过新全备、HTTPS/WSS或来源门禁。
+
+先从明确40位提交与逐文件审查增量导出完整快照，通过source-build受控构建API/gateway两镜像；Prometheus/Alertmanager镜像保持，只变版本化只读规则与路由配置。新增遥测规则只路由空receiver，本轮不实发新外部通知；旧Feishu/Agent路由保持。计划内API停机和新遥测规则用精确30分钟静默，不静默磁盘或其他告警，成功激活前和失败恢复后均主动清除并GET证实过期；清理失败显式阻断验收并留恢复记录。
+
+`--telemetry-transition`指向runtime下本轮独立证据JSON：format=1、kind=telemetry-forward-only/v1、固定candidate白名单r2/r3/r4、精确parent/source_sha256、failure_policy=freeze、实际用户选择、固定900秒离线预算、绑定main.go/协议实现摘要、同量级真实迁移与实际Linux排空/恢复证据、实际监控旧文件摘要与新配置摘要。prepare将其按字节冻结，篡改/缺项/源码不符均拒绝；仅四项服务/full新全备可用。
+
+```bash
+python3 /opt/powersystem/stages/04-frontend/deploy/production-stack.py prepare   --id tr-s04-20261028-r2   --image api=powersystem-api:tr-s04-20261028-r2   --image gateway=powersystem-gateway:tr-s04-20261028-r2   --service prometheus --service alertmanager   --telemetry-transition /opt/powersystem/runtime/<本轮独立批次>/telemetry-transition-evidence.json
+# 然后按既有标准生成候选后的新全量加密备份并核对主备凭据；不复用旧例外。
+python3 /opt/powersystem/stages/04-frontend/deploy/production-stack.py publish   --id tr-s04-20261028-r2   --backup /var/backups/powersystem/<当次实际新全备>.tar.gz.gpg
+```
+
+publish在原部署锁下先核无未授权长历史积压/既有维护，再停旧API/GW，使用候选API的实际`-migrate-only -migration-timeout=900s`入口，成功后才启动正常服务。普通API仍30秒；任何部分迁移/未知结果必须先锁读真实schema，不能以旧镜像健康代替兼容性。一次性迁移超时只停明确归属的容器，停止不明就保留pending拒绝回旧版。014前失败可走原父版恢复；014后/探测未知则冻结/停写，监控可单独回父版配置，不冒充业务恢复。
+
+首次升级前旧schema全备仍按旧协议，不称GW冻结；S04生效后的全备继续走backup.sh：双重互斥（与发布互斥、备份自身串行），RAG/Ops暂停前先以维护共享锁排空遥测并干净停止GW，采集后同ID恢复并仅凭本轮updated_at所有权恢复原维护值。回执显式绑定GW前后状态，仅放行真实排空导致的启动时间变化；ID/镜像/重启/强杀/操作员后续改门均不豁免。失败保留冻结与恢复身份，不清队列或伪造成功。
+
+
+### 队列大文件快照与失败停复核验
+
+队列辅助器固定实际Ops镜像、无网络、源卷只读、1核/512MiB，按本轮名称/标签/镜像/输出绑定核验归属；完成、超时或取消均确认辅助器退出，不能只杀Docker CLI。SQLite固定WAL只读事务并分块复制，保留完整原行和quick_check，内部预算600秒/外层660秒；不清队列、不改时间、不暂停模拟器。无法证明退出则保留快照和恢复记录，备份失败。
+
+失败备份若已规范同ID停复，仅对应24小时内失败计时、无密文/上传、完整before/after旁车可申请同版完整HTTPS/WSS重核：
+
+```bash
+python3 /opt/powersystem/stages/04-frontend/deploy/production-stack.py verify-resume --receipt /var/backups/powersystem/powersystem-<失败当轮UTC>.tar.gz.gpg.v4-maintenance.json
+```
+
+该命令不换服务/镜像、不签备份成功；门禁失败不改active，成功保留原published_at并留前后指针审计。之后仍须重新prepare并生成候选后的新全备；不能以失败旁车代偿备份。
+
+
+### 同一已迁移候选的冻结恢复
+
+`resume-telemetry`仅允许本轮tr-s04-20261028-r3和显式r1/r2/r3尝试。它保持原manifest、镜像、应用源码、pending和原候选后全备：证据绑定pending/冻结失败记录实哈、当前20服务身份、维护updated_at所有权和本次恢复工具摘要。只接受已完整迁移且新API/GW停止、其他服务健康的原现场，不重新迁移、不启动旧worker。源码来源/原全备/前置检查/排空仍验，恢复后完整HTTPS/WSS通过才移动active和清pending；失败重冻，旧失败和每次尝试记录均保留。恢复预算为120秒正常等待加60秒同实例启动等待，不降低ready标准。
+
+```bash
+python3 /opt/powersystem/stages/04-frontend/deploy/production-stack.py resume-telemetry --id tr-s04-20261028-r3 --attempt r1 --evidence /opt/powersystem/runtime/<本轮恢复工具批次>/resume-evidence.json
+```
+
+恢复工具按独立来源清单审查/安装，原r3应用快照和镜像不改；不能以修改原manifest、删除pending或切旧镜像代偿。每次计划静默独立命名并绑定本候选证明，UTC到期时间按Alertmanager实际毫秒精度比较，删除后GET证实expired。
+
+### 已迁移现场的新镜像前滚修复
+
+同候选恢复失败且应用代码需要修订时，仅本轮r3→r4支持`prepare-telemetry-repair`及`publish-telemetry-repair`。它们始终持原部署锁，绑定原active/pending/冻结失败实哈、20实例、维护updated_at及完成迁移/停止证明；不修改r3。新API/GW须从同一已审完整源码受控构建，原协议/大表迁移证据与实际新增验证分开登记。
+
+```bash
+python3 /opt/powersystem/stages/04-frontend/deploy/production-stack.py prepare-telemetry-repair --id tr-s04-20261028-r4 --evidence /opt/powersystem/runtime/<当轮>/frozen-repair-evidence.json --image api=<固定已审镜像> --image gateway=<同源固定已审镜像> --telemetry-transition /opt/powersystem/runtime/<当轮>/telemetry-transition-evidence.json
+POWERSYSTEM_TELEMETRY_REPAIR_EVIDENCE=/opt/powersystem/runtime/production-stack/releases/tr-s04-20261028-r4/telemetry-repair.json bash /opt/powersystem/stages/04-frontend/deploy/backup.sh
+python3 /opt/powersystem/stages/04-frontend/deploy/production-stack.py publish-telemetry-repair --id tr-s04-20261028-r4 --backup /var/backups/powersystem/<候选之后的新双端全备>.tar.gz.gpg
+```
+
+新全备使用原标准入口；pending仅在该严格绑定场景下可备份。API/GW保持停止、维护true不变，RAG/Ops仍按原冻结停复协议。备份标明实际失败候选的应用镜像/来源与未变active，不自动激活；任一身份/令牌漂移即拒绝。新全备双端成功、来源/预检/排空及原完整HTTPS/WSS通过后才激活r4并清pending；失败继续停止新写者、保留两次事务及现场。完整恢复演练缺口仅按本轮本人已选延后，不外推后续豁免。

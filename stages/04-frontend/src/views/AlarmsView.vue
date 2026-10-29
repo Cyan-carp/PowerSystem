@@ -1,198 +1,919 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref, watch } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
-import { ElMessage, ElMessageBox } from 'element-plus'
-import { FolderAdd, View } from '@element-plus/icons-vue'
-import { api } from '../lib/api'
-import AlarmValueComparison from '../components/AlarmValueComparison.vue'
-import { alarmClosure } from '../lib/health'
-import { realtime } from '../lib/realtime'
-import { dateTime, errorMessage, levelLabels, metricUnits, statusLabels } from '../lib/format'
-import { fixedNumber } from '../lib/detailPresentation'
-import { alarmMetricLabel, alarmOriginLabel, isLegacySimulationMetric, legacySimulationNote, normalAlarmSamplingNote } from '../lib/interpretation-display'
-import { defaultScope, reconcileStation, scopeLabels, scopeOptions } from '../lib/scope'
-import type { Alarm, AlarmLevel, AlarmStatus, Metric, Scope, Station } from '../types'
+import { computed, onMounted, ref, watch } from 'vue'
+import { RouterLink, useRoute, useRouter } from 'vue-router'
+import Icon from '../components/Icon.vue'
+import Drawer from '../components/Drawer.vue'
+import StatusChip from '../components/StatusChip.vue'
+import { api, alarmWriteError } from '../lib/api'
+import type { AlarmStatistics } from '../lib/api'
+import { fetchAlarmViews } from '../lib/data'
+import type { AlarmView } from '../lib/data'
+import type { Alarm } from '../lib/api'
+import { shell } from '../lib/store'
+import { askConfirm, toast } from '../lib/toast'
+import {
+  ALARM_STATE_CN, LEVEL_CN, METRIC_CN, METRIC_DIGITS, METRIC_UNIT,
+  clock, n, span, stamp, toneOf,
+} from '../lib/format'
+
+/** 读数单位与小数位：风险是 0–1 概率，其余按工程量纲。 */
+const unitOf = (metric: string) => METRIC_UNIT[metric] ?? ''
+const digitsOf = (metric: string) => METRIC_DIGITS[metric] ?? 1
+
+type StatusKey = 'all' | 'active' | 'unhandled' | 'acked' | 'recovered'
+type LevelKey = 'all' | 'urgent' | 'major' | 'minor'
 
 const route = useRoute()
 const router = useRouter()
-const rows = ref<Alarm[]>([])
-const selected = ref<Alarm | null>(null)
-const drawer = ref(false)
+
+const all = ref<AlarmView[]>([])
+const loading = ref(true)
+const failed = ref('')
+const statusFilter = ref<StatusKey>('all')
+const levelFilter = ref<LevelKey>('all')
+const keyword = ref('')
 const page = ref(1)
-const total = ref(0)
-const level = ref<AlarmLevel | ''>('')
-const status = ref<AlarmStatus | ''>('')
-const origin = ref<'normal' | 'simulation' | ''>('')
-const scope = ref<Scope>(defaultScope)
-const stations = ref<Station[]>([])
-const station = ref('')
-const stationsLoading = ref(false)
-const stationError = ref('')
-const loading = ref(false)
-const acting = ref(false)
-const error = ref('')
-const detailError = ref('')
-let unsubscribe: (() => void) | null = null
-let periodic: ReturnType<typeof setInterval> | null = null
+const pageSize = 8
+const selected = ref<AlarmView | null>(null)
+/** 写操作共用一把锁：确认、单条归档、批量归档不并发，按钮同时置灰 */
+const busy = ref(false)
+const picked = ref<number[]>([])
 
-const QUERY_STATUSES: AlarmStatus[] = ['unhandled', 'acked', 'recovered']
-const QUERY_LEVELS: AlarmLevel[] = ['urgent', 'major', 'minor']
-// 深层入口带参进入时把查询参数当初始筛选；参数被清空也要同步回来，避免筛选与地址不一致
-function applyQueryFilters(): boolean {
-  const query = route.query
-  const nextStatus = typeof query.status === 'string' && (QUERY_STATUSES as string[]).includes(query.status) ? query.status as AlarmStatus : ''
-  const nextLevel = typeof query.level === 'string' && (QUERY_LEVELS as string[]).includes(query.level) ? query.level as AlarmLevel : ''
-  if (status.value === nextStatus && level.value === nextLevel) return false
-  status.value = nextStatus
-  level.value = nextLevel
+const statusTabs: { key: StatusKey; label: string }[] = [
+  { key: 'all', label: '全部' },
+  { key: 'active', label: '活动' },
+  { key: 'unhandled', label: '未处理' },
+  { key: 'acked', label: '已确认' },
+  { key: 'recovered', label: '已恢复' },
+]
+
+const levelTabs: { key: LevelKey; label: string }[] = [
+  { key: 'all', label: '全部级别' },
+  { key: 'urgent', label: '紧急' },
+  { key: 'major', label: '重要' },
+  { key: 'minor', label: '次要' },
+]
+
+/** 列表取最近 100 条（后端 page_size 上限），四格统计走 /alarms/statistics 全量聚合 */
+const stats = ref<{ level: AlarmStatistics | null; status: AlarmStatistics | null }>({ level: null, status: null })
+
+/**
+ * 取数与对齐。
+ * - `full`：首屏与手动刷新，显示载入态；
+ * - `quiet`：写操作后与实时广播触发，不闪载入态。
+ * 取完把勾选集与已打开的详情跟最新列表对齐——归档后的告警不在列表里（后端固定 archived=FALSE），
+ * 对应的勾选与抽屉必须一起撤掉，否则会出现「按钮作用于一条已经看不见的告警」。
+ */
+const load = async (mode: 'full' | 'quiet' = 'full') => {
+  if (mode === 'full') loading.value = true
+  try {
+    const [payload, level, status] = await Promise.all([
+      fetchAlarmViews(100),
+      api.alarmStatistics('level').catch(() => null),
+      api.alarmStatistics('status').catch(() => null),
+    ])
+    all.value = payload.list
+    stats.value = { level, status }
+    failed.value = ''
+    prune()
+  } catch (error) {
+    failed.value = String(error)
+  } finally {
+    loading.value = false
+  }
+}
+
+const prune = () => {
+  const alive = new Set(all.value.map((item) => item.id))
+  picked.value = picked.value.filter((id) => alive.has(id))
+  if (!selected.value) return
+  const id = selected.value.id
+  if (!alive.has(id)) {
+    selected.value = null
+    syncQuery()
+    return
+  }
+  selected.value = all.value.find((item) => item.id === id) ?? null
+}
+
+const filtered = computed(() => {
+  const key = keyword.value.trim().toLowerCase()
+  return all.value.filter((item) => {
+    if (statusFilter.value === 'active' && item.status === 'recovered') return false
+    if (statusFilter.value !== 'all' && statusFilter.value !== 'active' && item.status !== statusFilter.value) return false
+    if (levelFilter.value !== 'all' && item.level !== levelFilter.value) return false
+    if (!key) return true
+    return [item.device_code, item.device_name, item.station_code, String(item.id)]
+      .filter(Boolean)
+      .some((field) => String(field).toLowerCase().includes(key))
+  })
+})
+
+const totalPages = computed(() => Math.max(1, Math.ceil(filtered.value.length / pageSize)))
+const paged = computed(() => filtered.value.slice((page.value - 1) * pageSize, page.value * pageSize))
+
+watch(filtered, () => {
+  if (page.value > totalPages.value) page.value = totalPages.value
+})
+
+const sumGroups = (payload: AlarmStatistics | null) =>
+  (payload?.groups ?? []).reduce<Record<string, number>>((acc, row) => {
+    acc[row.key] = row.count
+    return acc
+  }, {})
+
+const counts = computed(() => {
+  const byLevel = stats.value.level ? sumGroups(stats.value.level) : null
+  const byStatus = stats.value.status ? sumGroups(stats.value.status) : null
+  const fallback = all.value
+  const count = (source: Record<string, number> | null, key: string, compute: () => number) =>
+    source ? source[key] ?? 0 : compute()
+  return {
+    total: stats.value.level?.total_events ?? fallback.length,
+    unhandled: count(byStatus, 'unhandled', () => fallback.filter((item) => item.status === 'unhandled').length),
+    urgent: count(byLevel, 'urgent', () => fallback.filter((item) => item.level === 'urgent').length),
+    major: count(byLevel, 'major', () => fallback.filter((item) => item.level === 'major').length),
+    recovered: count(byStatus, 'recovered', () => fallback.filter((item) => item.status === 'recovered').length),
+  }
+})
+
+const strip = computed(() => {
+  const total = Math.max(1, counts.value.total)
+  const share = (value: number) => `${Math.round((value / total) * 100)}%`
+  return [
+    { key: 'unhandled', label: '未处理', value: counts.value.unhandled, note: '需值班确认', color: 'var(--brand)' },
+    { key: 'urgent', label: '紧急', value: counts.value.urgent, note: `占全部 ${share(counts.value.urgent)}`, color: 'var(--bad)' },
+    { key: 'major', label: '重要', value: counts.value.major, note: `占全部 ${share(counts.value.major)}`, color: 'var(--warn)' },
+    { key: 'recovered', label: '已恢复', value: counts.value.recovered, note: `占全部 ${share(counts.value.recovered)}`, color: 'var(--ok)' },
+  ]
+})
+
+const duration = (alarm: Alarm) => {
+  const end = alarm.recovered_at ? Date.parse(alarm.recovered_at) : Date.now()
+  return span(Math.max(0, (end - Date.parse(alarm.triggered_at)) / 1000))
+}
+
+const dayOf = (iso: string) =>
+  new Date(iso).toLocaleDateString('zh-CN', { timeZone: 'Asia/Shanghai', month: '2-digit', day: '2-digit' })
+
+/* ---------------- 选中与地址同步 ---------------- */
+
+const syncQuery = () => {
+  const query: Record<string, string> = {}
+  if (statusFilter.value !== 'all') query.status = statusFilter.value
+  if (levelFilter.value !== 'all') query.level = levelFilter.value
+  if (selected.value) query.id = String(selected.value.id)
+  router.replace({ path: '/alarms', query })
+}
+
+watch([statusFilter, levelFilter], () => {
   page.value = 1
-  return true
+  syncQuery()
+})
+
+const open = (alarm: AlarmView) => {
+  selected.value = alarm
+  syncQuery()
 }
 
-async function loadStations(): Promise<void> {
-  stationsLoading.value = true
-  stationError.value = ''
-  try {
-    const result = await api.stations(scope.value)
-    if (result.scope !== scope.value) return
-    stations.value = result.list || []
-    station.value = reconcileStation(station.value, scope.value, stations.value)
-  } catch (cause) {
-    stations.value = []
-    station.value = ''
-    stationError.value = `场站列表暂不可用：${errorMessage(cause)}`
-  } finally { stationsLoading.value = false }
-}
-
-async function load(): Promise<void> {
-  const requested = { scope: scope.value, station: station.value, status: status.value, level: level.value, page: page.value, origin: origin.value }
-  loading.value = true
-  error.value = ''
-  try {
-    const result = await api.alarms(requested.page, 20, requested.status, requested.level, { scope: requested.scope, stationCode: requested.station, origin: requested.origin || undefined })
-    if (requested.scope !== scope.value || requested.station !== station.value || requested.status !== status.value || requested.level !== level.value || requested.page !== page.value || requested.origin !== origin.value) return
-    rows.value = result.list || []
-    total.value = result.total
-  } catch (cause) { if (requested.scope === scope.value) error.value = errorMessage(cause) }
-  finally { loading.value = false }
-}
-
-async function openAlarm(id: number): Promise<void> {
-  drawer.value = true
-  detailError.value = ''
+const close = () => {
   selected.value = null
-  try { selected.value = await api.alarm(id) }
-  catch (cause) { detailError.value = errorMessage(cause) }
+  syncQuery()
 }
 
-async function acknowledge(alarm: Alarm): Promise<void> {
-  acting.value = true
-  try {
-    selected.value = await api.ackAlarm(alarm.id)
-    ElMessage.success('告警已确认')
-  } catch (cause) {
-    ElMessage.warning(errorMessage(cause))
-    try { selected.value = await api.alarm(alarm.id) } catch { /* list refresh below */ }
-  } finally { acting.value = false; void load() }
+/* ---------------- 勾选与处置 ---------------- */
+
+const canAck = (alarm: AlarmView) => alarm.status === 'unhandled' && !alarm.recovered_at
+const ackLabel = (alarm: AlarmView) =>
+  canAck(alarm) ? '确认告警' : alarm.status === 'recovered' ? '已恢复' : '已确认'
+
+const pageIds = computed(() => paged.value.map((row) => row.id))
+
+/** 全选只在「本页」范围生效，避免勾到翻页后看不见的行 */
+const pickState = computed<'none' | 'some' | 'all'>(() => {
+  const ids = pageIds.value
+  const hit = ids.filter((id) => picked.value.includes(id)).length
+  if (!ids.length || !hit) return 'none'
+  return hit === ids.length ? 'all' : 'some'
+})
+
+const togglePick = (id: number) => {
+  if (busy.value) return
+  picked.value = picked.value.includes(id)
+    ? picked.value.filter((item) => item !== id)
+    : [...picked.value, id]
 }
 
-async function archive(alarm: Alarm): Promise<void> {
+const togglePickAll = () => {
+  if (busy.value) return
+  const ids = pageIds.value
+  picked.value = pickState.value === 'all'
+    ? picked.value.filter((id) => !ids.includes(id))
+    : [...new Set([...picked.value, ...ids])]
+}
+
+const clearPicks = () => {
+  picked.value = []
+}
+
+/** 确认：后端只接受「未处理且未恢复」，被别人抢先时会回 409，这里顺手把页面拉回真实状态 */
+const ack = async (alarm: AlarmView) => {
+  if (busy.value || !canAck(alarm)) return
+  busy.value = true
   try {
-    await ElMessageBox.confirm('归档后该告警将从默认列表中隐藏，原始记录仍会保留。', `归档告警 #${alarm.id}`, {
-      type: 'warning', confirmButtonText: '归档', cancelButtonText: '取消',
-    })
-  } catch { return }
-  acting.value = true
+    await api.ackAlarm(alarm.id)
+    toast('ok', `告警 #${alarm.id} 已确认`)
+    await load('quiet')
+  } catch (error) {
+    toast('bad', alarmWriteError(error))
+    await load('quiet')
+  } finally {
+    busy.value = false
+  }
+}
+
+const archiveOne = async (alarm: AlarmView) => {
+  if (busy.value) return
+  const go = await askConfirm({
+    title: `归档告警 #${alarm.id}`,
+    body: '归档只打标记，不删除告警事实、时间线与规则快照。归档后该告警不再出现在列表里，目前没有撤销入口。',
+    confirmText: '归档',
+  })
+  if (!go) return
+  busy.value = true
   try {
     await api.archiveAlarm(alarm.id)
-    drawer.value = false
-    selected.value = null
-    ElMessage.success('告警已归档')
-    if (rows.value.length === 1 && page.value > 1) page.value--
-    await load()
-  } catch (cause) {
-    ElMessage.warning(errorMessage(cause))
-  } finally { acting.value = false }
+    toast('ok', `告警 #${alarm.id} 已归档`)
+    await load('quiet')
+  } catch (error) {
+    toast('bad', alarmWriteError(error))
+    await load('quiet')
+  } finally {
+    busy.value = false
+  }
 }
 
-const checked = ref<Alarm[]>([])
-const archiving = ref(false)
-async function archiveSelected(): Promise<void> {
-  const ids = checked.value.map(row => row.id)
-  if (!ids.length || archiving.value) return
-  try { await ElMessageBox.confirm(`将归档 ${ids.length} 条告警，归档后不再出现在本列表。`, '批量归档', { type: 'warning', confirmButtonText: '归档' }) } catch { return }
-  archiving.value = true
+const archivePicked = async () => {
+  if (busy.value || !picked.value.length) return
+  const ids = [...picked.value]
+  const go = await askConfirm({
+    title: `归档 ${ids.length} 条告警`,
+    body: '归档只打标记，不删除告警事实与规则快照。归档后这些告警不再出现在列表里，目前没有撤销入口。',
+    confirmText: `归档 ${ids.length} 条`,
+    danger: true,
+  })
+  if (!go) return
+  busy.value = true
   try {
     const result = await api.archiveAlarms(ids)
-    checked.value = []
-    await load()
-    if (result.failed.length) ElMessage.error(`${result.failed.length} 条告警归档失败，请刷新后重试`)
-    else ElMessage.success(`已归档 ${result.archived} 条告警`)
-  } catch (cause) { ElMessage.warning(errorMessage(cause)) }
-  finally { archiving.value = false }
-}
-function onRowClick(row: Alarm, column?: { type?: string }): void { if (column?.type === 'selection') return; void openAlarm(row.id) }
-
-function filter(): void { page.value = 1; void load() }
-async function changeScope(next: Scope): Promise<void> {
-  if (scope.value === next) return
-  scope.value = next
-  page.value = 1
-  await loadStations()
-  await load()
-}
-watch(() => route.query.id, (id) => { const parsed = Number(id); if (Number.isInteger(parsed) && parsed > 0) void openAlarm(parsed) }, { immediate: true })
-watch(() => [route.query.status, route.query.level], () => { if (applyQueryFilters()) void load() })
-onMounted(() => {
-  applyQueryFilters()
-  void loadStations()
-  void load()
-  unsubscribe = realtime.subscribe((event) => {
-    if (event.type === 'connected' || event.type === 'alarm_created' || event.type === 'alarm_acked' || event.type === 'alarm_recovered') {
-      void load()
-      if (selected.value && 'data' in event && event.data.id === selected.value.id) void openAlarm(selected.value.id)
+    if (result.failed.length) {
+      toast('warn', `已归档 ${result.archived} 条，${result.failed.length} 条未找到（可能已被删除）`)
+    } else {
+      toast('ok', `已归档 ${result.archived} 条告警`)
     }
-  })
-  periodic = setInterval(() => { if (!realtime.connected.value) void load() }, 10000)
+    picked.value = []
+    await load('quiet')
+  } catch (error) {
+    toast('bad', alarmWriteError(error))
+    await load('quiet')
+  } finally {
+    busy.value = false
+  }
+}
+
+/* 别的标签页处置后，本页跟着刷新；自己正在写的时候不插手，避免把回包结果冲掉 */
+watch(
+  () => shell.alarmRevision,
+  () => {
+    if (busy.value) return
+    void load('quiet')
+  },
+)
+
+onMounted(async () => {
+  const query = route.query
+  if (typeof query.status === 'string' && ['active', 'unhandled', 'acked', 'recovered'].includes(query.status)) {
+    statusFilter.value = query.status as StatusKey
+  }
+  if (typeof query.level === 'string' && ['urgent', 'major', 'minor'].includes(query.level)) {
+    levelFilter.value = query.level as LevelKey
+  }
+  await load()
+  if (typeof query.id === 'string') {
+    const found = all.value.find((item) => String(item.id) === query.id)
+    if (found) selected.value = found
+  }
 })
-onUnmounted(() => { unsubscribe?.(); if (periodic) clearInterval(periodic) })
+
+/* ---------------- 详情 ---------------- */
+
+const gauge = computed(() => {
+  const alarm = selected.value
+  if (!alarm) return { value: 0, threshold: 0 }
+  const ceiling = Math.max(alarm.value, alarm.threshold) * 1.25 || 1
+  return {
+    value: Math.min(100, (alarm.value / ceiling) * 100),
+    threshold: Math.min(100, (alarm.threshold / ceiling) * 100),
+  }
+})
+
+const overflow = computed(() => {
+  const alarm = selected.value
+  if (!alarm || !alarm.threshold) return '—'
+  return `${(((alarm.value - alarm.threshold) / alarm.threshold) * 100).toFixed(1)}%`
+})
+
+const timeline = computed(() => {
+  const alarm = selected.value
+  if (!alarm) return []
+  return [
+    { key: 'trigger', label: '触发', at: alarm.triggered_at, done: true },
+    { key: 'ack', label: '确认', at: alarm.acked_at, done: !!alarm.acked_at },
+    { key: 'recover', label: '恢复', at: alarm.recovered_at, done: !!alarm.recovered_at },
+  ]
+})
 </script>
 
 <template>
-  <div class="page-narrow">
-  <section class="page-head"><div><h1>告警中心</h1><p>按级别、状态查找告警，并完成确认闭环。</p></div><div class="head-stat">筛选结果 <strong>{{ total }}</strong></div></section>
-  <section class="surface"><div class="toolbar"><div class="toolbar-title">告警记录 <span>{{ scopeLabels[scope] }} · 新事件会实时同步</span></div><div class="toolbar-actions"><el-button-group><el-button v-for="item in scopeOptions" :key="item.value" size="small" :type="scope === item.value ? 'primary' : 'default'" @click="changeScope(item.value)">{{ item.label }}</el-button></el-button-group><el-select v-model="station" placeholder="全部场站" clearable :loading="stationsLoading" style="width: 190px" @change="filter"><el-option label="全部场站" value="" /><el-option v-for="item in stations" :key="item.station_code" :label="`${item.station_name}（${item.station_code}）`" :value="item.station_code" /></el-select><el-select v-model="origin" placeholder="全部来源" clearable style="width: 145px" @change="filter"><el-option label="全部来源" value="" /><el-option label="自然规则告警" value="normal" /><el-option label="历史演示告警" value="simulation" /></el-select><el-select v-model="level" placeholder="全部级别" style="width: 125px" @change="filter"><el-option label="全部级别" value="" /><el-option v-for="(label, value) in levelLabels" :key="value" :label="label" :value="value" /></el-select><el-select v-model="status" placeholder="全部状态" style="width: 125px" @change="filter"><el-option label="全部状态" value="" /><el-option v-for="(label, value) in statusLabels" :key="value" :label="label" :value="value" /></el-select><el-button :disabled="!checked.length || archiving" :loading="archiving" @click="archiveSelected">批量归档{{ checked.length ? ` (${checked.length})` : '' }}</el-button></div></div>
-    <details class="panel-note"><summary>数据口径</summary><p>规则告警由设备遥测越限自动生成，来源可能是合成车队设备或真实设备。{{ normalAlarmSamplingNote }}历史演示记录保留，可按来源筛选。</p></details>
-    <el-alert v-if="stationError" :title="stationError" type="warning" show-icon :closable="false" class="content-alert" />
-    <el-alert v-if="error" :title="error" type="error" show-icon :closable="false" class="content-alert" />
-    <el-table v-loading="loading" :data="rows" stripe empty-text="暂无符合条件的告警" class="data-table" @row-click="onRowClick" @selection-change="(rows: Alarm[]) => (checked = rows)"><el-table-column type="selection" width="46" align="center" header-align="center" /><el-table-column label="级别" width="95" align="center" header-align="center"><template #default="{ row }"><span class="severity-label" :class="row.level"><span class="severity-dot" :class="row.level" />{{ levelLabels[row.level as AlarmLevel] }}</span></template></el-table-column><el-table-column label="告警内容" min-width="210" align="left" header-align="left"><template #default="{ row }"><strong>{{ isLegacySimulationMetric(row.metric) ? alarmMetricLabel(row.metric) : row.metric === 'ai_failure_risk' ? 'AI 故障风险' : alarmMetricLabel(row.metric) + ' 越限' }}</strong><small class="alarm-origin">{{ alarmOriginLabel(row.origin) }}</small></template></el-table-column><el-table-column label="触发值 / 阈值" width="155" align="center" header-align="center"><template #default="{ row }"><span v-if="isLegacySimulationMetric(row.metric)" class="alarm-values-missing">—</span><span v-else class="alarm-values">{{ fixedNumber(row.value) }}{{ metricUnits[row.metric as Metric] || '' }} / {{ fixedNumber(row.threshold) }}{{ metricUnits[row.metric as Metric] || '' }}</span></template></el-table-column><el-table-column label="设备 ID" prop="device_id" width="110" align="center" header-align="center" /><el-table-column label="触发时间" min-width="175" align="center" header-align="center"><template #default="{ row }">{{ dateTime(row.triggered_at) }}</template></el-table-column><el-table-column label="状态" width="100" align="center" header-align="center"><template #default="{ row }"><span class="alarm-status" :class="row.status">{{ statusLabels[row.status as AlarmStatus] }}</span></template></el-table-column><el-table-column label="" width="96" align="center" header-align="center"><template #default="{ row }"><div class="row-actions"><el-button link title="查看详情" aria-label="查看详情" @click.stop="openAlarm(row.id)"><el-icon><View /></el-icon></el-button><el-button link title="归档" aria-label="归档" :loading="acting" @click.stop="archive(row)"><el-icon><FolderAdd /></el-icon></el-button></div></template></el-table-column></el-table>
-    <div class="table-footer"><span>共 {{ total }} 条记录</span><el-pagination v-model:current-page="page" :page-size="20" :total="total" layout="prev, pager, next" @current-change="load" /></div>
-  </section>
+  <div class="page-head">
+    <div class="page-actions">
+      <button class="btn" :disabled="loading" @click="load('full')">
+        <Icon name="refresh" :size="15" />刷新
+      </button>
+    </div>
   </div>
-  <el-drawer v-model="drawer" title="告警详情" size="min(520px, 100vw)" @closed="router.replace({ query: {} })">
-    <el-alert v-if="detailError" :title="detailError" type="error" show-icon :closable="false" />
-    <div v-if="selected" class="drawer-content"><div class="drawer-severity"><span class="severity-dot" :class="selected.level" />{{ levelLabels[selected.level] }}告警 <el-tag :type="selected.status === 'unhandled' ? 'danger' : selected.status === 'acked' ? 'warning' : 'success'">{{ statusLabels[selected.status] }}</el-tag></div><h2>{{ isLegacySimulationMetric(selected.metric) ? alarmMetricLabel(selected.metric) : selected.metric === 'ai_failure_risk' ? 'AI 故障风险升高' : alarmMetricLabel(selected.metric) + ' 指标越限' }}</h2><p v-if="isLegacySimulationMetric(selected.metric)" class="alarm-source-note">{{ legacySimulationNote }}</p><template v-else><AlarmValueComparison :value="selected.value" :threshold="selected.threshold" :metric="selected.metric" /><p class="alarm-source-note">{{ normalAlarmSamplingNote }}</p></template>
-      <h3 class="detail-section-heading">记录信息</h3>
-      <dl class="alarm-record-meta"><dt>告警编号</dt><dd class="record-identity">#{{ selected.id }}</dd><dt>设备 ID</dt><dd class="record-identity">{{ selected.device_id }}</dd><dt>触发时间</dt><dd>{{ dateTime(selected.triggered_at) }}</dd><dt>确认时间</dt><dd>{{ dateTime(selected.acked_at) }}</dd><dt>平台结束时间</dt><dd>{{ dateTime(selected.recovered_at) }}</dd></dl><dl class="alarm-record-meta"><dt>结束原因</dt><dd>{{ selected.status === 'recovered' ? alarmClosure(selected.close_reason) : '尚未结束' }}</dd><dt>触发规则快照</dt><dd>{{ selected.rule_operator || '未知比较符' }} · {{ selected.rule_version || '历史版本未知' }}</dd></dl><div class="drawer-actions"><el-button v-if="selected.status === 'unhandled'" type="primary" :loading="acting" @click="acknowledge(selected)">确认告警</el-button><el-button type="danger" plain :loading="acting" @click="archive(selected)">归档告警</el-button><el-button @click="router.push(`/devices/${selected?.device_id}`)">查看关联设备曲线 →</el-button></div><p class="drawer-note">归档只会从默认列表隐藏记录，不删除数据。确认仅记录操作人与时间，不代表恢复；管理关闭也不证明故障消除。</p></div>
-  </el-drawer>
+
+  <div v-if="failed" class="error-box">告警数据未取到：{{ failed }}</div>
+
+  <!-- 概览条 -->
+  <section class="card strip">
+    <div v-for="item in strip" :key="item.key" class="strip-cell">
+      <span class="strip-label"><i :style="{ background: item.color }"></i>{{ item.label }}</span>
+      <span class="strip-value num">{{ item.value }}</span>
+      <span class="strip-note">{{ item.note }}</span>
+    </div>
+  </section>
+
+  <!-- 列表 -->
+  <section class="card">
+    <div class="card-head">
+      <span class="card-title">告警列表</span>
+      <span class="card-sub">{{ filtered.length }} 条匹配</span>
+      <div class="card-tools">
+        <label class="field-search">
+          <Icon name="search" :size="14" />
+          <input v-model="keyword" type="text" placeholder="设备编码 / 名称 / 编号" />
+        </label>
+      </div>
+    </div>
+
+    <div class="filters">
+      <div class="seg">
+        <button
+          v-for="tab in statusTabs"
+          :key="tab.key"
+          :class="{ 'is-on': statusFilter === tab.key }"
+          @click="statusFilter = tab.key"
+        >
+          {{ tab.label }}
+        </button>
+      </div>
+      <div class="seg">
+        <button
+          v-for="tab in levelTabs"
+          :key="tab.key"
+          :class="{ 'is-on': levelFilter === tab.key }"
+          @click="levelFilter = tab.key"
+        >
+          {{ tab.label }}
+        </button>
+      </div>
+    </div>
+
+    <!-- 勾选后出现的处置条：只对选中的编号生效，不清空筛选也不改变当前页 -->
+    <div v-if="picked.length" class="pickbar">
+      <span class="pickbar-count">已选 <b class="num">{{ picked.length }}</b> 条</span>
+      <span class="pickbar-hint">归档后不再出现在列表</span>
+      <span class="grow"></span>
+      <button class="btn btn-sm" :disabled="busy" @click="clearPicks">清空选择</button>
+      <button class="btn btn-sm btn-primary" :disabled="busy" @click="archivePicked">
+        <Icon name="inbox" :size="14" />归档所选
+      </button>
+    </div>
+
+    <div v-if="loading" class="loading">读取告警…</div>
+    <div v-else class="table-wrap">
+      <table class="table alarm-table">
+        <colgroup>
+          <col style="width: 4%" />
+          <col style="width: 8%" />
+          <col style="width: 30%" />
+          <col style="width: 11%" />
+          <col style="width: 15%" />
+          <col style="width: 11%" />
+          <col style="width: 9%" />
+          <col style="width: 12%" />
+        </colgroup>
+        <thead>
+          <tr>
+            <th class="pick">
+              <span
+                class="pick-box"
+                :class="{ 'is-on': pickState === 'all', 'is-half': pickState === 'some' }"
+                role="checkbox"
+                :aria-checked="pickState === 'all'"
+                aria-label="选择本页全部告警"
+                :title="pickState === 'all' ? '取消本页全选' : '选择本页全部'"
+                @click="togglePickAll"
+              >
+                <Icon v-if="pickState === 'all'" name="check" :size="10" />
+              </span>
+            </th>
+            <th>级别</th>
+            <th>设备</th>
+            <th>指标</th>
+            <th class="r">实测 / 阈值</th>
+            <th>状态</th>
+            <th class="r">持续</th>
+            <th>触发时刻</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr
+            v-for="row in paged"
+            :key="row.id"
+            class="is-click"
+            :class="{ 'is-picked': picked.includes(row.id) }"
+            @click="open(row)"
+          >
+            <td class="pick" @click.stop>
+              <span
+                class="pick-box"
+                :class="{ 'is-on': picked.includes(row.id) }"
+                role="checkbox"
+                :aria-checked="picked.includes(row.id)"
+                :aria-label="`选择告警 #${row.id}`"
+                @click="togglePick(row.id)"
+              >
+                <Icon v-if="picked.includes(row.id)" name="check" :size="10" />
+              </span>
+            </td>
+            <td>
+              <StatusChip :tone="toneOf(row.level)" :label="LEVEL_CN[row.level]" />
+            </td>
+            <td>
+              <div class="cell-stack">
+                <div class="cell-name">{{ row.device_name || row.device_code || `#${row.device_id}` }}</div>
+                <div class="cell-note">
+                  {{ row.device_code }} · {{ row.station_code }}
+                  <span v-if="row.origin === 'simulation'" class="sim">仿真</span>
+                </div>
+              </div>
+            </td>
+            <td>{{ METRIC_CN[row.metric] || row.metric }}</td>
+            <td class="r num">
+              <b class="over">{{ n(row.value, digitsOf(row.metric)) }}</b>
+              <span class="muted"> / {{ n(row.threshold, digitsOf(row.metric) > 1 ? 2 : 0) }} {{ unitOf(row.metric) }}</span>
+            </td>
+            <td>
+              <StatusChip :tone="toneOf(row.status)" :label="ALARM_STATE_CN[row.status]" />
+            </td>
+            <td class="r num">{{ duration(row) }}</td>
+            <td class="tight">
+              <span class="num">{{ clock(row.triggered_at) }}</span>
+              <span class="day">{{ dayOf(row.triggered_at) }}</span>
+            </td>
+          </tr>
+          <tr v-if="!paged.length">
+            <td colspan="8" class="empty">当前筛选下没有告警。</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="pager">
+      <span class="pager-total">
+        显示 {{ filtered.length ? (page - 1) * pageSize + 1 : 0 }}–{{ Math.min(page * pageSize, filtered.length) }} / {{ filtered.length }} 条
+      </span>
+      <span class="grow"></span>
+      <button class="pager-btn" :disabled="page <= 1" title="上一页" @click="page -= 1">
+        <Icon name="chevronLeft" :size="15" />
+      </button>
+      <span class="pager-page num">{{ String(page).padStart(2, '0') }}</span>
+      <span class="pager-total">/ {{ String(totalPages).padStart(2, '0') }}</span>
+      <button class="pager-btn" :disabled="page >= totalPages" title="下一页" @click="page += 1">
+        <Icon name="chevronRight" :size="15" />
+      </button>
+    </div>
+  </section>
+
+  <!-- 详情 -->
+  <Drawer
+    v-if="selected"
+    :title="`告警 #${selected.id}`"
+    :sub="`${METRIC_CN[selected.metric] || selected.metric} · ${selected.device_name || selected.device_code || ''}`"
+    @close="close"
+  >
+    <div class="detail-tags">
+      <StatusChip :tone="toneOf(selected.level)" :label="LEVEL_CN[selected.level]" />
+      <StatusChip :tone="toneOf(selected.status)" :label="ALARM_STATE_CN[selected.status]" />
+      <span class="chip is-plain">{{ selected.origin === 'simulation' ? '仿真数据' : '正常采集' }}</span>
+    </div>
+
+    <div class="metric-panel">
+      <div class="metric-head">
+        <span>
+          实测值 <b class="num">{{ n(selected.value, digitsOf(selected.metric)) }}</b>
+          <span class="metric-unit">{{ unitOf(selected.metric) }}</span>
+        </span>
+        <span class="muted">
+          阈值 <b class="num">{{ n(selected.threshold, digitsOf(selected.metric) > 1 ? 2 : 0) }}</b>
+          <span class="metric-unit">{{ unitOf(selected.metric) }}</span>
+        </span>
+      </div>
+      <div class="metric-track">
+        <span class="thr" :style="{ left: `${gauge.threshold}%` }"></span>
+        <i class="fill" :style="{ width: `${gauge.value}%` }"></i>
+      </div>
+      <div class="metric-foot">
+        <span>超阈值 {{ overflow }}</span>
+        <span class="muted">触发后持续 {{ duration(selected) }}</span>
+      </div>
+    </div>
+
+    <h3 class="block-title">报警上下文</h3>
+    <dl class="kv">
+      <dt>设备</dt>
+      <dd>{{ selected.device_name || '—' }}</dd>
+      <dt>设备编码</dt>
+      <dd>{{ selected.device_code || `#${selected.device_id}` }}</dd>
+      <dt>所属场站</dt>
+      <dd>{{ selected.station_code || '—' }}</dd>
+      <dt>触发时间</dt>
+      <dd class="num">{{ stamp(selected.triggered_at) }}</dd>
+      <dt>规则版本</dt>
+      <dd class="num">{{ selected.rule_version }}</dd>
+      <dt>关闭原因</dt>
+      <dd>{{ selected.close_reason || '—' }}</dd>
+    </dl>
+
+    <h3 class="block-title">处置时间线</h3>
+    <ol class="timeline">
+      <li v-for="step in timeline" :key="step.key" :class="{ 'is-done': step.done }">
+        <span class="node"></span>
+        <div>
+          <div class="step-label">{{ step.label }}</div>
+          <div class="step-time num">{{ step.at ? stamp(step.at) : '未发生' }}</div>
+        </div>
+      </li>
+    </ol>
+
+    <p class="panel-note">
+      确认只对「未处理且未恢复」的告警生效；若已被他人抢先确认，后端返回冲突，页面会自动重新对齐状态。
+      归档只打标记，不删除告警事实、时间线与规则快照，归档后不再出现在列表里，也没有撤销入口。
+    </p>
+
+    <template #footer>
+      <RouterLink class="btn btn-sm" :to="`/devices?device=${selected.device_id}`" @click="close">
+        <Icon name="arrowUpRight" :size="14" />查看设备
+      </RouterLink>
+      <span class="grow"></span>
+      <button class="btn btn-sm" @click="close">关闭</button>
+      <button class="btn btn-sm" :disabled="busy" @click="archiveOne(selected)">
+        <Icon name="inbox" :size="14" />归档
+      </button>
+      <button
+        class="btn btn-sm btn-primary"
+        :disabled="busy || !canAck(selected)"
+        :title="canAck(selected) ? '标记为已确认' : '仅未处理且未恢复的告警可以确认'"
+        @click="ack(selected)"
+      >
+        <Icon name="check" :size="14" />{{ ackLabel(selected) }}
+      </button>
+    </template>
+  </Drawer>
 </template>
 
-
 <style scoped>
-.data-table :deep(.severity-label){justify-content:center}
-.alarm-status{display:inline-flex;align-items:center;gap:7px;font-size:12.5px;font-weight:600}
-.alarm-status::before{content:'';flex:none;width:7px;height:7px;border-radius:2px;background:var(--ink-3)}
-.alarm-status.unhandled{color:var(--danger)}
-.alarm-status.unhandled::before{background:var(--danger)}
-.alarm-status.acked{color:var(--warning)}
-.alarm-status.acked::before{background:var(--warning)}
-.alarm-status.recovered{color:var(--success)}
-.alarm-status.recovered::before{background:var(--success)}
-.row-actions{display:flex;justify-content:center;gap:2px}
-.row-actions .el-button{padding:4px 6px;font-size:15px;color:var(--ink-2)}
-.row-actions .el-button:hover{color:var(--brand)}
-.alarm-origin{display:block;margin-top:4px;font-size:11px;font-weight:400;color:var(--ink-3)}
-.alarm-values{font-size:12px;color:var(--ink-2);font-variant-numeric:tabular-nums}
-.alarm-values-missing{color:var(--ink-3)}
-.alarm-source-note{margin:10px 0 0;padding:8px 10px;border-left:3px solid var(--line);background:var(--card-2);font-size:12px;line-height:1.7;color:var(--ink-3)}
+/* ---------- 概览条 ---------- */
+
+.strip {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.strip-cell {
+  padding: 15px 18px 14px;
+  border-left: 1px solid var(--line-soft);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.strip-cell:first-child {
+  border-left: 0;
+}
+
+.strip-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  color: var(--ink-3);
+}
+
+.strip-label i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+}
+
+.strip-value {
+  font-size: 24px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--ink);
+  line-height: 1.25;
+}
+
+.strip-note {
+  font-size: 11px;
+  color: var(--ink-4);
+}
+
+/* ---------- 筛选 ---------- */
+
+.filters {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 0 18px 14px;
+}
+
+.alarm-table {
+  table-layout: fixed;
+}
+
+.alarm-table td {
+  padding-top: 9px;
+  padding-bottom: 9px;
+  overflow: hidden;
+}
+
+.sim {
+  margin-left: 6px;
+  padding: 0 5px;
+  border-radius: var(--r-pill);
+  background: var(--violet-soft);
+  border: 1px solid #ddd6fe;
+  color: #6d28d9;
+  font-size: 9.5px;
+  line-height: 15px;
+  display: inline-block;
+}
+
+.over {
+  color: var(--bad);
+  font-weight: 650;
+}
+
+.day {
+  margin-left: 7px;
+  font-size: 10.5px;
+  color: var(--ink-4);
+}
+
+/* ---------- 勾选与处置条 ---------- */
+
+.alarm-table th.pick,
+.alarm-table td.pick {
+  padding-right: 0;
+}
+
+.pick-box {
+  display: inline-grid;
+  place-items: center;
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  border: 1px solid var(--line-strong);
+  background: #fff;
+  color: #fff;
+  cursor: pointer;
+  vertical-align: middle;
+}
+
+.pick-box.is-on {
+  background: var(--brand);
+  border-color: var(--brand);
+}
+
+/* 半选：左半品牌色右半留白，和任务记录里的复选框同一写法 */
+.pick-box.is-half {
+  background: linear-gradient(90deg, var(--brand) 50%, #fff 50%);
+  border-color: var(--brand);
+}
+
+.pickbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 18px 12px;
+  padding: 7px 10px 7px 12px;
+  border-radius: var(--r-md);
+  background: var(--brand-soft);
+  border: 1px solid #d3e2fb;
+  font-size: 12px;
+  color: var(--brand-deep);
+}
+
+.pickbar .grow {
+  flex: 1;
+}
+
+.pickbar-count b {
+  font-size: 13.5px;
+}
+
+.pickbar-hint {
+  font-size: 11px;
+  color: #5c7fae;
+}
+
+/* 勾选行的底色压过 hover 的浅灰，否则鼠标一过就看不出选中了 */
+.alarm-table tbody tr.is-picked:hover td {
+  background: var(--brand-soft);
+}
+
+/* ---------- 抽屉 ---------- */
+
+.detail-tags {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.metric-panel {
+  margin-top: 16px;
+  padding: 14px;
+  border-radius: var(--r-md);
+  background: var(--card-soft);
+  border: 1px solid var(--line-soft);
+}
+
+.metric-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  font-size: 12px;
+  color: var(--ink-2);
+}
+
+.metric-head b {
+  font-size: 17px;
+  color: var(--ink);
+  margin-left: 3px;
+}
+
+.metric-unit {
+  margin-left: 2px;
+  font-size: 11px;
+  color: var(--ink-3);
+}
+
+.metric-track {
+  position: relative;
+  height: 9px;
+  margin: 12px 0 9px;
+  border-radius: var(--r-pill);
+  background: #e8edf6;
+}
+
+.metric-track .fill {
+  display: block;
+  height: 100%;
+  border-radius: var(--r-pill);
+  background: linear-gradient(90deg, #f87171, #ef4444);
+}
+
+.metric-track .thr {
+  position: absolute;
+  top: -4px;
+  bottom: -4px;
+  width: 2px;
+  border-radius: 2px;
+  background: var(--ink-2);
+  z-index: 1;
+}
+
+.metric-foot {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  color: var(--bad-deep);
+}
+
+.metric-foot .muted {
+  color: var(--ink-3);
+}
+
+.block-title {
+  margin: 20px 0 10px;
+  font-size: 12px;
+  font-weight: 650;
+  color: var(--ink-2);
+}
+
+.timeline {
+  list-style: none;
+  margin: 0;
+  padding: 0 0 0 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.timeline li {
+  position: relative;
+  display: flex;
+  gap: 12px;
+  padding: 0 0 16px 14px;
+  border-left: 1px solid var(--line);
+}
+
+.timeline li:last-child {
+  padding-bottom: 0;
+  border-left-color: transparent;
+}
+
+.timeline .node {
+  position: absolute;
+  left: -4.5px;
+  top: 3px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #fff;
+  border: 2px solid var(--line-strong);
+}
+
+.timeline li.is-done .node {
+  border-color: var(--brand);
+  background: var(--brand);
+}
+
+.step-label {
+  font-size: 12.5px;
+  color: var(--ink-2);
+  font-weight: 550;
+}
+
+.timeline li.is-done .step-label {
+  color: var(--ink);
+}
+
+.step-time {
+  font-size: 11px;
+  color: var(--ink-3);
+  margin-top: 1px;
+}
+
+@media (max-width: 1100px) {
+  .alarm-table {
+    min-width: 960px;
+  }
+}
+
+.table .num.tight,
+.alarm-table td:nth-child(6) {
+  white-space: nowrap;
+}
+
+@media (max-width: 900px) {
+  .strip {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  /* 窄屏先牺牲说明文字，把按钮留给处置动作 */
+  .pickbar-hint {
+    display: none;
+  }
+
+  .strip-cell:nth-child(3) {
+    border-left: 0;
+    border-top: 1px solid var(--line-soft);
+  }
+
+  .strip-cell:nth-child(4) {
+    border-top: 1px solid var(--line-soft);
+  }
+}
+
+@media (max-width: 680px) {
+  .alarm-table {
+    min-width: 760px;
+  }
+}
 </style>

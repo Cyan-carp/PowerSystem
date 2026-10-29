@@ -173,5 +173,54 @@
     "relative_path": "../../stages/11-desktop-client/README.md",
     "repository_url": "https://github.com/Cyan-carp/PowerSystem/blob/main/stages/11-desktop-client/README.md",
     "tracked": true
+  },
+  {
+    "workspace_path": "stages/04-frontend/deploy/frontend-release-backup.py",
+    "proxy": "stages-04-frontend-deploy-frontend-release-backup.py.md",
+    "relative_path": "../../stages/04-frontend/deploy/frontend-release-backup.py",
+    "repository_url": "https://github.com/Cyan-carp/PowerSystem/blob/main/stages/04-frontend/deploy/frontend-release-backup.py",
+    "tracked": true
+  },
+  {
+    "workspace_path": "stages/04-frontend/deploy/test_compatible_release.py",
+    "proxy": "stages-04-frontend-deploy-test_compatible_release.py.md",
+    "relative_path": "../../stages/04-frontend/deploy/test_compatible_release.py",
+    "repository_url": "https://github.com/Cyan-carp/PowerSystem/blob/main/stages/04-frontend/deploy/test_compatible_release.py",
+    "tracked": true
+  },
+  {
+    "workspace_path": ".github/workflows/release-checks.yml",
+    "proxy": "github-workflows-release-checks.yml.md",
+    "relative_path": "../../.github/workflows/release-checks.yml",
+    "repository_url": "https://github.com/Cyan-carp/PowerSystem/blob/main/.github/workflows/release-checks.yml",
+    "tracked": true
+  },
+  {
+    "workspace_path": "artifacts/workflow-efficiency-20261028-r1",
+    "proxy": "artifacts-workflow-efficiency-20261028-r1.md",
+    "relative_path": "../../artifacts/workflow-efficiency-20261028-r1",
+    "repository_url": null,
+    "tracked": false
+  },
+  {
+    "workspace_path": "stages/04-frontend/deploy/observe-telemetry.py",
+    "proxy": "stages-04-frontend-deploy-observe-telemetry.py.md",
+    "relative_path": "../../stages/04-frontend/deploy/observe-telemetry.py",
+    "repository_url": "https://github.com/Cyan-carp/PowerSystem/blob/main/stages/04-frontend/deploy/observe-telemetry.py",
+    "tracked": true
+  },
+  {
+    "workspace_path": "stages/04-frontend/deploy/test_observe_telemetry.py",
+    "proxy": "stages-04-frontend-deploy-test_observe_telemetry.py.md",
+    "relative_path": "../../stages/04-frontend/deploy/test_observe_telemetry.py",
+    "repository_url": "https://github.com/Cyan-carp/PowerSystem/blob/main/stages/04-frontend/deploy/test_observe_telemetry.py",
+    "tracked": true
+  },
+  {
+    "workspace_path": "artifacts/telemetry-repair-20261029-r1",
+    "proxy": "artifacts-telemetry-repair-20261029-r1.md",
+    "relative_path": "../../artifacts/telemetry-repair-20261029-r1",
+    "repository_url": null,
+    "tracked": false
   }
 ]

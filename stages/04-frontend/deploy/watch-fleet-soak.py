@@ -257,10 +257,10 @@ def main(argv=None):
     parser.add_argument("--base", default="http://127.0.0.1:18080")
     parser.add_argument("--password-file", type=Path,
                         default=Path("/etc/powersystem/demo-password"))
-    parser.add_argument("--duration", type=int, default=7200,
-                        help="total seconds, 1..%d (default 7200)" % MAX_DURATION)
-    parser.add_argument("--interval", type=int, default=60,
-                        help="seconds between rounds, 1..%d (default 60)" % MAX_INTERVAL)
+    parser.add_argument("--duration", type=int, default=300,
+                        help="total seconds, 1..%d (default 300)" % MAX_DURATION)
+    parser.add_argument("--interval", type=int, default=10,
+                        help="seconds between rounds, 1..%d (default 10)" % MAX_INTERVAL)
     parser.add_argument("--output-dir", type=Path, required=True,
                         help="new directory; must not exist")
     args = parser.parse_args(argv)

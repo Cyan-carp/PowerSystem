@@ -1,0 +1,34 @@
+name: release-tool-checks
+
+on:
+  push:
+    paths:
+      - "stages/04-frontend/deploy/**"
+      - "deploy/edge-server/独立云服务器部署/scripts/check-auth-wss.py"
+      - ".github/workflows/release-checks.yml"
+  pull_request:
+    paths:
+      - "stages/04-frontend/deploy/**"
+      - "deploy/edge-server/独立云服务器部署/scripts/check-auth-wss.py"
+      - ".github/workflows/release-checks.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  release-tools:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Check release admission and existing controller behavior
+        run: |
+          python -m unittest discover -s stages/04-frontend/deploy -p 'test_production_stack*.py'
+          python -m unittest discover -s stages/04-frontend/deploy -p 'test_compatible_release.py'
+          python -m unittest discover -s stages/04-frontend/deploy -p 'test_backup_upload_parallel.py'
+          python -m unittest discover -s stages/04-frontend/deploy -p 'test_telemetry*.py'
+          bash -n stages/04-frontend/deploy/backup.sh

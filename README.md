@@ -43,7 +43,7 @@ An integrated operations platform for renewable-energy assets — monitoring, al
 | 定期任务 | 日报、巡检等周期任务，带预演与交付位置；写动作须人工批准 |
 | 受控运维 | 重启采集、限功率等动作经独立安全模型审查后才执行，全程留审计 |
 | 桌面访问 | Windows 客户端复用网站业务，支持托盘显隐、系统通知、原生另存为和连接恢复；完全退出后须重新登录 |
-| 可追溯发布 | 每次上线有批次号、备份、隔离恢复与连续观察；回退路径写在同一处 |
+| 可追溯发布 | 按风险选择验证与备份，保留批次、镜像来源及回退/前滚依据；操作入口统一 |
 
 ## 技术架构
 
@@ -156,10 +156,11 @@ Vite 把 `/api` 与 `/ws` 代理到 `127.0.0.1:8080`。本地跨端口调试需�
 | 按阶段读源码说明（一至五） | [阶段一](stages/01-data-chain/README.md) · [阶段二](stages/02-backend/README.md) · [阶段三](stages/03-ai-prediction/README.md) · [阶段四](stages/04-frontend/README.md) · [阶段五](stages/05-feishu-notification/README.md) |
 | 按阶段读源码说明（六至十） | [阶段六](stages/06-security-recovery/README.md) · [阶段七](stages/07-agent/README.md) · [阶段八](stages/08-agent-rag/README.md) · [阶段九](stages/09-ops-agent/README.md) · [阶段十](stages/10-security-agent/README.md) |
 | 开发 Windows 桌面客户端（阶段十一） | [源码、构建与测试](stages/11-desktop-client/README.md) |
-| 查桌面版设计、验收与交接 | [第五版总索引](notes/01-项目调研规划与开发建设记录/第五版-Windows桌面客户端/00-索引·第五版-Windows桌面客户端.md) · [团队交付](notes/01-项目调研规划与开发建设记录/第五版-Windows桌面客户端/02-分阶段实施/03-S03联合验收与团队交付/02-V5-S03测试与交付.md) · [正式交接](notes/01-项目调研规划与开发建设记录/第五版-Windows桌面客户端/03-跨对话交接/V5-S03-阶段交接.md) |
+| 查桌面版设计、验收与交接 | [第五版总索引](notes/01-项目调研规划与开发建设记录/05-第五版-Windows桌面客户端/00-索引·第五版-Windows桌面客户端.md) · [团队交付](notes/01-项目调研规划与开发建设记录/05-第五版-Windows桌面客户端/02-分阶段实施/03-S03联合验收与团队交付/02-V5-S03测试与交付.md) · [正式交接](notes/01-项目调研规划与开发建设记录/05-第五版-Windows桌面客户端/03-跨对话交接/V5-S03-阶段交接.md) |
 | 部署到自己的服务器 | [部署说明](stages/04-frontend/deploy/README.md) · [上传服务器规范](notes/02-工程规范边界与验收治理/项目工程规范/05-上传服务器规范.md) |
+| 高效率开发、测试与发布 | [分级流程与本次优化记录](notes/04-系统部署发布备份与变更记录/部署与运维日志/05-发布工具链与文档治理/54-开发测试发布与备份流程提效.md) |
 | 查历史发布与恢复记录 | [部署与运维日志索引](notes/04-系统部署发布备份与变更记录/部署与运维日志/00-索引·部署与运维日志.md) |
-| 核对里程碑与待办 | [项目验收与收尾清单](notes/02-工程规范边界与验收治理/项目验收与收尾清单.md) |
+| 核对里程碑与待办 | [项目验收与收尾清单](notes/02-工程规范边界与验收治理/项目验收与收尾清单/00-索引·项目验收与收尾清单.md) |
 
 各阶段的验收结论、测试证据与遗留项写在该阶段笔记的「测试与交付」页，本 README 不再汇总里程碑表。
 
@@ -233,3 +234,5 @@ Requires Windows PowerShell 5.1+, Docker Desktop, Go 1.24+, Python 3.12 and Node
 All fleet data in this repository is synthetic and must not be used as a basis for real plant operations. Runtime status and enabled capabilities are maintained only in the linked current system status page. Source, configuration templates and notes are public; models, credentials, data volumes and evidence bundles are not. Start reading from the [current system status](notes/00-当前系统状态.md) and the [project directory guide](notes/00-项目目录导航.md).
 
 Desktop installers are distributed separately from the source repository. The internal Windows package is unsigned, has no automatic updates and requires the online platform; system notification delivery is best effort. Desktop source and development instructions are in [stage eleven](stages/11-desktop-client/README.md).
+
+遥测修复的发布、冻结退路与恢复验证边界见[遥测可靠性发布与前滚门禁](notes/04-系统部署发布备份与变更记录/部署与运维日志/05-发布工具链与文档治理/53-遥测可靠性修复发布与前滚门禁.md)；当前运行状态统一见[当前系统状态](notes/00-当前系统状态.md)。

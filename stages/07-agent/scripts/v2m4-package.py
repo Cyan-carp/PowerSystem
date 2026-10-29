@@ -15,7 +15,7 @@ def allowed_source(path):
         return False
     name=path.as_posix()
     return (name.startswith(('stages/07-agent/', 'stages/02-backend/internal/api/', 'stages/02-backend/scripts/',
-                             '第二版-智能体升级/', '第一版-平台主体/', 'notes/01-项目调研规划与开发建设记录/第二版-智能体升级/', 'notes/01-项目调研规划与开发建设记录/第一版-平台主体/'))
+                             '02-第二版-智能体升级/', '01-第一版-平台主体/', 'notes/01-项目调研规划与开发建设记录/02-第二版-智能体升级/', 'notes/01-项目调研规划与开发建设记录/01-第一版-平台主体/'))
             or path.suffix=='.md' and (len(path.parts)==1 or name.startswith(('notes/02-工程规范边界与验收治理/', 'notes/03-平台使用运维与二次开发手册/', 'notes/04-系统部署发布备份与变更记录/'))))
 
 

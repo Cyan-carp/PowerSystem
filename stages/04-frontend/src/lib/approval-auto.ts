@@ -1,5 +1,5 @@
 /**
- * 待审批动作的自动弹窗闸门。
+ * 待审批动作的自动弹窗闸门（迁自覆盖前的同名模块）。
  *
  * 审批弹窗必须在待批准动作出现时自己弹出来，而不是等人翻到折叠区再点按钮。
  * 但自动弹出需要两个约束，否则会变成骚扰：
@@ -25,13 +25,7 @@ export function releaseAutoApproval(key: string): void {
   if (owner === key) owner = ''
 }
 
-/** 只读视图，便于测试与排查；不暴露内部集合。 */
+/** 只读视图，便于排查；不暴露内部集合。 */
 export function autoApprovalState(): { owner: string; shown: string[] } {
   return { owner, shown: [...shown] }
-}
-
-/** 仅测试使用：重置闸门。 */
-export function resetAutoApproval(): void {
-  shown.clear()
-  owner = ''
 }

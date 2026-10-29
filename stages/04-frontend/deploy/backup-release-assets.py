@@ -28,8 +28,6 @@ def capture(output):
         raise ValueError('owned_backup_staging_required')
     state = ROOT / 'runtime/production-stack'
     pointer = json.loads((state / 'active.json').read_text())
-    if (state / 'pending.json').exists():
-        raise ValueError('unfinished_release_blocks_backup')
     release = state / 'releases' / pointer['release']
     manifest = json.loads((release / 'manifest.json').read_text())
     # Use the controller's canonical digest, also for historical manifest formats.
@@ -37,6 +35,11 @@ def capture(output):
     controller = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(controller)
     controller.accepted(release, pointer)
+    repair_evidence = None
+    if (state/'pending.json').exists():
+        proof_path, repair_evidence, _ = controller.telemetry_repair().backup_context(controller, v4_paused=True)
+        release = controller.release(repair_evidence['failed_candidate'])
+        manifest = controller.immutable(release)
     sources = ROOT / 'runtime/source-builds'
     spec = importlib.util.spec_from_file_location('backup_sources', ROOT / 'stages/04-frontend/deploy/source-build.py')
     helper = importlib.util.module_from_spec(spec)
@@ -71,13 +74,18 @@ def capture(output):
     if not all(re.fullmatch(r'[a-z_][a-z0-9_]*', name) for name in tables):
         raise ValueError('rag_backup_table_name_invalid')
     rag_counts = {name: int(subprocess.check_output(pg + ['SELECT count(*) FROM public.' + name])) for name in tables}
-    metadata = {'format': 'release-backup-assets/v1', 'release': pointer['release'],
-                'manifest_sha256': pointer['manifest_sha256'], 'images': manifest['images'],
+    metadata = {'format': 'release-backup-assets/v1', 'release': release.name,
+                'manifest_sha256': controller.digest(manifest), 'images': manifest['images'],
                 'frontend_image': {'image': manifest['images']['frontend'], 'file': image_path.name,
                                    'bytes': image_path.stat().st_size, 'sha256': digest(image_path)},
                 'source_builds': receipts, 'rag_table_counts': rag_counts,
                 'restore_activation_forbidden': True,
                 'scope': 'active frontend image and five verified application source/receipt bindings'}
+    if repair_evidence:
+        metadata.update(scope='frozen failed candidate actual images and sources; accepted pointer unchanged',
+            basis='frozen_failed_candidate',active_release=pointer['release'],
+            accepted_pointer=pointer, frozen_repair_sha256=controller.sha(proof_path),
+            failed_candidate=repair_evidence['failed_candidate'])
     (target / 'manifest.json').write_text(json.dumps(metadata, indent=2))
     for path in target.rglob('*'):
         path.chmod(0o700 if path.is_dir() else 0o600)

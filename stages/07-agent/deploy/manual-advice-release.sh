@@ -51,7 +51,7 @@ with tarfile.open(release/'approved.tar.gz') as package:
     members=package.getmembers()
     for member in members:
         path=pathlib.PurePosixPath(member.name); target=(root/member.name).resolve()
-        allowed=(member.name.startswith(('stages/07-agent/','stages/04-frontend/src/','notes/01-项目调研规划与开发建设记录/第二版-智能体升级/','notes/01-项目调研规划与开发建设记录/第一版-平台主体/06-测试数据与测试资产/'))
+        allowed=(member.name.startswith(('stages/07-agent/','stages/04-frontend/src/','notes/01-项目调研规划与开发建设记录/02-第二版-智能体升级/','notes/01-项目调研规划与开发建设记录/01-第一版-平台主体/06-测试数据与测试资产/'))
                  or path.suffix=='.md' and (len(path.parts)==1 or member.name.startswith(('notes/02-工程规范边界与验收治理/','notes/03-平台使用运维与二次开发手册/','notes/04-系统部署发布备份与变更记录/'))))
         if not allowed or path.is_absolute() or '..' in path.parts or not member.isfile() or not target.is_relative_to(root.resolve()) or any(part in ('.env','.git','.venv','private','runtime','artifacts','node_modules','__pycache__') for part in path.parts):
             raise ValueError('invalid release member')

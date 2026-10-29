@@ -871,6 +871,48 @@
       "type": "deployment-log-index",
       "from": "notes/04-系统部署发布备份与变更记录/部署与运维/00-索引·部署与运维记录.md",
       "to": "notes/04-系统部署发布备份与变更记录/部署与运维日志/00-索引·部署与运维日志.md"
+    },
+    {
+      "type": "governance-merge-20261029",
+      "from": "notes/02-工程规范边界与验收治理/项目工程规范.md",
+      "to": "notes/02-工程规范边界与验收治理/项目工程规范/00-索引·项目工程规范.md",
+      "deleted_on_owner_request": false
+    },
+    {
+      "type": "governance-merge-20261029",
+      "from": "notes/02-工程规范边界与验收治理/运行产物说明.md",
+      "to": "notes/02-工程规范边界与验收治理/运行产物说明/00-索引·运行产物说明.md",
+      "deleted_on_owner_request": false
+    },
+    {
+      "type": "governance-merge-20261029",
+      "from": "notes/02-工程规范边界与验收治理/项目验收与收尾清单.md",
+      "to": "notes/02-工程规范边界与验收治理/项目验收与收尾清单/00-索引·项目验收与收尾清单.md",
+      "deleted_on_owner_request": false
+    },
+    {
+      "type": "governance-merge-20261029",
+      "from": "notes/02-工程规范边界与验收治理/项目边界与协作红线.md",
+      "to": "notes/02-工程规范边界与验收治理/项目工程规范/07-能力数据与服务器边界.md",
+      "deleted_on_owner_request": false
+    },
+    {
+      "type": "governance-merge-20261029",
+      "from": "notes/02-工程规范边界与验收治理/仓库公开与服务器安全要求.md",
+      "to": "notes/02-工程规范边界与验收治理/项目工程规范/02-发布仓库与界面验收规范.md",
+      "deleted_on_owner_request": false
+    },
+    {
+      "type": "governance-merge-20261029",
+      "from": "notes/02-工程规范边界与验收治理/生产发布防回退与自动验收门禁规范.md",
+      "to": "notes/02-工程规范边界与验收治理/项目工程规范/08-发布工具与故障恢复说明.md",
+      "deleted_on_owner_request": false
+    },
+    {
+      "type": "governance-merge-20261029",
+      "from": "notes/02-工程规范边界与验收治理/项目验收核对记录-20261026.md",
+      "to": "notes/02-工程规范边界与验收治理/项目验收与收尾清单/04-后续版本与遥测专项验收.md",
+      "deleted_on_owner_request": true
     }
   ],
   "files": {
