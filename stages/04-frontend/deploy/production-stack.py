@@ -1575,7 +1575,8 @@ def verify_failed_backup_resume(a):
     timing = read(timing_path)
     require(receipt.get('archive') is None and not archive.exists() and
             timing.get('status') == 'failed' and timing.get('archive_bytes') == 0 and
-            not timing.get('uploads') and timing.get('failed_stage') in ('queues_snapshot', 'v4_rows', 'release_assets'),
+            not timing.get('uploads') and
+            any(span.get('name') == 'v4_pause' for span in timing.get('spans', [])),
             'failed_backup_resume_not_proven')
     # No container is changed. A failing gate leaves the old pointer untouched.
     accepted_gate = gate(path, [], states(rows))

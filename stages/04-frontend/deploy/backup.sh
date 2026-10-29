@@ -115,13 +115,16 @@ telemetry_resume() {
   # the next health interval after the gateway is back. The resume gate that follows
   # reads that same verdict, so wait for the real status to converge rather than
   # relaxing the gate. Bounded, and still fails when readiness never returns.
-  local deadline=$((SECONDS+90))
-  while [ -n "$(docker ps --filter health=unhealthy --format '{{.Names}}')" ]; do
+  local deadline=$((SECONDS+300)) unhealthy
+  while :; do
+    unhealthy=$(docker ps --format '{{.Names}} {{.Status}}' |
+                awk '/\(unhealthy\)|\(health: starting\)/ {print $1}' | tr '\n' ' ')
+    [ -z "$unhealthy" ] && break
     if [ "$SECONDS" -ge "$deadline" ]; then
-      echo 'Containers still unhealthy after telemetry resume' >&2
+      echo "Containers still unhealthy after telemetry resume: $unhealthy" >&2
       return 1
     fi
-    sleep 3
+    sleep 5
   done
 }
 v4_resume() {
