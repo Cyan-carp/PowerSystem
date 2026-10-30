@@ -48,6 +48,7 @@ func (s *Server) alarmMaintenanceGuard(c *gin.Context) {
 	}
 	path := c.Request.URL.Path
 	affected := strings.HasPrefix(path, "/api/v1/alarms") || strings.HasPrefix(path, "/api/v1/alarm-") ||
+		strings.HasPrefix(path, "/api/v1/demo-console/alarms") ||
 		strings.HasPrefix(path, "/api/v1/agent/model-probe") ||
 		strings.HasPrefix(path, "/api/v1/devices")
 	if !affected {

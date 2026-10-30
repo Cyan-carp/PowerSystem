@@ -1,0 +1,757 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>演示告警台 · 云边协同运维平台</title>
+<meta name="robots" content="noindex, nofollow">
+<style>
+  :root {
+    --brand: #2563eb;
+    --brand-soft: #eff4ff;
+    --bg: #f5f6f8;
+    --card: #ffffff;
+    --line: #e5e7eb;
+    --line-strong: #d1d5db;
+    --ink: #111827;
+    --ink-2: #374151;
+    --ink-3: #6b7280;
+    --ink-4: #9ca3af;
+    --red: #dc2626;
+    --red-soft: #fef2f2;
+    --amber: #d97706;
+    --amber-soft: #fffbeb;
+    --green: #059669;
+    --green-soft: #ecfdf5;
+    --sky: #0284c7;
+    --radius: 10px;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font: 14px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", "PingFang SC", sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  button, input { font-family: inherit; font-size: inherit; }
+  .num { font-variant-numeric: tabular-nums; }
+
+  /* ---------- 顶栏 ---------- */
+  .topbar {
+    display: flex; align-items: center; gap: 14px;
+    height: 56px; padding: 0 22px;
+    background: var(--card); border-bottom: 1px solid var(--line);
+    position: sticky; top: 0; z-index: 30;
+  }
+  .brand { display: flex; align-items: center; gap: 9px; font-weight: 600; letter-spacing: .2px; }
+  .brand svg { color: var(--brand); }
+  .brand small { font-weight: 400; color: var(--ink-3); font-size: 12px; padding-left: 4px; border-left: 1px solid var(--line-strong); margin-left: 4px; }
+  .topbar .grow { flex: 1; }
+  .who { color: var(--ink-3); font-size: 13px; }
+  .link-btn {
+    background: none; border: none; color: var(--ink-3); cursor: pointer; padding: 6px 8px; border-radius: 6px;
+  }
+  .link-btn:hover { background: #f3f4f6; color: var(--ink-2); }
+
+  /* ---------- 布局 ---------- */
+  .wrap { max-width: 1240px; margin: 0 auto; padding: 18px 22px 40px; display: grid; gap: 16px; grid-template-columns: 372px minmax(0, 1fr); align-items: start; }
+  @media (max-width: 980px) { .wrap { grid-template-columns: minmax(0, 1fr); } }
+
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); }
+  .card-head { display: flex; align-items: center; gap: 8px; padding: 13px 16px; border-bottom: 1px solid var(--line); }
+  .card-head h2 { margin: 0; font-size: 14px; font-weight: 600; }
+  .card-head .hint { color: var(--ink-4); font-size: 12px; }
+  .card-body { padding: 16px; }
+
+  .field { margin-bottom: 16px; }
+  .field:last-child { margin-bottom: 0; }
+  .label { display: block; font-size: 12px; color: var(--ink-3); margin-bottom: 6px; }
+  .input {
+    width: 100%; height: 38px; padding: 0 11px;
+    border: 1px solid var(--line-strong); border-radius: 8px; background: #fff; color: var(--ink);
+    outline: none; transition: border-color .15s, box-shadow .15s;
+  }
+  .input:focus { border-color: var(--brand); box-shadow: 0 0 0 3px rgba(37, 99, 235, .12); }
+
+  .seg { display: flex; gap: 6px; }
+  .seg button {
+    flex: 1; height: 36px; border: 1px solid var(--line-strong); background: #fff; color: var(--ink-2);
+    border-radius: 8px; cursor: pointer; transition: .15s;
+  }
+  .seg button:hover { border-color: var(--brand); color: var(--brand); }
+  .seg button.on { background: var(--brand-soft); border-color: var(--brand); color: var(--brand); font-weight: 600; }
+  .seg button.on[data-level="urgent"] { background: var(--red-soft); border-color: var(--red); color: var(--red); }
+  .seg button.on[data-level="major"] { background: var(--amber-soft); border-color: var(--amber); color: var(--amber); }
+
+  .btn {
+    height: 38px; padding: 0 16px; border-radius: 8px; border: 1px solid var(--line-strong);
+    background: #fff; color: var(--ink-2); cursor: pointer; transition: .15s;
+  }
+  .btn:hover:not(:disabled) { border-color: var(--ink-4); }
+  .btn:disabled { opacity: .5; cursor: not-allowed; }
+  .btn-primary { background: var(--brand); border-color: var(--brand); color: #fff; font-weight: 600; }
+  .btn-primary:hover:not(:disabled) { background: #1d4ed8; border-color: #1d4ed8; }
+  .btn-danger { border-color: var(--red); color: var(--red); }
+  .btn-danger:hover:not(:disabled) { background: var(--red-soft); }
+  .btn-block { width: 100%; }
+
+  /* ---------- 设备选择 ---------- */
+  .device-pick { position: relative; }
+  .device-list {
+    margin-top: 8px; max-height: 208px; overflow: auto;
+    border: 1px solid var(--line); border-radius: 8px; background: #fff;
+  }
+  .device-list:empty { display: none; }
+  .device-item {
+    display: flex; align-items: center; gap: 8px; padding: 8px 10px; cursor: pointer; border-bottom: 1px solid #f3f4f6;
+  }
+  .device-item:last-child { border-bottom: none; }
+  .device-item:hover { background: #f9fafb; }
+  .device-item.on { background: var(--brand-soft); }
+  .device-item b { font-weight: 600; font-size: 13px; }
+  .device-item span { color: var(--ink-3); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .device-item .tick { margin-left: auto; color: var(--brand); font-weight: 700; }
+  .empty-line { padding: 12px; color: var(--ink-4); font-size: 12px; text-align: center; }
+
+  .picked { display: flex; align-items: center; gap: 8px; margin-top: 8px; font-size: 12px; color: var(--ink-3); }
+  .picked b { color: var(--ink); font-size: 13px; }
+
+  /* ---------- 徽章 ---------- */
+  .chip {
+    display: inline-flex; align-items: center; gap: 5px; height: 22px; padding: 0 8px;
+    border-radius: 999px; font-size: 12px; font-weight: 600; border: 1px solid transparent; white-space: nowrap;
+  }
+  .chip-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+  .lv-urgent { color: var(--red); background: var(--red-soft); border-color: #fecaca; }
+  .lv-major { color: var(--amber); background: var(--amber-soft); border-color: #fde68a; }
+  .lv-minor { color: var(--sky); background: #f0f9ff; border-color: #bae6fd; }
+  .st-unhandled { color: var(--red); background: var(--red-soft); border-color: #fecaca; }
+  .st-acked { color: var(--brand); background: var(--brand-soft); border-color: #bfdbfe; }
+  .st-recovered { color: var(--green); background: var(--green-soft); border-color: #a7f3d0; }
+  .mode-fixed { color: var(--ink-3); background: #f3f4f6; border-color: var(--line); }
+  .mode-model { color: #7c3aed; background: #f5f3ff; border-color: #ddd6fe; }
+
+  /* ---------- 当前告警 ---------- */
+  .hero { display: flex; align-items: flex-start; gap: 12px; padding: 16px; border-bottom: 1px solid var(--line); }
+  .hero-main { min-width: 0; }
+  .hero-title { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .hero-title b { font-size: 17px; }
+  .hero-sub { color: var(--ink-3); font-size: 12px; margin-top: 4px; }
+  .hero-actions { margin-left: auto; display: flex; gap: 8px; flex-shrink: 0; }
+  @media (max-width: 640px) { .hero { flex-wrap: wrap; } .hero-actions { margin-left: 0; width: 100%; } }
+
+  .timeline { display: flex; gap: 0; padding: 14px 16px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+  .tl-step { display: flex; align-items: center; gap: 7px; padding-right: 18px; color: var(--ink-4); font-size: 12px; }
+  .tl-step + .tl-step::before { content: ""; width: 14px; height: 1px; background: var(--line-strong); margin-right: 4px; }
+  .tl-step.done { color: var(--ink-2); }
+  .tl-step .dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+  .tl-step.done .dot { background: var(--brand); }
+  .tl-step time { color: var(--ink-4); }
+
+  .insight { padding: 16px; }
+  .insight-head { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
+  .insight-head h3 { margin: 0; font-size: 13px; font-weight: 600; }
+  .insight-head .meta { color: var(--ink-3); font-size: 12px; }
+  .insight-note { color: var(--ink-3); font-size: 13px; padding: 10px 12px; background: #f9fafb; border-radius: 8px; }
+  .insight-note.warn { color: var(--amber); background: var(--amber-soft); }
+  .insight-note.err { color: var(--red); background: var(--red-soft); }
+  .block { margin-top: 14px; }
+  .block:first-child { margin-top: 0; }
+  .block h4 { margin: 0 0 6px; font-size: 12px; color: var(--ink-3); font-weight: 600; letter-spacing: .3px; }
+  .block ul { margin: 0; padding-left: 18px; color: var(--ink-2); }
+  .block li { margin: 3px 0; }
+  .facts { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 8px; }
+  .fact { background: #f9fafb; border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
+  .fact span { display: block; color: var(--ink-3); font-size: 11px; }
+  .fact b { font-weight: 600; font-size: 13px; }
+
+  /* ---------- 列表 ---------- */
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid #f3f4f6; font-size: 13px; }
+  th { color: var(--ink-3); font-weight: 500; font-size: 12px; background: #fafbfc; }
+  tbody tr { cursor: pointer; }
+  tbody tr:hover { background: #f9fafb; }
+  tbody tr.on { background: var(--brand-soft); }
+  tbody tr:last-child td { border-bottom: none; }
+
+  /* ---------- 登录 ---------- */
+  .gate {
+    position: fixed; inset: 0; z-index: 100; display: flex; align-items: center; justify-content: center;
+    background: rgba(17, 24, 39, .38); backdrop-filter: blur(2px); padding: 20px;
+  }
+  .gate[hidden] { display: none; }
+  .gate-card { width: 100%; max-width: 372px; background: #fff; border-radius: 14px; padding: 26px; box-shadow: 0 24px 48px -12px rgba(17, 24, 39, .3); }
+  .gate-card h1 { margin: 0 0 4px; font-size: 18px; }
+  .gate-card p { margin: 0 0 18px; color: var(--ink-3); font-size: 12.5px; line-height: 1.7; }
+  .gate-err { color: var(--red); font-size: 12.5px; min-height: 20px; margin-top: 8px; }
+
+  /* ---------- 提示 ---------- */
+  .toasts { position: fixed; right: 18px; bottom: 18px; display: flex; flex-direction: column; gap: 8px; z-index: 200; }
+  .toast {
+    min-width: 220px; max-width: 380px; padding: 10px 13px; border-radius: 9px; font-size: 13px;
+    background: #111827; color: #f9fafb; box-shadow: 0 10px 24px -8px rgba(0, 0, 0, .4);
+    animation: slide .18s ease-out;
+  }
+  .toast.ok { background: #064e3b; }
+  .toast.warn { background: #78350f; }
+  .toast.err { background: #7f1d1d; }
+  @keyframes slide { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+
+  .skeleton { color: var(--ink-4); font-size: 13px; padding: 26px 16px; text-align: center; }
+  .spin { display: inline-block; width: 13px; height: 13px; border: 2px solid rgba(255,255,255,.45); border-top-color: #fff; border-radius: 50%; animation: rot .7s linear infinite; vertical-align: -2px; margin-right: 6px; }
+  @keyframes rot { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="brand">
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 4.5 13.2H11L10 22l8.5-11.2H12L13 2z"/></svg>
+    演示告警台
+    <small>不影响真实告警</small>
+  </div>
+  <span class="grow"></span>
+  <span class="who" id="who"></span>
+  <button class="link-btn" id="logout" hidden>退出</button>
+</div>
+
+<div class="wrap">
+  <!-- 创建 -->
+  <section class="card">
+    <div class="card-head"><h2>新建演示告警</h2><span class="hint">同一设备只能有一条活动演示</span></div>
+    <div class="card-body">
+      <div class="field">
+        <label class="label" for="kw">设备（输入编码或名称搜索）</label>
+        <div class="device-pick">
+          <input class="input" id="kw" placeholder="如 INV-1001 或 逆变" autocomplete="off">
+          <div class="device-list" id="deviceList"></div>
+          <div class="picked" id="picked" hidden></div>
+        </div>
+      </div>
+
+      <div class="field">
+        <span class="label">级别</span>
+        <div class="seg" id="levelSeg">
+          <button data-level="minor">提示</button>
+          <button data-level="major" class="on">重要</button>
+          <button data-level="urgent">紧急</button>
+        </div>
+      </div>
+
+      <div class="field">
+        <span class="label">解读方式</span>
+        <div class="seg" id="analysisSeg">
+          <button data-analysis="fixed" class="on">固定解读 · 0 消耗</button>
+          <button data-analysis="model">真实模型 · 1 次调用</button>
+        </div>
+      </div>
+
+      <div class="field">
+        <span class="label">请求标识（重试时保持同一个，避免重复创建）</span>
+        <div style="display:flex;gap:8px">
+          <input class="input num" id="rid" readonly style="flex:1;background:#f9fafb">
+          <button class="btn" id="newRid" title="换一个标识">换</button>
+        </div>
+      </div>
+
+      <button class="btn btn-primary btn-block" id="create"><span id="createText">创建演示告警</span></button>
+    </div>
+  </section>
+
+  <!-- 状态 -->
+  <section class="card" id="currentCard">
+    <div class="card-head">
+      <h2>当前演示告警</h2>
+      <span class="hint" id="pollHint"></span>
+      <span style="flex:1"></span>
+      <button class="link-btn" id="refresh" title="立即刷新">刷新</button>
+    </div>
+    <div id="currentBody"><div class="skeleton">还没有演示告警。左侧选设备、点「创建演示告警」即可。</div></div>
+  </section>
+
+  <!-- 近期 -->
+  <section class="card" style="grid-column:1/-1">
+    <div class="card-head"><h2>最近的演示告警</h2><span class="hint">点一行可载入到上方</span></div>
+    <div style="overflow:auto">
+      <table>
+        <thead>
+          <tr><th>时间</th><th>设备</th><th>级别</th><th>解读</th><th>状态</th><th class="num">模型调用</th><th>操作人</th></tr>
+        </thead>
+        <tbody id="recentBody"><tr><td colspan="7" class="skeleton">加载中…</td></tr></tbody>
+      </table>
+    </div>
+  </section>
+</div>
+
+<!-- 登录 -->
+<div class="gate" id="gate">
+  <form class="gate-card" id="gateForm">
+    <h1>演示告警台</h1>
+    <p>输入演示台密码进入。这里只操作「演示告警」，不会改动任何真实告警与设备数据；创建会在平台上真实出现一条告警并推送通知，用于演示。</p>
+    <input class="input" id="pwd" type="password" placeholder="演示台密码" autocomplete="current-password" required>
+    <div class="gate-err" id="gateErr"></div>
+    <button class="btn btn-primary btn-block" type="submit" id="gateBtn">进入</button>
+  </form>
+</div>
+
+<div class="toasts" id="toasts"></div>
+
+<script>
+(function () {
+  'use strict';
+
+  var TOKEN_KEY = 'powersystem.demo.token';
+  var ACTOR_KEY = 'powersystem.demo.actor';
+  var LEVEL_CN = { minor: '提示', major: '重要', urgent: '紧急' };
+  var STATUS_CN = { unhandled: '待处理', acked: '已确认', recovered: '已恢复' };
+
+  var state = {
+    token: sessionStorage.getItem(TOKEN_KEY) || '',
+    actor: sessionStorage.getItem(ACTOR_KEY) || '',
+    devices: [],
+    device: null,
+    level: 'major',
+    analysis: 'fixed',
+    requestId: newId(),
+    current: null,
+    timer: null,
+    busy: false
+  };
+
+  var $ = function (id) { return document.getElementById(id); };
+
+  /* ---------------- 基础 ---------------- */
+
+  function newId() {
+    var buf = new Uint8Array(8);
+    (window.crypto || window.msCrypto).getRandomValues(buf);
+    return 'demo' + Array.prototype.map.call(buf, function (b) {
+      return ('0' + b.toString(16)).slice(-2);
+    }).join('');
+  }
+
+  function toast(kind, text) {
+    var el = document.createElement('div');
+    el.className = 'toast ' + (kind || '');
+    el.textContent = text;
+    $('toasts').appendChild(el);
+    setTimeout(function () { el.remove(); }, 3600);
+  }
+
+  function beijing(value) {
+    if (!value) return '—';
+    var d = new Date(value);
+    if (isNaN(d.getTime())) return '—';
+    return d.toLocaleString('zh-CN', {
+      timeZone: 'Asia/Shanghai', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false
+    });
+  }
+
+  function clock(value) {
+    if (!value) return '';
+    var d = new Date(value);
+    if (isNaN(d.getTime())) return '';
+    return d.toLocaleTimeString('zh-CN', { timeZone: 'Asia/Shanghai', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+  }
+
+  function esc(text) {
+    return String(text == null ? '' : text).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+  }
+
+  async function api(path, options) {
+    options = options || {};
+    var headers = Object.assign({ 'Content-Type': 'application/json' }, options.headers || {});
+    if (state.token) headers.Authorization = 'Bearer ' + state.token;
+    var res = await fetch('/api/v1/demo-console' + path, Object.assign({}, options, { headers: headers }));
+    var body = null;
+    try { body = await res.json(); } catch (e) { body = null; }
+    if (res.status === 401 && path !== '/login') {
+      signOut('密码会话已失效，请重新输入');
+      throw new Error('unauthorized');
+    }
+    if (!body || body.code !== 0) {
+      var err = new Error((body && body.message) || ('请求失败（HTTP ' + res.status + '）'));
+      err.status = res.status;
+      throw err;
+    }
+    return body.data;
+  }
+
+  /* ---------------- 登录 ---------------- */
+
+  function showGate(message) {
+    $('gate').hidden = false;
+    $('gateErr').textContent = message || '';
+    $('pwd').value = '';
+    $('pwd').focus();
+  }
+
+  function signOut(message) {
+    state.token = '';
+    state.actor = '';
+    sessionStorage.removeItem(TOKEN_KEY);
+    sessionStorage.removeItem(ACTOR_KEY);
+    $('who').textContent = '';
+    $('logout').hidden = true;
+    stopPolling();
+    if (message) showGate(message); else showGate('');
+  }
+
+  $('gateForm').addEventListener('submit', async function (event) {
+    event.preventDefault();
+    var pwd = $('pwd').value;
+    if (!pwd) return;
+    $('gateBtn').disabled = true;
+    $('gateBtn').textContent = '验证中…';
+    try {
+      var data = await api('/login', { method: 'POST', body: JSON.stringify({ password: pwd }) });
+      state.token = data.token;
+      state.actor = data.actor || '';
+      sessionStorage.setItem(TOKEN_KEY, state.token);
+      sessionStorage.setItem(ACTOR_KEY, state.actor);
+      $('gate').hidden = true;
+      $('gateErr').textContent = '';
+      boot();
+    } catch (e) {
+      $('gateErr').textContent = e.message === 'unauthorized' ? '密码不正确' : e.message;
+      $('pwd').select();
+    } finally {
+      $('gateBtn').disabled = false;
+      $('gateBtn').textContent = '进入';
+    }
+  });
+
+  $('logout').addEventListener('click', function () { signOut(''); });
+
+  /* ---------------- 设备选择 ---------------- */
+
+  var searchTimer = null;
+  $('kw').addEventListener('input', function () {
+    clearTimeout(searchTimer);
+    var value = $('kw').value.trim();
+    searchTimer = setTimeout(function () { loadDevices(value); }, 220);
+  });
+
+  async function loadDevices(keyword) {
+    try {
+      var data = await api('/devices?keyword=' + encodeURIComponent(keyword || ''));
+      state.devices = data.list || [];
+      renderDevices();
+    } catch (e) {
+      if (e.message !== 'unauthorized') toast('warn', e.message);
+    }
+  }
+
+  function renderDevices() {
+    var box = $('deviceList');
+    if (!state.devices.length) {
+      box.innerHTML = '<div class="empty-line">没有匹配的设备</div>';
+      return;
+    }
+    box.innerHTML = state.devices.map(function (d) {
+      var on = state.device && state.device.device_code === d.device_code;
+      return '<div class="device-item' + (on ? ' on' : '') + '" data-code="' + esc(d.device_code) + '">' +
+        '<b>' + esc(d.device_code) + '</b>' +
+        '<span>' + esc(d.name || '') + (d.station_code ? ' · ' + esc(d.station_code) : '') + '</span>' +
+        (on ? '<span class="tick">✓</span>' : '') +
+        '</div>';
+    }).join('');
+  }
+
+  $('deviceList').addEventListener('click', function (event) {
+    var item = event.target.closest('.device-item');
+    if (!item) return;
+    var code = item.getAttribute('data-code');
+    state.device = state.devices.filter(function (d) { return d.device_code === code; })[0] || null;
+    $('kw').value = code;
+    renderDevices();
+    $('deviceList').innerHTML = '';
+    $('picked').hidden = false;
+    $('picked').innerHTML = '已选：<b>' + esc(state.device.device_code) + '</b><span>' + esc(state.device.name || '') + '</span>';
+  });
+
+  /* ---------------- 创建 ---------------- */
+
+  $('levelSeg').addEventListener('click', function (event) {
+    var btn = event.target.closest('button');
+    if (!btn) return;
+    state.level = btn.getAttribute('data-level');
+    Array.prototype.forEach.call(this.children, function (b) { b.classList.toggle('on', b === btn); });
+  });
+
+  $('analysisSeg').addEventListener('click', function (event) {
+    var btn = event.target.closest('button');
+    if (!btn) return;
+    var next = btn.getAttribute('data-analysis');
+    if (next === 'model' && state.analysis !== 'model') {
+      var ok = window.confirm('真实模型解读会调用一次线上模型（deepseek-flash），约消耗 1 次额度。\n\n确定要用真实模型创建这条演示告警吗？');
+      if (!ok) return;
+    }
+    state.analysis = next;
+    Array.prototype.forEach.call(this.children, function (b) { b.classList.toggle('on', b === btn); });
+  });
+
+  $('newRid').addEventListener('click', function () {
+    state.requestId = newId();
+    $('rid').value = state.requestId;
+  });
+
+  $('create').addEventListener('click', async function () {
+    if (state.busy) return;
+    if (!state.device) { toast('warn', '先选一台设备'); $('kw').focus(); return; }
+    state.busy = true;
+    var btn = $('create');
+    btn.disabled = true;
+    $('createText').innerHTML = '<span class="spin"></span>创建中…';
+    try {
+      var view = await api('/alarms', {
+        method: 'POST',
+        body: JSON.stringify({
+          device_code: state.device.device_code,
+          level: state.level,
+          analysis: state.analysis,
+          request_id: state.requestId
+        })
+      });
+      toast('ok', view.changed ? '已创建告警 #' + view.id : '这条标识已建过，返回原告警 #' + view.id);
+      state.current = view;
+      state.requestId = newId();
+      $('rid').value = state.requestId;
+      renderCurrent();
+      loadRecent();
+      startPolling(true);
+    } catch (e) {
+      if (e.message !== 'unauthorized') toast('err', e.message);
+    } finally {
+      state.busy = false;
+      btn.disabled = false;
+      $('createText').textContent = '创建演示告警';
+    }
+  });
+
+  /* ---------------- 当前告警 ---------------- */
+
+  async function loadCurrent(id) {
+    try {
+      state.current = await api('/alarms/' + id);
+      renderCurrent();
+      startPolling();
+    } catch (e) {
+      if (e.message !== 'unauthorized') toast('warn', e.message);
+    }
+  }
+
+  function renderCurrent() {
+    var body = $('currentBody');
+    var v = state.current;
+    if (!v) {
+      body.innerHTML = '<div class="skeleton">还没有演示告警。左侧选设备、点「创建演示告警」即可。</div>';
+      $('pollHint').textContent = '';
+      return;
+    }
+    var ins = v.interpretation || {};
+    var pending = ins.task_status === 'pending' || ins.task_status === 'running';
+    var modeChip = v.mode === 'model'
+      ? '<span class="chip mode-model">真实模型</span>'
+      : '<span class="chip mode-fixed">固定解读</span>';
+
+    var html = '';
+    html += '<div class="hero">' +
+      '<div class="hero-main">' +
+        '<div class="hero-title"><b>' + esc(v.device_code) + '</b>' +
+          '<span class="chip lv-' + esc(v.level) + '">' + esc(LEVEL_CN[v.level] || v.level) + '</span>' +
+          '<span class="chip st-' + esc(v.status) + '"><i class="chip-dot"></i>' + esc(STATUS_CN[v.status] || v.status) + '</span>' +
+          modeChip +
+          '<span class="chip mode-fixed">#' + v.id + '</span>' +
+        '</div>' +
+        '<div class="hero-sub">' + esc(v.device_name || '') + (v.station_code ? ' · ' + esc(v.station_code) : '') +
+          ' · 创建于 ' + beijing(v.triggered_at) +
+          (v.request_id ? ' · 标识 <span class="num">' + esc(v.request_id) + '</span>' : '') +
+        '</div>' +
+      '</div>' +
+      '<div class="hero-actions">' +
+        (v.status === 'unhandled' ? '<button class="btn" id="actAck">确认</button>' : '') +
+        (v.status !== 'recovered' ? '<button class="btn btn-danger" id="actRecover">恢复</button>' : '') +
+        '<a class="btn" href="' + esc(v.detail_path || '/alarms') + '" target="_blank" rel="noopener" style="display:inline-flex;align-items:center;text-decoration:none">主站查看</a>' +
+      '</div>' +
+    '</div>';
+
+    html += '<div class="timeline">' +
+      '<div class="tl-step done"><span class="dot"></span>创建 <time>' + clock(v.triggered_at) + '</time></div>' +
+      '<div class="tl-step' + (v.acked_at ? ' done' : '') + '"><span class="dot"></span>确认 ' +
+        (v.acked_at ? '<time>' + clock(v.acked_at) + '</time> <span>' + esc(v.acked_by || '') + '</span>' : '<span>未确认</span>') + '</div>' +
+      '<div class="tl-step' + (v.recovered_at ? ' done' : '') + '"><span class="dot"></span>恢复 ' +
+        (v.recovered_at ? '<time>' + clock(v.recovered_at) + '</time>' : '<span>进行中</span>') + '</div>' +
+    '</div>';
+
+    html += '<div class="insight">';
+    html += '<div class="insight-head"><h3>告警解读</h3>' +
+      '<span class="chip mode-fixed">' + esc(ins.task_status_text || '无任务') + '</span>' +
+      '<span class="meta">模型调用 <b class="num">' + (ins.model_calls || 0) + '</b> 次' +
+      (ins.model ? ' · ' + esc(ins.model) : '') + '</span>' +
+      (pending ? '<span class="meta">生成中，页面自动刷新</span>' : '') +
+    '</div>';
+
+    if (ins.reason_text) {
+      html += '<div class="insight-note ' + (ins.task_status === 'degraded' ? 'err' : 'warn') + '">' + esc(ins.reason_text) + '</div>';
+    } else if (pending) {
+      html += '<div class="insight-note">解读任务已排队，模型出结果后这块会自动刷新（固定解读通常几秒内完成）。</div>';
+    } else if (ins.empty) {
+      html += '<div class="insight-note">这条告警还没有解读结果。若解读开关已关闭，属于预期。</div>';
+    }
+
+    if (ins.conclusion && ins.conclusion.length) {
+      html += '<div class="block"><h4>结论</h4><ul>' + ins.conclusion.map(function (t) {
+        return '<li>' + esc(t) + '</li>';
+      }).join('') + '</ul></div>';
+    }
+    if (ins.facts && ins.facts.length) {
+      html += '<div class="block"><h4>关键事实</h4><div class="facts">' + ins.facts.map(function (f) {
+        return '<div class="fact"><span>' + esc(f.label || f.id) + '</span><b>' + esc(f.value) + '</b></div>';
+      }).join('') + '</div></div>';
+    }
+    if (ins.suggestions && ins.suggestions.length) {
+      html += '<div class="block"><h4>建议</h4><ul>' + ins.suggestions.map(function (t) {
+        return '<li>' + esc(t) + '</li>';
+      }).join('') + '</ul></div>';
+    }
+    if (ins.limitations && ins.limitations.length) {
+      html += '<div class="block"><h4>局限说明</h4><ul>' + ins.limitations.map(function (t) {
+        return '<li>' + esc(t) + '</li>';
+      }).join('') + '</ul></div>';
+    }
+    html += '</div>';
+
+    body.innerHTML = html;
+    $('pollHint').textContent = pending ? '每 2 秒自动刷新' : '';
+
+    var ackBtn = $('actAck');
+    if (ackBtn) ackBtn.addEventListener('click', function () { act('ack'); });
+    var recBtn = $('actRecover');
+    if (recBtn) recBtn.addEventListener('click', function () { act('recover'); });
+  }
+
+  async function act(kind) {
+    var v = state.current;
+    if (!v) return;
+    if (kind === 'recover' && !window.confirm('恢复后这条演示告警会关闭，并向订阅者推送恢复事件。确定吗？')) return;
+    try {
+      var view = await api('/alarms/' + v.id + '/' + kind, { method: 'POST' });
+      state.current = view;
+      renderCurrent();
+      loadRecent();
+      toast('ok', kind === 'ack' ? '已确认' : '已恢复');
+      startPolling();
+    } catch (e) {
+      if (e.message !== 'unauthorized') toast('err', e.message);
+    }
+  }
+
+  /* ---------------- 轮询 ---------------- */
+
+  function startPolling(immediate) {
+    stopPolling();
+    var v = state.current;
+    if (!v) return;
+    var ins = v.interpretation || {};
+    var pending = ins.task_status === 'pending' || ins.task_status === 'running';
+    var every = pending ? 2000 : 8000;
+    if (immediate) { /* 调用方已经拿到最新一份，不用立刻再打一次 */ }
+    state.timer = setTimeout(function () { tick(); }, every);
+  }
+
+  function stopPolling() {
+    if (state.timer) { clearTimeout(state.timer); state.timer = null; }
+  }
+
+  async function tick() {
+    if (!state.token) return;
+    if (!state.current) { startPolling(); return; }
+    try {
+      state.current = await api('/alarms/' + state.current.id);
+      renderCurrent();
+      if (state.current.status === 'recovered' || (state.current.interpretation || {}).task_status === 'completed' || (state.current.interpretation || {}).task_status === 'degraded') {
+        loadRecent();
+      }
+    } catch (e) {
+      if (e.message === 'unauthorized') return;
+    }
+    startPolling();
+  }
+
+  $('refresh').addEventListener('click', function () {
+    if (state.current) loadCurrent(state.current.id); else { loadRecent(); toast('ok', '已刷新'); }
+  });
+
+  /* ---------------- 近期列表 ---------------- */
+
+  async function loadRecent() {
+    try {
+      var data = await api('/alarms?scope=recent');
+      renderRecent(data.list || []);
+    } catch (e) {
+      if (e.message === 'unauthorized') return;
+      $('recentBody').innerHTML = '<tr><td colspan="7" class="skeleton">' + esc(e.message) + '</td></tr>';
+    }
+  }
+
+  function renderRecent(rows) {
+    if (!rows.length) {
+      $('recentBody').innerHTML = '<tr><td colspan="7" class="skeleton">还没有演示告警记录</td></tr>';
+      return;
+    }
+    $('recentBody').innerHTML = rows.map(function (v) {
+      var on = state.current && state.current.id === v.id;
+      return '<tr data-id="' + v.id + '" class="' + (on ? 'on' : '') + '">' +
+        '<td class="num">' + beijing(v.triggered_at) + '</td>' +
+        '<td>' + esc(v.device_code) + '</td>' +
+        '<td><span class="chip lv-' + esc(v.level) + '">' + esc(LEVEL_CN[v.level] || v.level) + '</span></td>' +
+        '<td>' + (v.mode === 'model' ? '真实模型' : '固定') + '</td>' +
+        '<td><span class="chip st-' + esc(v.status) + '"><i class="chip-dot"></i>' + esc(STATUS_CN[v.status] || v.status) + '</span></td>' +
+        '<td class="num">' + (v.interpretation ? v.interpretation.model_calls : 0) + '</td>' +
+        '<td>' + esc(v.acked_by || '—') + '</td>' +
+        '</tr>';
+    }).join('');
+  }
+
+  $('recentBody').addEventListener('click', function (event) {
+    var tr = event.target.closest('tr[data-id]');
+    if (!tr) return;
+    loadCurrent(tr.getAttribute('data-id'));
+  });
+
+  /* ---------------- 启动 ---------------- */
+
+  async function boot() {
+    $('who').textContent = state.actor ? '操作账号 ' + state.actor : '';
+    $('logout').hidden = false;
+    $('rid').value = state.requestId;
+    await loadDevices('');
+    await loadRecent();
+    var active = null;
+    try {
+      var data = await api('/alarms?scope=active');
+      active = (data.list || [])[0] || null;
+    } catch (e) { /* 列表失败不影响创建 */ }
+    if (active) {
+      state.current = active;
+      renderCurrent();
+      startPolling();
+    } else {
+      renderCurrent();
+    }
+  }
+
+  if (state.token) {
+    boot();
+  } else {
+    showGate('');
+  }
+})();
+</script>
+</body>
+</html>

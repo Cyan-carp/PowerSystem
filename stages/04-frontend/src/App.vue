@@ -244,10 +244,11 @@ onBeforeUnmount(() => {
       </nav>
 
       <div class="rail-foot">
-        <RouterLink to="/assistant" class="rail-btn">
-          <Icon name="help" :size="20" />
-          <span class="rail-tip">使用说明</span>
-        </RouterLink>
+        <!-- 演示告警台是独立静态页，走整页跳转而不是路由，避免进 SPA 的历史栈 -->
+        <a href="/demo/" class="rail-btn" style="text-decoration: none" title="演示告警台">
+          <Icon name="bolt" :size="20" />
+          <span class="rail-tip">演示台</span>
+        </a>
       </div>
     </aside>
 
