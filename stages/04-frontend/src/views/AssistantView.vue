@@ -9,7 +9,7 @@
  *   用会话里存的 answered 文本 + 来源渲染，避免一次开十几条 SSE。
  * - 切会话/新建会话会让旧回调失效（generation 闸门），迟到的快照不会写进新会话。
  */
-import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import Drawer from '../components/Drawer.vue'
 import Icon from '../components/Icon.vue'
 import RunAnswer from '../components/RunAnswer.vue'
@@ -50,13 +50,22 @@ const listError = ref('')
 const draft = ref('')
 const busy = ref(false)
 const scroller = ref<HTMLElement | null>(null)
-const inputter = ref<HTMLInputElement | null>(null)
+const inputter = ref<HTMLTextAreaElement | null>(null)
 const recordsOpen = ref(false)
 
 /** 读章节抽屉：知识库来源点「阅读章节」后在这里展开全文 */
 const sourceDoc = ref<KnowledgeChapter | null>(null)
 const sourceLoading = ref(false)
 const sourceError = ref('')
+let sourceRequest: AbortController | null = null
+
+const closeSource = () => {
+  sourceRequest?.abort()
+  sourceRequest = null
+  sourceDoc.value = null
+  sourceLoading.value = false
+  sourceError.value = ''
+}
 
 const suggestions = [
   '哪个场站今天出力下降最明显？',
@@ -111,7 +120,7 @@ const newChat = () => {
   sessionTitle.value = '新会话'
   turns.value = []
   draft.value = ''
-  sourceDoc.value = null
+  closeSource()
   try {
     sessionStorage.removeItem(sessionKey())
   } catch {
@@ -390,6 +399,30 @@ const send = async () => {
   await submit(turns.value[turns.value.length - 1])
 }
 
+/** 输入框从 1 行长到 6 行（约 148px）后内部滚动；清空、回填、拼装都要重算 */
+const autosize = () => {
+  const el = inputter.value
+  if (!el) return
+  el.style.height = 'auto'
+  el.style.height = `${Math.min(el.scrollHeight, 148)}px`
+}
+
+/**
+ * Enter 发送、Shift+Enter 换行。
+ * 中文输入法选词时 Enter 属于组合输入（isComposing），一旦当成发送就会把半截
+ * 拼音发出去，所以组合态一律放行给输入法。
+ */
+const onEnter = (event: KeyboardEvent) => {
+  if (event.isComposing || event.shiftKey) return
+  event.preventDefault()
+  if (busy.value) return
+  void send()
+}
+
+watch(draft, () => {
+  void nextTick(autosize)
+})
+
 const stopRun = (turn: Turn) => {
   if (turn.runId) {
     subscriptions.get(turn.runId)?.abort()
@@ -431,16 +464,24 @@ const requestCancel = async (turn: Turn) => {
 /* ---------------- 来源阅读 ---------------- */
 
 const openSource = async (item: RAGSource) => {
+  sourceRequest?.abort()
+  const controller = new AbortController()
+  sourceRequest = controller
   sourceDoc.value = null
   sourceError.value = ''
   sourceLoading.value = true
   try {
-    sourceDoc.value = await api.knowledge(item.id)
+    const document = await api.ragKnowledge(item, controller.signal)
+    if (sourceRequest === controller) sourceDoc.value = document
   } catch (error) {
+    if (sourceRequest !== controller || controller.signal.aborted) return
     sourceError.value = `章节读取失败：${error instanceof Error ? error.message : String(error)}`
     toast('bad', sourceError.value)
   } finally {
-    sourceLoading.value = false
+    if (sourceRequest === controller) {
+      sourceRequest = null
+      sourceLoading.value = false
+    }
   }
 }
 
@@ -464,7 +505,10 @@ onMounted(async () => {
   await restore()
 })
 
-onBeforeUnmount(stopAll)
+onBeforeUnmount(() => {
+  stopAll()
+  closeSource()
+})
 </script>
 
 <template>
@@ -560,13 +604,13 @@ onBeforeUnmount(stopAll)
       <div class="composer">
         <label class="composer-field">
           <Icon name="assistant" :size="16" />
-          <input
+          <textarea
             ref="inputter"
             v-model="draft"
-            type="text"
+            rows="1"
             placeholder="问场站、设备或告警的情况…"
-            @keydown.enter="send"
-          />
+            @keydown.enter="onEnter"
+          ></textarea>
         </label>
         <button class="send-btn" :disabled="busy || !draft.trim()" title="发送" @click="send">
           <Icon name="send" :size="16" />
@@ -623,18 +667,8 @@ onBeforeUnmount(stopAll)
         </div>
       </section>
 
-      <!-- 空态已经在对话区给了示例问题，这里等聊起来再出现 -->
-      <section v-if="turns.length" class="card">
-        <div class="side-head"><h2>试试这样问</h2></div>
-        <div class="sugs">
-          <button v-for="item in suggestions" :key="item" class="sug" @click="useSuggestion(item)">
-            <span>{{ item }}</span>
-            <Icon name="arrowUpRight" :size="13" />
-          </button>
-        </div>
-      </section>
-
-      <section class="card">
+      <!-- 示例问题只在空态对话区出现；有消息后右栏不再重复一次 -->
+      <section class="card limits-card">
         <div class="side-head"><h2>能力边界</h2></div>
         <ul class="limits">
           <li><Icon name="lock" :size="15" /><span>受控动作须本人当场批准，批准只消费一次</span></li>
@@ -654,8 +688,8 @@ onBeforeUnmount(stopAll)
   <Drawer
     v-if="sourceDoc || sourceLoading"
     :title="sourceDoc?.heading || '正在读取章节'"
-    :sub="sourceDoc ? `${sourceDoc.document} · 版本 ${sourceDoc.version}` : 'GET /agent/knowledge/:id'"
-    @close="sourceDoc = null"
+    :sub="sourceDoc ? `${sourceDoc.document} · 版本 ${sourceDoc.version}` : '正在读取参考来源'"
+    @close="closeSource"
   >
     <p v-if="sourceLoading" class="loading">读取中…</p>
     <p v-else-if="sourceDoc" class="chapter">{{ sourceDoc.content }}</p>
@@ -980,7 +1014,7 @@ onBeforeUnmount(stopAll)
 
 .composer {
   display: flex;
-  align-items: center;
+  align-items: flex-end;
   gap: 10px;
   padding: 12px 16px 14px;
   border-top: 1px solid var(--line-soft);
@@ -989,15 +1023,19 @@ onBeforeUnmount(stopAll)
 .composer-field {
   flex: 1;
   min-width: 0;
-  height: 40px;
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 9px;
-  padding: 0 13px;
+  padding: 10px 13px;
   border-radius: var(--r-md);
   border: 1px solid var(--line-strong);
   background: #fff;
   color: var(--ink-3);
+}
+
+.composer-field svg {
+  flex: 0 0 auto;
+  margin-top: 2px;
 }
 
 .composer-field:focus-within {
@@ -1005,17 +1043,24 @@ onBeforeUnmount(stopAll)
   box-shadow: 0 0 0 3px var(--brand-soft);
 }
 
-.composer-field input {
+/* 多行输入：1 行起步，长到 6 行后内部滚动，不把对话区继续压扁 */
+.composer-field textarea {
   flex: 1;
   min-width: 0;
+  max-height: 148px;
   border: 0;
   outline: none;
   background: transparent;
+  font-family: inherit;
   font-size: 12.8px;
+  line-height: 1.55;
   color: var(--ink);
+  resize: none;
+  overflow-y: auto;
+  padding: 0;
 }
 
-.composer-field input::placeholder {
+.composer-field textarea::placeholder {
   color: var(--ink-placeholder);
 }
 
@@ -1041,11 +1086,15 @@ onBeforeUnmount(stopAll)
 
 /* ---------- 右栏 ---------- */
 
+/* 右栏与对话卡严格等高：多出来的长度只允许在会话列表内部滚动 */
 .side {
   display: flex;
   flex-direction: column;
   gap: 18px;
   min-width: 0;
+  height: calc(100vh - 186px);
+  min-height: 480px;
+  overflow: hidden;
 }
 
 .side-head {
@@ -1166,8 +1215,8 @@ onBeforeUnmount(stopAll)
 .session-card {
   display: flex;
   flex-direction: column;
-  max-height: calc(100vh - 300px);
-  min-height: 240px;
+  flex: 1 1 auto;
+  min-height: 160px;
 }
 
 .session-list {
@@ -1266,30 +1315,9 @@ onBeforeUnmount(stopAll)
   color: var(--ink-4);
 }
 
-.sugs {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding: 0 14px 16px;
-}
-
-.sug {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 8px 10px;
-  border-radius: var(--r-sm);
-  background: var(--card-soft);
-  border: 1px solid var(--line-soft);
-  font-size: 12px;
-  color: var(--ink-2);
-  text-align: left;
-}
-
-.sug:hover {
-  border-color: var(--brand-line);
-  color: var(--brand-deep);
+/* 能力边界常驻，不参与高度分配，只占自身内容高度 */
+.limits-card {
+  flex: 0 0 auto;
 }
 
 .limits {
@@ -1331,6 +1359,10 @@ onBeforeUnmount(stopAll)
   .chat-card {
     height: calc(100vh - 210px);
   }
+
+  .side {
+    height: calc(100vh - 210px);
+  }
 }
 
 @media (max-width: 900px) {
@@ -1342,8 +1374,17 @@ onBeforeUnmount(stopAll)
     height: calc(100vh - 250px);
   }
 
+  /* 单列堆叠：右栏回到自然高度，只给会话列表限高，避免把自己的内容裁掉 */
+  .side {
+    height: auto;
+    min-height: 0;
+    overflow: visible;
+  }
+
   .session-card {
+    flex: none;
     max-height: 320px;
+    min-height: 200px;
   }
 }
 </style>

@@ -1206,3 +1206,48 @@
     width: 100vw;
   }
 }
+
+/* ================= 备案页脚 ================= */
+
+/**
+ * 域名入口会在返回的 HTML 末尾注入 <footer class="icp-footer">：它带内联样式、又参与文档流，
+ * 高度 45px 叠在 100vh 的壳层下面，文档比视口高 45px，滚轮到底时整页跟着上移半格。
+ * 这里把它收编成一条 26px 的固定底栏，内容区由 data-icp 让出同样高度，文档高度回到视口高。
+ * 覆盖必须带 !important：内联样式优先级高于单条类选择器。
+ */
+.icp-footer {
+  position: fixed !important;
+  inset: auto 0 0 0 !important;
+  z-index: 35;
+  height: var(--icp-h) !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  display: flex !important;
+  align-items: center;
+  justify-content: center;
+  background: rgba(251, 252, 254, 0.94) !important;
+  border-top: 1px solid var(--line) !important;
+  font-size: 10.5px !important;
+  line-height: var(--icp-h) !important;
+  letter-spacing: 0.02em;
+  color: var(--ink-placeholder) !important;
+}
+
+.icp-footer a {
+  color: inherit !important;
+  text-decoration: none !important;
+  transition: color 0.16s ease;
+}
+
+.icp-footer a:hover {
+  color: var(--brand) !important;
+}
+
+/* 只在页面确实带备案页脚时收窄（IP 入口没有，不能平白少 26px） */
+html[data-icp] #app {
+  height: calc(100% - var(--icp-h));
+}
+
+html[data-icp] .app {
+  height: 100%;
+}

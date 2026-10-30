@@ -4,9 +4,10 @@ import { useRoute, useRouter } from 'vue-router'
 import Icon from '../components/Icon.vue'
 import StatusChip from '../components/StatusChip.vue'
 import { api } from '../lib/api'
-import type { AvailabilityItem, AvailabilityReport, Device, StationRow, TimelinessReport } from '../lib/api'
+import type { AvailabilityItem, AvailabilityReport, Device, ReportParams, StationRow, TimelinessReport } from '../lib/api'
 import { n, pct, stamp } from '../lib/format'
 import { toast } from '../lib/toast'
+import { useLatestRequest } from '../lib/useLatestRequest'
 
 const route = useRoute()
 const router = useRouter()
@@ -18,11 +19,16 @@ const tabs: { key: TabKey; label: string }[] = [
 ]
 
 const tab = ref<TabKey>('availability')
-const availability = ref<AvailabilityReport | null>(null)
-const timeliness = ref<TimelinessReport | null>(null)
-const stations = ref<StationRow[]>([])
-const loading = ref(true)
-const failed = ref('')
+const availabilityRequest = useLatestRequest<AvailabilityReport>()
+const timelinessRequest = useLatestRequest<TimelinessReport>()
+const stationRequest = useLatestRequest<StationRow[]>()
+const devicesRequest = useLatestRequest<Device[]>()
+const { data: availability } = availabilityRequest
+const { data: timeliness } = timelinessRequest
+const stations = computed(() => stationRequest.data.value ?? [])
+const loading = computed(() => tab.value === 'availability' ? availabilityRequest.pending.value : timelinessRequest.pending.value)
+const failed = computed(() => tab.value === 'availability' ? availabilityRequest.error.value : timelinessRequest.error.value)
+const reportParams = ref<ReportParams | null>(null)
 
 /* 报表窗口：前端按北京时间（+08:00）解释输入，与设备详情页保持一致，
    不能用浏览器本地时区，否则非 UTC+8 的机器上窗口会整体挪走。 */
@@ -30,7 +36,7 @@ const startText = ref('')
 const endText = ref('')
 const stationFilter = ref('')
 const deviceFilter = ref('')
-const deviceOptions = ref<{ id: number; code: string; name: string }[]>([])
+const deviceOptions = computed(() => (devicesRequest.data.value ?? []).map(item => ({ id: item.id, code: item.device_code, name: item.name })))
 const rangeError = ref('')
 
 const toLocalInput = (date: Date) => new Date(date.getTime() + 8 * 3_600_000).toISOString().slice(0, 16)
@@ -51,9 +57,7 @@ const rangeParams = () => {
 }
 
 const windowLabel = computed(() => {
-  const start = parseInput(startText.value)
-  const end = parseInput(endText.value)
-  return start && end ? `${stamp(start.toISOString())} 至 ${stamp(end.toISOString())}` : '未选择'
+  return reportParams.value ? `${stamp(reportParams.value.start)} 至 ${stamp(reportParams.value.end)}` : '未查询'
 })
 
 const deviceQuery = () => ({
@@ -62,18 +66,18 @@ const deviceQuery = () => ({
 })
 
 /** 设备下拉按当前场站过滤；台账不大，一次翻完并缓存 */
-const loadDevices = async () => {
-  try {
+const loadDevices = () => {
+  const stationCode = stationFilter.value || undefined
+  return devicesRequest.run(async (signal) => {
     const all: Device[] = []
     for (let page = 1; ; page += 1) {
-      const result = await api.devices({ page, pageSize: 100, stationCode: stationFilter.value || undefined })
+      signal.throwIfAborted()
+      const result = await api.devices({ page, pageSize: 100, stationCode })
       all.push(...result.list)
       if (all.length >= result.total || !result.list.length) break
     }
-    deviceOptions.value = all.map(item => ({ id: item.id, code: item.device_code, name: item.name }))
-  } catch {
-    deviceOptions.value = []
-  }
+    return all
+  })
 }
 
 const onStationChange = () => {
@@ -81,24 +85,17 @@ const onStationChange = () => {
   void loadDevices()
 }
 
-const load = async () => {
+const load = () => {
+  availabilityRequest.cancel()
+  timelinessRequest.cancel()
   const range = rangeParams()
-  if (!range) return
-  loading.value = true
-  try {
-    const [avail, timely, stationPayload] = await Promise.all([
-      api.availability({ ...range, ...deviceQuery() }),
-      api.timeliness({ ...range, ...deviceQuery() }),
-      api.stations(),
-    ])
-    availability.value = avail
-    timeliness.value = timely
-    stations.value = stationPayload.list
-    failed.value = ''
-  } catch (error) {
-    failed.value = String(error)
-  } finally {
-    loading.value = false
+  if (!range) { reportParams.value = null; return }
+  const params = { ...range, ...deviceQuery() }
+  reportParams.value = params
+  if (tab.value === 'availability') {
+    void availabilityRequest.run((signal) => api.availability(params, signal))
+  } else {
+    void timelinessRequest.run((signal) => api.timeliness(params, signal))
   }
 }
 onMounted(() => {
@@ -107,6 +104,7 @@ onMounted(() => {
   endText.value = toLocalInput(end)
   void load()
   void loadDevices()
+  void stationRequest.run(async () => (await api.stations()).list)
 })
 
 const applyQuery = () => {
@@ -118,7 +116,10 @@ watch(
   () => route.query,
   () => applyQuery(),
 )
-watch(tab, (value) => router.replace({ query: { tab: value } }))
+watch(tab, (value) => {
+  void router.replace({ query: { ...route.query, tab: value } })
+  load()
+})
 
 const stationName = computed(() => {
   const map = new Map<string, string>()
@@ -304,14 +305,12 @@ const localCsv = (kind: TabKey) => {
 
 /** 优先走后端 CSV（含设备行 + 场站汇总行 + 规则版本），失败才退回本地拼 */
 const exportCsv = async (kind: TabKey = tab.value) => {
-  if (exporting.value) return
-  const range = rangeParams()
-  if (!range) return
+  if (exporting.value || !reportParams.value) return
+  const params = { ...reportParams.value }
   exporting.value = kind
   try {
     await api.exportReport(kind === 'availability' ? 'availability' : 'alarm-timeliness', {
-      ...range,
-      ...deviceQuery(),
+      ...params,
     })
   } catch (error) {
     localCsv(kind)
@@ -331,7 +330,8 @@ const exportCsv = async (kind: TabKey = tab.value) => {
     </div>
   </div>
 
-  <div v-if="failed" class="error-box">报表未取到：{{ failed }}</div>
+  <div v-if="failed" class="error-box" role="alert">{{ tab === 'availability' ? '可用率' : '告警及时性' }}报表未取到：{{ failed }}。请刷新重试。</div>
+  <p v-else-if="loading" class="table-note" role="status">{{ tab === 'availability' ? '正在统计可用率，历史数据较多时需要一些时间；可切换查看告警及时性…' : '正在加载告警及时性…' }}</p>
 
   <section class="card filter-bar">
     <div class="filter-row">
@@ -351,9 +351,11 @@ const exportCsv = async (kind: TabKey = tab.value) => {
         <option value="">全部设备</option>
         <option v-for="item in deviceOptions" :key="item.id" :value="String(item.id)">{{ item.code }} · {{ item.name }}</option>
       </select>
-      <button class="btn btn-primary" :disabled="loading" @click="load">查询</button>
+      <button class="btn btn-primary" @click="load">查询</button>
     </div>
     <p v-if="rangeError" class="filter-error">{{ rangeError }}</p>
+    <p v-if="stationRequest.error.value" class="filter-error" role="alert">场站列表未取到，仍可查询全部场站。<button class="btn btn-sm" @click="stationRequest.run(async () => (await api.stations()).list)">重试场站列表</button></p>
+    <p v-if="devicesRequest.error.value" class="filter-error" role="alert">设备列表未取到，仍可按场站查询。<button class="btn btn-sm" @click="loadDevices">重试设备列表</button></p>
   </section>
 
   <div class="report-tabs">
@@ -362,10 +364,17 @@ const exportCsv = async (kind: TabKey = tab.value) => {
         {{ item.label }}
       </button>
     </div>
-    <span class="period">统计窗口 {{ windowLabel }} · 规则版本 {{ availability?.rule_version || timeliness?.rule_version || '—' }}</span>
+    <span class="period">统计窗口 {{ windowLabel }} · 规则版本 {{ (tab === 'availability' ? availability?.rule_version : timeliness?.rule_version) || '—' }}</span>
   </div>
 
-  <template v-if="tab === 'availability'">
+  <p v-if="tab === 'availability' && availability?.statistics_updated_at" class="table-note" role="status">
+    统计更新于 {{ stamp(availability.statistics_updated_at) }}
+    <template v-if="availability.aggregation_state === 'warming'"> · 历史汇总预热中，本次包含原始数据计算</template>
+    <template v-else-if="availability.aggregation_state === 'degraded'"> · 汇总暂不可用，本次使用原始数据计算</template>
+    <template v-else-if="availability.aggregation_state === 'ready'"> · 历史汇总与窗口边界补算，更新延迟不超过 1 分钟</template>
+  </p>
+
+  <template v-if="tab === 'availability' && availability">
     <section class="card strip">
       <div v-for="item in availabilityStrip" :key="item.key" class="strip-cell">
         <span class="strip-label"><i :style="{ background: item.color }"></i>{{ item.label }}</span>
@@ -533,7 +542,7 @@ const exportCsv = async (kind: TabKey = tab.value) => {
     </section>
   </template>
 
-  <template v-else>
+  <template v-else-if="tab === 'timeliness' && timeliness">
     <section class="card strip">
       <div v-for="item in timelinessStrip" :key="item.key" class="strip-cell">
         <span class="strip-label"><i :style="{ background: item.color }"></i>{{ item.label }}</span>
@@ -619,7 +628,7 @@ const exportCsv = async (kind: TabKey = tab.value) => {
   <details class="page-note">
     <summary>口径说明</summary>
     <p>
-      可用率 = 运行时长 ÷ 有数据时长；有数据时长 = 窗口时长 − 未知时长。故障时长计入不可用但不含人工停机。
+      可用率 =（运行时长 + 停机时长）÷ 有数据时长；有数据时长 = 窗口时长 − 未知时长。故障时长计入不可用，停机仍计为设备可用。
       设备表按设备自己的有效窗口算，场站表把下属设备的时长求和后再相除（不是逐台比率取平均）。
       覆盖率低于 90% 的设备标「数据不足」，比率照实计算但不建议与满覆盖设备直接比较。
       及时性只统计完成完整生命周期的告警，未确认/未恢复的单列，避免用未结束的事件拉高均值。
@@ -728,6 +737,7 @@ const exportCsv = async (kind: TabKey = tab.value) => {
   color: var(--ink-4);
 }
 
+/* 三张表统一左对齐：标题与数值同一起始线，纵向扫列不靠位数对齐 */
 .rp-table,
 .tm-table,
 .dv-table {

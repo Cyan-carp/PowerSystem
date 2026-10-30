@@ -460,6 +460,9 @@ export interface StationAvailabilityRow {
 }
 
 export interface AvailabilityReport {
+  statistics_updated_at?: string
+  aggregation_state?: 'raw' | 'warming' | 'ready' | 'degraded'
+  aggregation_lag_ms?: number
   rule_version: string
   computed_at: string
   start: string
@@ -626,13 +629,14 @@ export interface RAGSource {
   url: string
   chapter?: string
   version?: string
+  collection?: string
   page?: number | null
   published_at?: string | null
   collected_at: string
   summary?: string
 }
 
-/** GET /agent/knowledge/:id —— 知识库章节正文 */
+/** 知识库章节正文；智能助手来源通过 /agent/rag/sources/:id 读取。 */
 export interface KnowledgeChapter {
   id: string
   document: string
@@ -938,6 +942,20 @@ export const api = {
   session: (id: string) => get<{ session_id: string; turns: AgentTurn[] }>(`/agent/sessions/${encodeURIComponent(id)}`),
   deleteSession: (id: string) => del<{ deleted: boolean }>(`/agent/sessions/${encodeURIComponent(id)}`),
   knowledge: (id: string) => get<KnowledgeChapter>(`/agent/knowledge/${encodeURIComponent(id)}`),
+  ragKnowledge: (source: RAGSource, signal?: AbortSignal) => {
+    const path = `/agent/rag/sources/${encodeURIComponent(source.id)}`
+    let reference = new URLSearchParams()
+    try {
+      const url = new URL(source.url, 'https://powersystem.invalid')
+      if (url.pathname === `/api/v1${path}`) reference = url.searchParams
+    } catch {
+      /* 历史来源没有链接时，仍可按来源编号及已保存版本读取。 */
+    }
+    return get<KnowledgeChapter>(`${path}${query({
+      collection: source.collection || reference.get('collection'),
+      version: source.version || reference.get('version'),
+    })}`, signal)
+  },
 
   /* 实时通道 */
   ticket: () => post<{ ticket: string; expires_in: number }>('/ws-ticket'),

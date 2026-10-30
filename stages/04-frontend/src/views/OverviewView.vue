@@ -9,21 +9,28 @@ import StatusChip from '../components/StatusChip.vue'
 import { api } from '../lib/api'
 import type { Alarm, AvailabilityReport, Device, StationSummary, Summary } from '../lib/api'
 import { shell } from '../lib/store'
-import { n, pct } from '../lib/format'
+import { n, pct, stamp } from '../lib/format'
+import { useLatestRequest } from '../lib/useLatestRequest'
 
 const router = useRouter()
 
-const summary = ref<Summary | null>(null)
-const stations = ref<StationSummary[]>([])
-const availability = ref<AvailabilityReport | null>(null)
-const alarms = ref<Alarm[]>([])
-const series = ref<[number, number][]>([])
+const metrics = useLatestRequest<Summary>()
+const stationRequest = useLatestRequest<StationSummary[]>()
+const quality = useLatestRequest<AvailabilityReport>()
+const alarmRequest = useLatestRequest<Alarm[]>()
+const chart = useLatestRequest<{ points: [number, number][]; note: string }>()
+const { data: summary, pending: summaryLoading, error: summaryError } = metrics
+const { data: availability, pending: qualityLoading, error: qualityError } = quality
+const { pending: stationsLoading, error: stationsError } = stationRequest
+const { pending: alarmsLoading, error: alarmsError } = alarmRequest
+const { pending: seriesLoading, error: seriesError } = chart
+const stations = computed(() => stationRequest.data.value ?? [])
+const alarms = computed(() => alarmRequest.data.value ?? [])
+const series = computed(() => chart.data.value?.points ?? [])
+const seriesNote = computed(() => chart.data.value?.note ?? '')
 const sampled = ref<Device[]>([])
 const range = ref(24)
-const loading = ref(true)
-const busy = ref(false)
-const failed = ref('')
-const seriesNote = ref('')
+const busy = computed(() => summaryLoading.value || stationsLoading.value || qualityLoading.value || alarmsLoading.value || seriesLoading.value)
 
 const ranges = [
   { hours: 6, label: '近 6 小时' },
@@ -37,25 +44,25 @@ const ranges = [
  */
 const CHUNK_MS = 2 * 3_600_000
 
-const loadSeries = async () => {
-  seriesNote.value = ''
+const loadSeries = () => chart.run(async (signal) => {
+  const hours = range.value
   if (!sampled.value.length) {
     const payload = await api.devices({ pageSize: 3, scope: 'baseline' })
     sampled.value = payload.list
   }
+  signal.throwIfAborted()
   if (!sampled.value.length) {
-    series.value = []
-    return
+    return { points: [], note: '暂无基线站设备' }
   }
   const end = Date.now()
-  const start = end - range.value * 3_600_000
+  const start = end - hours * 3_600_000
   const maps = sampled.value.map(() => new Map<number, number>())
   const jobs: Promise<void>[] = []
   for (let from = start; from < end; from += CHUNK_MS) {
     const to = Math.min(end, from + CHUNK_MS)
     sampled.value.forEach((device, index) => {
       jobs.push(
-        api.history(device.id, 'power', new Date(from), new Date(to)).then((payload) => {
+        api.history(device.id, 'power', new Date(from), new Date(to), signal).then((payload) => {
           for (const [ts, value] of payload.points) maps[index].set(ts, value)
         }),
       )
@@ -63,54 +70,38 @@ const loadSeries = async () => {
   }
   const results = await Promise.allSettled(jobs)
   if (results.every((item) => item.status === 'rejected')) {
-    series.value = []
-    seriesNote.value = '基线站历史遥测暂不可用'
-    return
+    throw new Error('基线站历史遥测暂不可用，请稍后重试')
   }
   const axis = [...maps[0].keys()].sort((a, b) => a - b)
-  series.value = axis.map((ts) => [ts, Math.round(maps.reduce((sum, map) => sum + (map.get(ts) || 0), 0) * 10) / 10])
+  const points: [number, number][] = axis.map((ts) => [ts, Math.round(maps.reduce((sum, map) => sum + (map.get(ts) || 0), 0) * 10) / 10])
+  return { points, note: results.some((item) => item.status === 'rejected') ? '部分历史遥测未取到，当前曲线不完整' : '' }
+}, { keepData: true })
+
+const loadAll = () => {
+  void metrics.run(() => api.summary(), { keepData: true })
+  void stationRequest.run(async () => (await api.overview('all')).stations, { keepData: true })
+  void alarmRequest.run(async () => (await api.alarms({ pageSize: 100 })).list, { keepData: true })
+  void quality.run((signal) => api.availability({}, signal), { keepData: true })
+  void loadSeries()
 }
 
-const loadAll = async () => {
-  busy.value = true
-  try {
-    const [s, ov, a, avail] = await Promise.all([
-      api.summary(),
-      api.overview('all'),
-      api.alarms({ pageSize: 100 }),
-      api.availability(),
-    ])
-    summary.value = s
-    stations.value = ov.stations
-    alarms.value = a.list
-    availability.value = avail
+watch(summary, (s) => {
+  if (s) {
     shell.deviceTotal = s.device_total
     shell.onlineDevices = s.online
     shell.alarmsOpen = s.active_alarms
-    await loadSeries()
-    failed.value = ''
-  } catch (error) {
-    failed.value = String(error)
-  } finally {
-    loading.value = false
-    busy.value = false
-  }
-}
-
-watch(range, async () => {
-  try {
-    await loadSeries()
-  } catch (error) {
-    failed.value = String(error)
   }
 })
+
+watch(range, loadSeries)
 
 onMounted(loadAll)
 
 /* ---------------- 指标 ---------------- */
 
 const energy = computed(() => {
-  const value = summary.value?.today_energy_kwh ?? 0
+  const value = summary.value?.today_energy_kwh
+  if (value == null) return { value: '—', unit: 'kWh' }
   return value >= 10_000
     ? { value: n(value / 1000, 1), unit: 'MWh' }
     : { value: n(value, 0), unit: 'kWh' }
@@ -224,6 +215,7 @@ const alarmGroups = computed(() => {
 })
 
 const alarmTotal = computed(() => alarms.value.length)
+const alarmsLoaded = computed(() => alarmRequest.data.value !== null)
 
 /** 顶部按钮只带未处理数量，与跳转后的筛选条件一致。 */
 const unhandledCount = computed(() => alarms.value.filter((item) => item.status === 'unhandled').length)
@@ -233,7 +225,7 @@ const peak = computed(() => (series.value.length ? Math.max(...series.value.map(
 /* ---------------- 导出 ---------------- */
 
 const exportCsv = () => {
-  if (!series.value.length) return
+  if (seriesLoading.value || !series.value.length) return
   const header = 'ts,time,power_kw'
   const rows = series.value.map(([ts, value]) => `${ts},${new Date(ts).toISOString()},${value}`)
   const blob = new Blob([`\ufeff${[header, ...rows].join('\n')}`], { type: 'text/csv;charset=utf-8' })
@@ -249,7 +241,7 @@ const exportCsv = () => {
 <template>
   <div class="page-head">
     <div class="page-actions">
-      <button class="btn" :disabled="busy" @click="loadAll">
+      <button class="btn" @click="loadAll">
         <Icon name="refresh" :size="15" :class="{ spin: busy }" />刷新
       </button>
       <RouterLink class="btn btn-primary" to="/alarms?status=unhandled">
@@ -259,9 +251,8 @@ const exportCsv = () => {
     </div>
   </div>
 
-  <div v-if="failed" class="error-box">
-    数据未取到：{{ failed }}。请确认假后端已启动（<code>npm run mock</code>）。
-  </div>
+  <p v-if="summaryError" class="error-box" role="alert">总览指标未取到：{{ summaryError }}。请稍后刷新重试。</p>
+  <p v-else-if="summaryLoading" class="table-note" role="status">正在加载总览指标…</p>
 
   <div class="ov-grid">
     <div class="ov-main">
@@ -299,12 +290,14 @@ const exportCsv = () => {
           </div>
         </div>
         <div class="chart-body">
-          <PowerChart :points="series" :height="214" unit="kW" />
+          <p v-if="seriesLoading" class="table-note" role="status">{{ series.length ? '正在更新功率曲线，当前显示上次结果…' : '正在加载功率曲线…' }}</p>
+          <p v-if="seriesError" class="error-box" role="alert">{{ seriesError }}{{ series.length ? '，当前显示上次结果' : '' }}</p>
+          <PowerChart v-if="series.length || (!seriesLoading && !seriesError)" :points="series" :height="214" unit="kW" />
         </div>
         <div class="chart-foot">
           <span class="legend"><i></i>基线站有功功率</span>
           <span class="foot-note">
-            <span class="num">{{ seriesNote || `峰值 ${n(peak, 1)} kW · ${series.length} 个采样点` }}</span>
+            <span class="num">{{ seriesLoading ? '加载中' : seriesError ? '历史遥测未取到' : seriesNote || `峰值 ${n(peak, 1)} kW · ${series.length} 个采样点` }}</span>
             <span class="foot-sep">·</span>仅基线站 3 台，全站出力见上方指标卡
           </span>
         </div>
@@ -370,7 +363,7 @@ const exportCsv = () => {
                 </td>
               </tr>
               <tr v-if="!stationRows.length">
-                <td colspan="6" class="empty">暂无场站数据。</td>
+                <td colspan="6" class="empty" :role="stationsError ? 'alert' : 'status'">{{ stationsLoading ? '正在加载场站数据…' : stationsError ? `场站数据未取到：${stationsError}` : '暂无场站数据。' }}</td>
               </tr>
             </tbody>
           </table>
@@ -386,7 +379,9 @@ const exportCsv = () => {
           <h2>数据质量</h2>
           <CardMenu :payload="availability" filename="availability" to="/reports" to-label="查看统计报表" />
         </div>
-        <div class="donuts">
+        <p v-if="qualityLoading" class="table-note" role="status">正在统计近 7 天数据质量，其他区域可正常查看{{ availability ? '；下方暂显示上次结果' : '' }}…</p>
+        <p v-if="qualityError" class="error-box" role="alert">数据质量未取到：{{ qualityError }}。{{ availability ? '下方显示上次结果。' : '' }}请稍后刷新重试。</p>
+        <div v-if="availability" class="donuts">
           <DonutGauge :value="availabilityRate" tone="brand" label="平均可用率" note="近 7 天" />
           <DonutGauge
             :value="coverageRate"
@@ -395,6 +390,7 @@ const exportCsv = () => {
             note="近 7 天"
           />
         </div>
+        <p v-if="availability?.statistics_updated_at" class="table-note">统计更新于 {{ stamp(availability.statistics_updated_at) }}{{ availability.aggregation_state === 'warming' ? ' · 汇总预热中' : availability.aggregation_state === 'degraded' ? ' · 已回原始数据计算' : '' }}</p>
         <div v-if="accessNote" class="queue-note">
           <Icon name="inbox" :size="14" />
           <span>{{ accessNote }}</span>
@@ -406,7 +402,7 @@ const exportCsv = () => {
           <h2>设备状态</h2>
           <CardMenu :payload="summary" filename="device-summary" to="/devices" to-label="查看设备台账" />
         </div>
-        <div class="donuts">
+        <div v-if="summary" class="donuts">
           <DonutGauge
             :value="deviceRate"
             :tone="deviceRate >= 99 ? 'ok' : 'warn'"
@@ -422,6 +418,9 @@ const exportCsv = () => {
           <h2>告警构成</h2>
           <CardMenu :payload="alarmGroups" filename="alarm-groups" to="/alarms" to-label="查看全部告警" />
         </div>
+        <p v-if="alarmsLoading" class="table-note" role="status">正在加载告警…</p>
+        <p v-else-if="alarmsError" class="error-box" role="alert">告警未取到：{{ alarmsError }}</p>
+        <template v-if="alarmsLoaded">
         <div v-if="alarmTotal" class="share">
           <i
             v-for="group in alarmGroups.filter((item) => item.isLevel)"
@@ -445,6 +444,7 @@ const exportCsv = () => {
         <div class="side-foot">
           <StatusChip :tone="alarmTotal ? 'warn' : 'ok'" :label="alarmTotal ? `最近 ${alarmTotal} 条` : '暂无告警'" />
         </div>
+        </template>
       </section>
     </aside>
   </div>

@@ -1,12 +1,11 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, toRef } from 'vue'
 import Icon from '../components/Icon.vue'
 import Drawer from '../components/Drawer.vue'
 import RunAnswer from '../components/RunAnswer.vue'
 import StatusChip from '../components/StatusChip.vue'
 import { api } from '../lib/api'
 import type {
-  Device,
   RulePreviewInput,
   RulePreviewResult,
   Schedule,
@@ -20,6 +19,7 @@ import type { RunConnectionState, RunSnapshot } from '../lib/agent-runs'
 import { downloadArtifact, readArtifactJson } from '../lib/agent-artifacts'
 import { across, clock, METRIC_CN, METRIC_UNIT, n, stamp } from '../lib/format'
 import { askConfirm } from '../lib/toast'
+import { useDeviceChoices } from '../lib/useDeviceChoices'
 
 const list = ref<Schedule[]>([])
 const runs = ref<ScheduleRunBrief[]>([])
@@ -324,24 +324,7 @@ const defaultWindow = () => {
 }
 defaultWindow()
 
-const devices = ref<Device[]>([])
-const devicesLoading = ref(false)
-let devicesLoaded = false
-
-const loadDevices = async () => {
-  if (devicesLoaded || devicesLoading.value) return
-  devicesLoading.value = true
-  try {
-    const payload = await api.devices({ pageSize: 200 })
-    devices.value = payload.list
-    devicesLoaded = true
-    if (!previewForm.value.device_id && payload.list.length) previewForm.value.device_id = payload.list[0].id
-  } catch (error) {
-    previewError.value = `设备列表未取到：${String(error)}`
-  } finally {
-    devicesLoading.value = false
-  }
-}
+const { devices, loading: devicesLoading, error: devicesError, load: loadDevices } = useDeviceChoices(toRef(previewForm.value, 'device_id'))
 
 const togglePreview = () => {
   previewOpen.value = !previewOpen.value
@@ -647,7 +630,7 @@ onUnmounted(() => {
             <label class="form-row span-2">
               <span>设备</span>
               <select v-model.number="previewForm.device_id" class="field" :disabled="devicesLoading">
-                <option :value="0" disabled>{{ devicesLoading ? '读取设备…' : '请选择设备' }}</option>
+                <option :value="0" disabled>{{ devicesLoading ? '读取设备…' : devices.length ? '请选择设备' : devicesError ? '设备列表加载失败' : '暂无设备' }}</option>
                 <option v-for="item in devices" :key="item.id" :value="item.id">
                   {{ item.device_code }} · {{ item.name }}
                 </option>
@@ -700,8 +683,13 @@ onUnmounted(() => {
             </label>
           </div>
 
+          <p v-if="devicesError" class="preview-error" role="alert">
+            设备列表未取到：{{ devicesError }}
+            <button class="btn btn-sm" :disabled="devicesLoading" @click="loadDevices">重试设备列表</button>
+          </p>
+
           <div class="preview-actions">
-            <button class="btn btn-primary" :disabled="previewBusy" @click="submitPreview">
+            <button class="btn btn-primary" :disabled="previewBusy || devicesLoading || !!devicesError || !devices.length" @click="submitPreview">
               {{ previewBusy ? '预演中…' : '创建只读预演' }}
             </button>
             <button class="btn btn-sm" @click="previewWindow(24)">近 24 小时</button>

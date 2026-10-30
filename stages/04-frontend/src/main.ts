@@ -62,4 +62,10 @@ setUnauthorizedHandler(() => {
   void router.replace({ path: '/login', query: here === '/' ? {} : { redirect: here } })
 })
 
+/* 域名入口会在 HTML 末尾注入备案页脚；识别到才给根节点打标记，
+   布局据此让出 --icp-h，避免整页多出一条滚动（IP 入口无页脚，不受影响）。 */
+if (document.querySelector('.icp-footer')) {
+  document.documentElement.dataset.icp = '1'
+}
+
 createApp(App).use(router).mount('#app')

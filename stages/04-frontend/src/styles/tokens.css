@@ -67,6 +67,8 @@
   --rail-w: 64px;
   --top-h: 60px;
   --dock-w: 420px;
+  /* 域名入口注入的备案底栏高度（见 shell.css 末节与 main.ts 的 data-icp 探测） */
+  --icp-h: 26px;
 }
 
 * {
