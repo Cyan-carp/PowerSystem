@@ -492,16 +492,30 @@
     Array.prototype.forEach.call(this.children, function (b) { b.classList.toggle('on', b === btn); });
   });
 
+  /* 浏览器原生 confirm 会卡住整页（演示时还会弹系统框），改成按钮两步确认 */
+  var armed = {};
+  function restoreLabel(key) {
+    if (key === 'create') $('createText').textContent = state.analysis === 'model' ? '创建并调用模型（1 次额度）' : '创建演示告警';
+    if (key === 'recover') { var b = $('actRecover'); if (b) b.textContent = '恢复'; }
+  }
+  function arm(key, seconds, label) {
+    armed[key] = true;
+    if (armed[key + 'Timer']) clearTimeout(armed[key + 'Timer']);
+    armed[key + 'Timer'] = setTimeout(function () { armed[key] = false; restoreLabel(key); }, seconds * 1000);
+    return label;
+  }
+  function disarm(key) {
+    armed[key] = false;
+    if (armed[key + 'Timer']) { clearTimeout(armed[key + 'Timer']); armed[key + 'Timer'] = null; }
+  }
+
   $('analysisSeg').addEventListener('click', function (event) {
     var btn = event.target.closest('button');
     if (!btn) return;
-    var next = btn.getAttribute('data-analysis');
-    if (next === 'model' && state.analysis !== 'model') {
-      var ok = window.confirm('真实模型解读会调用一次线上模型（deepseek-flash），约消耗 1 次额度。\n\n确定要用真实模型创建这条演示告警吗？');
-      if (!ok) return;
-    }
-    state.analysis = next;
+    state.analysis = btn.getAttribute('data-analysis');
     Array.prototype.forEach.call(this.children, function (b) { b.classList.toggle('on', b === btn); });
+    disarm('create');
+    restoreLabel('create');
   });
 
   $('newRid').addEventListener('click', function () {
@@ -512,6 +526,11 @@
   $('create').addEventListener('click', async function () {
     if (state.busy) return;
     if (!state.device) { toast('warn', '先选一台设备'); $('kw').focus(); return; }
+    if (state.analysis === 'model' && !armed.create) {
+      $('createText').textContent = arm('create', 6, '确认消耗 1 次模型额度 · 再点一次');
+      return;
+    }
+    disarm('create');
     state.busy = true;
     var btn = $('create');
     btn.disabled = true;
@@ -538,7 +557,7 @@
     } finally {
       state.busy = false;
       btn.disabled = false;
-      $('createText').textContent = '创建演示告警';
+      $('createText').textContent = state.analysis === 'model' ? '创建并调用模型（1 次额度）' : '创建演示告警';
     }
   });
 
@@ -647,7 +666,13 @@
   async function act(kind) {
     var v = state.current;
     if (!v) return;
-    if (kind === 'recover' && !window.confirm('恢复后这条演示告警会关闭，并向订阅者推送恢复事件。确定吗？')) return;
+    if (kind === 'recover' && !armed.recover) {
+      var btn = $('actRecover');
+      if (btn) btn.textContent = '再点一次确认恢复';
+      arm('recover', 5, '');
+      return;
+    }
+    disarm('recover');
     try {
       var view = await api('/alarms/' + v.id + '/' + kind, { method: 'POST' });
       state.current = view;
