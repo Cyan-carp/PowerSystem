@@ -4,7 +4,7 @@ tags:
   - 工作区导航
 status: 现行
 scope: 跨版本
-updated: 2026-10-23
+updated: 2026-10-17
 workspace_path: "deploy/edge-server/独立云服务器部署/config/source-refresh-ram-policy.example.json"
 relative_path: "../../deploy/edge-server/独立云服务器部署/config/source-refresh-ram-policy.example.json"
 repository_url: "https://github.com/Cyan-carp/PowerSystem/blob/main/deploy/edge-server/%E7%8B%AC%E7%AB%8B%E4%BA%91%E6%9C%8D%E5%8A%A1%E5%99%A8%E9%83%A8%E7%BD%B2/config/source-refresh-ram-policy.example.json"

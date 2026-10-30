@@ -222,5 +222,47 @@
     "relative_path": "../../artifacts/telemetry-repair-20261029-r1",
     "repository_url": null,
     "tracked": false
+  },
+  {
+    "workspace_path": "AGENTS.md",
+    "proxy": "AGENTS.md",
+    "relative_path": "../../AGENTS.md",
+    "repository_url": "https://github.com/Cyan-carp/PowerSystem/blob/main/AGENTS.md",
+    "tracked": true
+  },
+  {
+    "workspace_path": "stages/04-frontend/PARITY-20261029.md",
+    "proxy": "stages-04-frontend-PARITY-20261029.md",
+    "relative_path": "../../stages/04-frontend/PARITY-20261029.md",
+    "repository_url": "https://github.com/Cyan-carp/PowerSystem/blob/main/stages/04-frontend/PARITY-20261029.md",
+    "tracked": true
+  },
+  {
+    "workspace_path": "stages/04-frontend/API-INVENTORY-20261029.md",
+    "proxy": "stages-04-frontend-API-INVENTORY-20261029.md",
+    "relative_path": "../../stages/04-frontend/API-INVENTORY-20261029.md",
+    "repository_url": "https://github.com/Cyan-carp/PowerSystem/blob/main/stages/04-frontend/API-INVENTORY-20261029.md",
+    "tracked": true
+  },
+  {
+    "workspace_path": "stages/04-frontend/DESIGN.md",
+    "proxy": "stages-04-frontend-DESIGN.md",
+    "relative_path": "../../stages/04-frontend/DESIGN.md",
+    "repository_url": "https://github.com/Cyan-carp/PowerSystem/blob/main/stages/04-frontend/DESIGN.md",
+    "tracked": true
+  },
+  {
+    "workspace_path": "stages/04-frontend/vitest.config.ts",
+    "proxy": "stages-04-frontend-vitest.config.ts.md",
+    "relative_path": "../../stages/04-frontend/vitest.config.ts",
+    "repository_url": "https://github.com/Cyan-carp/PowerSystem/blob/main/stages/04-frontend/vitest.config.ts",
+    "tracked": true
+  },
+  {
+    "workspace_path": "stages/04-frontend/dev/mock-server.mjs",
+    "proxy": "stages-04-frontend-dev-mock-server.mjs.md",
+    "relative_path": "../../stages/04-frontend/dev/mock-server.mjs",
+    "repository_url": null,
+    "tracked": false
   }
 ]

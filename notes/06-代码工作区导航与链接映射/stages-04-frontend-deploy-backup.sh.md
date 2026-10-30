@@ -4,7 +4,7 @@ tags:
   - 工作区导航
 status: 现行
 scope: 跨版本
-updated: 2026-10-23
+updated: 2026-10-29
 workspace_path: "stages/04-frontend/deploy/backup.sh"
 relative_path: "../../stages/04-frontend/deploy/backup.sh"
 repository_url: "https://github.com/Cyan-carp/PowerSystem/blob/main/stages/04-frontend/deploy/backup.sh"
