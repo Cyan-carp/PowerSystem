@@ -33,6 +33,27 @@ JSON追加`statistics_updated_at`、`aggregation_state`（raw/warming/ready/degr
 应用回退无需降017表结构。若回到不支持汇总失效标记的旧API，须先关闭汇总读取；以后重新启用新版前，令派生小时全部`generation=generation+1`并清空`swept_at`，完成重算/对照后再开启，不能直接沿用旧API运行期间未失效的小时。
 这是派生数据重建，不修改或回灌原始遥测；新发布仍按本页统一入口和本批恢复材料执行。
 
+### 重建 gateway 或 simulator 前必读（2026-10-30 实测）
+
+现行候选 `compose.json` 里 `gateway` 与 `simulator` 两行来自 `v4-business-schedule-20261026-r1` 模板，是旧值；现网实际运行的值更晚：
+
+| 服务 | 字段 | 候选编排 | 现网运行值 |
+| --- | --- | --- | --- |
+| gateway | `MQTT_CLIENT_PREFIX` | `powersystem-stage2-fresh-20261029-r1` | `powersystem-stage2-ackfix-20261030-r1` |
+| gateway | `STAGE2_DATA_DIR` | `/data/fresh-20261029-r1` | `/data/ackfix-20261030-r1` |
+| simulator | `command` | 无 `--window-mode` | 含 `--window-mode on` |
+
+`ui-align-20261030-r1` 与 `alarm-fixed-demo-20261030-r1` 两批都只重建 frontend/API，这两个容器没被碰过，所以当前没有实际影响。风险在以后：对候选编排执行不带 `--no-deps` 的 `up -d`，或下一批以它为 `--from-args` 再重建这两个服务，就会按旧值启动——网关前缀退回上一代、数据目录指错、模拟器窗口调度退化。
+
+重建前先取现网真值并显式覆盖：
+
+```bash
+docker inspect powersystem-stage4-gateway-1 --format '{{range .Config.Env}}{{println .}}{{end}}' | grep -E 'MQTT_CLIENT_PREFIX|STAGE2_DATA_DIR'
+docker inspect powersystem-stage4-simulator-1 --format '{{json .Config.Cmd}}'
+```
+
+另一处结构性缺口：手工激活的批次（`ui-align`、`alarm-fixed-demo`）`private/origin-args.json` 是单文件冻结编排形式，不满足控制器的「五份基础编排按序」检查，下一批 `prepare` 会报 `complete_ordered_stage4_7_8_9_stack_required`。遇到时用 `v4-business-schedule-20261026-r1` 的 16 文件链作 `--from-args` 即可，细节见 [[notes/04-系统部署发布备份与变更记录/部署与运维日志/05-发布工具链与文档治理/69-报表左对齐与直接发布]]。
+
 ### 步骤1 · 按影响完成开发验证与一次构建
 
 本地迭代只做受影响检查，不连接生产、不新建全备。按本页“完整源码快照与构建回执”使用source-build导出明确提交及已审增量，统一LF、验证完整来源并构建一次；构建完成的固定镜像直接进入prepare，不在publish重新build/pull。
