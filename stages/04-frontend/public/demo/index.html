@@ -436,6 +436,15 @@
     searchTimer = setTimeout(function () { loadDevices(value); }, 220);
   });
 
+  /* 刚进页面不要一上来就铺开整张设备表，点进输入框或开始搜索才展开 */
+  $('kw').addEventListener('focus', function () {
+    if (!$('deviceList').innerHTML && state.devices.length) renderDevices();
+  });
+
+  document.addEventListener('click', function (event) {
+    if (!event.target.closest('.device-pick')) $('deviceList').innerHTML = '';
+  });
+
   async function loadDevices(keyword) {
     try {
       var data = await api('/devices?keyword=' + encodeURIComponent(keyword || ''));
@@ -731,6 +740,7 @@
     $('logout').hidden = false;
     $('rid').value = state.requestId;
     await loadDevices('');
+    $('deviceList').innerHTML = '';
     await loadRecent();
     var active = null;
     try {
