@@ -54,6 +54,10 @@ docker inspect powersystem-stage4-simulator-1 --format '{{json .Config.Cmd}}'
 
 另一处结构性缺口：手工激活的批次（`ui-align`、`alarm-fixed-demo`）`private/origin-args.json` 是单文件冻结编排形式，不满足控制器的「五份基础编排按序」检查，下一批 `prepare` 会报 `complete_ordered_stage4_7_8_9_stack_required`。遇到时用 `v4-business-schedule-20261026-r1` 的 16 文件链作 `--from-args` 即可，细节见 [[notes/04-系统部署发布备份与变更记录/部署与运维日志/05-发布工具链与文档治理/69-报表左对齐与直接发布]]。
 
+`stages/04-frontend/deploy/fleet.compose.yaml` 还有一处：它写 `--fault-mode scheduled`，而现网模拟器实际跑 `--fault-mode off`（用上面的 inspect 可验）。`compose` 合并时后叠加的文件会整段替换 `command`，把它叠在完整编排末尾，模拟器就从「不造故障」切成「按计划造故障」，在生产上凭空生成设备告警。要造故障必须显式确认，不能顺手套用。
+
+版本差也要留意：仓库 HEAD 比现行生产多两个文件——`internal/ingest/telemetry_admission.go` 的 ACK 排序修复（拒绝路径改走批内统一 ACK，避免回调侧抢跑早于 SQLite 提交的消息）与本节的 `fleet.compose.yaml`。它们提交于 2026-10-30T12:02Z，晚于 `alarm-fixed-demo` 的 11:30Z 发布，现网 gateway 镜像仍是 `35f1996c`（06:58 启动），**没有**这处修复。所以从 HEAD 重建 gateway 属于功能变更而不是等价重建，重建后要重新做一轮遥测与告警短查。
+
 ### 步骤1 · 按影响完成开发验证与一次构建
 
 本地迭代只做受影响检查，不连接生产、不新建全备。按本页“完整源码快照与构建回执”使用source-build导出明确提交及已审增量，统一LF、验证完整来源并构建一次；构建完成的固定镜像直接进入prepare，不在publish重新build/pull。
