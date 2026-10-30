@@ -398,11 +398,11 @@ const exportCsv = async (kind: TabKey = tab.value) => {
           <thead>
             <tr>
               <th>场站</th>
-              <th class="r">设备</th>
-              <th class="r">运行台时</th>
-              <th class="r">停机台时</th>
-              <th class="r">故障台时</th>
-              <th class="r">未知台时</th>
+              <th>设备</th>
+              <th>运行台时</th>
+              <th>停机台时</th>
+              <th>故障台时</th>
+              <th>未知台时</th>
               <th>可用率</th>
             </tr>
           </thead>
@@ -414,11 +414,11 @@ const exportCsv = async (kind: TabKey = tab.value) => {
                   <span class="cell-note num">{{ row.station_code }} · 覆盖 {{ pct(coverageOf(row) * 100, 1) }}</span>
                 </div>
               </td>
-              <td class="r num">{{ row.device_count }}</td>
-              <td class="r num">{{ dh(row.running_ms) }}</td>
-              <td class="r num">{{ dh(row.stopped_ms) }}</td>
-              <td class="r num fault">{{ dh(row.fault_ms) }}</td>
-              <td class="r num muted">{{ dh(row.unknown_ms) }}</td>
+              <td class="num">{{ row.device_count }}</td>
+              <td class="num">{{ dh(row.running_ms) }}</td>
+              <td class="num">{{ dh(row.stopped_ms) }}</td>
+              <td class="num fault">{{ dh(row.fault_ms) }}</td>
+              <td class="num muted">{{ dh(row.unknown_ms) }}</td>
               <td>
                 <div class="avail-cell">
                   <span class="meter" :class="availOf(row) >= 0.98 ? 't-ok' : availOf(row) >= 0.9 ? '' : 't-bad'">
@@ -478,10 +478,10 @@ const exportCsv = async (kind: TabKey = tab.value) => {
             <tr>
               <th>设备</th>
               <th>可用率</th>
-              <th class="r">运行</th>
-              <th class="r">停机</th>
-              <th class="r">故障</th>
-              <th class="r">未知</th>
+              <th>运行</th>
+              <th>停机</th>
+              <th>故障</th>
+              <th>未知</th>
               <th>说明</th>
             </tr>
           </thead>
@@ -503,10 +503,10 @@ const exportCsv = async (kind: TabKey = tab.value) => {
                   <b class="num">{{ row.observed_availability == null ? '—' : pct(availOf(row) * 100, 2) }}</b>
                 </div>
               </td>
-              <td class="r num">{{ dur(row.running_ms) }}</td>
-              <td class="r num">{{ dur(row.stopped_ms) }}</td>
-              <td class="r num fault">{{ dur(row.fault_ms) }}</td>
-              <td class="r num muted">{{ dur(row.unknown_ms) }}</td>
+              <td class="num">{{ dur(row.running_ms) }}</td>
+              <td class="num">{{ dur(row.stopped_ms) }}</td>
+              <td class="num fault">{{ dur(row.fault_ms) }}</td>
+              <td class="num muted">{{ dur(row.unknown_ms) }}</td>
               <td>
                 <StatusChip v-if="row.insufficient_data" tone="idle" :dot="false" label="数据不足" />
                 <span v-else class="muted">有效</span>
@@ -565,10 +565,10 @@ const exportCsv = async (kind: TabKey = tab.value) => {
             <thead>
               <tr>
                 <th>指标</th>
-                <th class="c">有效样本数</th>
-                <th class="c">平均值</th>
-                <th class="c">中位数</th>
-                <th class="c">P90</th>
+                <th>有效样本数</th>
+                <th>平均值</th>
+                <th>中位数</th>
+                <th>P90</th>
               </tr>
             </thead>
             <tbody>
@@ -579,10 +579,10 @@ const exportCsv = async (kind: TabKey = tab.value) => {
                     <span class="cell-note">{{ row.note }}</span>
                   </div>
                 </td>
-                <td class="c num">{{ row.stat.count }}</td>
-                <td class="c num">{{ dur(row.stat.mean_ms) }}</td>
-                <td class="c num strong">{{ dur(row.stat.median_ms) }}</td>
-                <td class="c num">{{ dur(row.stat.p90_ms) }}</td>
+                <td class="num">{{ row.stat.count }}</td>
+                <td class="num">{{ dur(row.stat.mean_ms) }}</td>
+                <td class="num strong">{{ dur(row.stat.median_ms) }}</td>
+                <td class="num">{{ dur(row.stat.p90_ms) }}</td>
               </tr>
             </tbody>
           </table>
@@ -740,17 +740,6 @@ const exportCsv = async (kind: TabKey = tab.value) => {
   min-width: 840px;
 }
 
-.rp-table .r,
-.tm-table .r,
-.dv-table .r {
-  text-align: right;
-}
-
-/* 时长与计数居中：位数固定后竖排能对齐，右对齐反而让「—」和 00:00:00 错开 */
-.tm-table .c {
-  text-align: center;
-}
-
 .fault {
   color: var(--bad);
 }
@@ -780,7 +769,7 @@ const exportCsv = async (kind: TabKey = tab.value) => {
   font-size: 12.5px;
   color: var(--ink);
   min-width: 52px;
-  text-align: right;
+  text-align: left;
 }
 
 .tm-grid {
