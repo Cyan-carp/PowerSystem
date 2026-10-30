@@ -2,6 +2,7 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import Icon from '../components/Icon.vue'
+import Pager from '../components/Pager.vue'
 import StatusChip from '../components/StatusChip.vue'
 import { api } from '../lib/api'
 import type { AvailabilityItem, AvailabilityReport, Device, ReportParams, StationRow, TimelinessReport } from '../lib/api'
@@ -527,18 +528,14 @@ const exportCsv = async (kind: TabKey = tab.value) => {
           </tbody>
         </table>
       </div>
-      <div class="pager">
-        <button class="pager-btn" :disabled="devicePage <= 1" title="上一页" @click="devicePage -= 1">
-          <Icon name="chevronLeft" :size="15" />
-        </button>
-        <span class="pager-page num">{{ devicePage }}</span>
-        <span class="pager-total">/ {{ devicePages }}</span>
-        <button class="pager-btn" :disabled="devicePage >= devicePages" title="下一页" @click="devicePage += 1">
-          <Icon name="chevronRight" :size="15" />
-        </button>
-        <span class="grow"></span>
-        <span class="pager-total">每页 {{ devicePageSize }} 台 · 覆盖率低于 90% 记为数据不足</span>
-      </div>
+      <Pager
+        v-model:page="devicePage"
+        :total-pages="devicePages"
+        :total="deviceRows.length"
+        :page-size="devicePageSize"
+        unit="台"
+        :note="`每页 ${devicePageSize} 台 · 覆盖率低于 90% 记为数据不足`"
+      />
     </section>
   </template>
 

@@ -3,6 +3,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import Icon from '../components/Icon.vue'
 import Drawer from '../components/Drawer.vue'
+import Pager from '../components/Pager.vue'
 import StatusChip from '../components/StatusChip.vue'
 import { api } from '../lib/api'
 import type { Prediction, PredictionRow, StationRow } from '../lib/api'
@@ -298,18 +299,14 @@ watch(
         </table>
       </div>
 
-      <div class="pager">
-        <button class="pager-btn" :disabled="page <= 1" title="上一页" @click="page -= 1">
-          <Icon name="chevronLeft" :size="15" />
-        </button>
-        <span class="pager-page num">{{ page }}</span>
-        <span class="pager-total">/ {{ totalPages }}</span>
-        <button class="pager-btn" :disabled="page >= totalPages" title="下一页" @click="page += 1">
-          <Icon name="chevronRight" :size="15" />
-        </button>
-        <span class="grow"></span>
-        <span class="pager-total">竖线为阈值 {{ pct(threshold * 100, 0) }}</span>
-      </div>
+      <Pager
+        v-model:page="page"
+        :total-pages="totalPages"
+        :total="filtered.length"
+        :page-size="pageSize"
+        unit="台"
+        :note="`竖线为阈值 ${pct(threshold * 100, 0)}`"
+      />
     </section>
 
     <aside class="pd-side">

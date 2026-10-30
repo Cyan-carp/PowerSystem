@@ -3,6 +3,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 import Icon from '../components/Icon.vue'
 import Drawer from '../components/Drawer.vue'
+import Pager from '../components/Pager.vue'
 import StatusChip from '../components/StatusChip.vue'
 import { api, alarmWriteError } from '../lib/api'
 import type { AlarmStatistics } from '../lib/api'
@@ -491,20 +492,12 @@ const timeline = computed(() => {
       </table>
     </div>
 
-    <div class="pager">
-      <span class="pager-total">
-        显示 {{ filtered.length ? (page - 1) * pageSize + 1 : 0 }}–{{ Math.min(page * pageSize, filtered.length) }} / {{ filtered.length }} 条
-      </span>
-      <span class="grow"></span>
-      <button class="pager-btn" :disabled="page <= 1" title="上一页" @click="page -= 1">
-        <Icon name="chevronLeft" :size="15" />
-      </button>
-      <span class="pager-page num">{{ String(page).padStart(2, '0') }}</span>
-      <span class="pager-total">/ {{ String(totalPages).padStart(2, '0') }}</span>
-      <button class="pager-btn" :disabled="page >= totalPages" title="下一页" @click="page += 1">
-        <Icon name="chevronRight" :size="15" />
-      </button>
-    </div>
+    <Pager
+      v-model:page="page"
+      :total-pages="totalPages"
+      :total="filtered.length"
+      :page-size="pageSize"
+    />
   </section>
 
   <!-- 详情 -->

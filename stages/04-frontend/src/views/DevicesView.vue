@@ -2,6 +2,7 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import Icon from '../components/Icon.vue'
+import Pager from '../components/Pager.vue'
 import StatusChip from '../components/StatusChip.vue'
 import { api } from '../lib/api'
 import type { Device, HealthRow } from '../lib/api'
@@ -266,20 +267,13 @@ function scoreWidth(score: number | null | undefined) {
       </table>
     </div>
 
-    <div class="pager">
-      <span class="pager-total">
-        显示 {{ rows.length ? (page - 1) * pageSize + 1 : 0 }}–{{ Math.min(page * pageSize, rows.length) }} / {{ rows.length }} 台
-      </span>
-      <span class="grow"></span>
-      <button class="pager-btn" :disabled="page <= 1" title="上一页" @click="page -= 1">
-        <Icon name="chevronLeft" :size="15" />
-      </button>
-      <span class="pager-page num">{{ String(page).padStart(2, '0') }}</span>
-      <span class="pager-total">/ {{ String(totalPages).padStart(2, '0') }}</span>
-      <button class="pager-btn" :disabled="page >= totalPages" title="下一页" @click="page += 1">
-        <Icon name="chevronRight" :size="15" />
-      </button>
-    </div>
+    <Pager
+      v-model:page="page"
+      :total-pages="totalPages"
+      :total="rows.length"
+      :page-size="pageSize"
+      unit="台"
+    />
   </section>
 </template>
 

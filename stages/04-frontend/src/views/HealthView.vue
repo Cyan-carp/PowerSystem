@@ -3,6 +3,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import Icon from '../components/Icon.vue'
 import Drawer from '../components/Drawer.vue'
+import Pager from '../components/Pager.vue'
 import StatusChip from '../components/StatusChip.vue'
 import DonutGauge from '../components/DonutGauge.vue'
 import { api } from '../lib/api'
@@ -323,18 +324,14 @@ watch(
         </table>
       </div>
 
-      <div class="pager">
-        <button class="pager-btn" :disabled="page <= 1" title="上一页" @click="page -= 1">
-          <Icon name="chevronLeft" :size="15" />
-        </button>
-        <span class="pager-page num">{{ page }}</span>
-        <span class="pager-total">/ {{ totalPages }}</span>
-        <button class="pager-btn" :disabled="page >= totalPages" title="下一页" @click="page += 1">
-          <Icon name="chevronRight" :size="15" />
-        </button>
-        <span class="grow"></span>
-        <span class="pager-total">每页 {{ pageSize }} 台</span>
-      </div>
+      <Pager
+        v-model:page="page"
+        :total-pages="totalPages"
+        :total="rows.length"
+        :page-size="pageSize"
+        unit="台"
+        :note="`每页 ${pageSize} 台`"
+      />
     </section>
 
     <aside class="hl-side">
@@ -514,7 +511,17 @@ watch(
   display: grid;
   grid-template-columns: minmax(0, 1fr) 322px;
   gap: 16px;
-  align-items: start;
+  /* 左栏卡片拉到与右栏等高，底边压在同一条线上；分页条靠 margin-top:auto 沉底 */
+  align-items: stretch;
+}
+
+.hl-grid > section.card {
+  display: flex;
+  flex-direction: column;
+}
+
+.hl-grid > section.card > .pager {
+  margin-top: auto;
 }
 
 .hl-side {
