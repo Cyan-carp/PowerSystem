@@ -29,7 +29,10 @@ const STATE_LABEL: Record<StateKey, string> = {
 const stateFilter = ref<StateKey>('all')
 const keyword = ref('')
 const page = ref(1)
-const pageSize = 8
+/* 10 行不是随手取的：左卡片与右栏三张卡等高，8 行时表格下面空出约 123px，
+   正好两行的高度，加到 10 行后空隙收到 10px 左右，底边仍与右栏齐平。
+   再加行会把左栏顶高、反过来把右栏拉长，底部就多出一条白，所以停在 10。 */
+const pageSize = 10
 const selected = ref<HealthRow | null>(null)
 
 const load = async () => {
