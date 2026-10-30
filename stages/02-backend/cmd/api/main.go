@@ -27,7 +27,17 @@ func main() {
 	migrateOnly := flag.Bool("migrate-only", false, "apply database schema and seed demo devices, then exit")
 	migrationTimeout := flag.Duration("migration-timeout", 30*time.Second, "offline migrate-only budget (30s to 15m); never changes server startup budget")
 	createAdmin := flag.String("create-admin", "", "create an admin using a password from stdin (server-local operation)")
+	demoMode := flag.String("demo-alarm", "", "server-local manual demo: create, ack, recover, status")
+	demoRequest := flag.String("demo-request-id", "", "idempotency key for creating a manual demo")
+	demoDevice := flag.String("demo-device", "INV-1001", "existing demo device code")
+	demoLevel := flag.String("demo-level", "major", "manual demo level: minor, major, urgent")
+	demoID := flag.Int64("demo-alarm-id", 0, "manual demo alarm ID")
+	demoActor := flag.String("demo-actor", "", "existing admin/operator username for acknowledgement")
+	demoAnalysis := flag.String("demo-analysis", "model", "manual interpretation: fixed or model")
 	flag.Parse()
+	if *demoMode != "" && (*migrateOnly || *createAdmin != "") {
+		log.Fatal("demo_operation_must_not_be_combined_with_other_modes")
+	}
 	startupBudget, err := migrationStartupBudget(*migrateOnly, *migrationTimeout)
 	if err != nil {
 		log.Fatal(err)
@@ -53,6 +63,15 @@ func main() {
 		logger.Fatal("postgres", zap.Error(err))
 	}
 	pg = pg.WithContext(startup)
+	if *demoMode != "" {
+		if *demoMode == "create" && (!cfg.AgentInterpretEnabled || (*demoAnalysis == "model" && (!cfg.AgentEnabled || cfg.AgentInterpretProtocol != "v2"))) {
+			log.Fatal("manual_demo_requires_existing_v2_interpretation_configuration")
+		}
+		if err := runManualDemo(startup, cfg, pg, *demoMode, *demoRequest, *demoDevice, *demoLevel, *demoID, *demoActor, *demoAnalysis); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
 	for _, path := range store.MigrationPaths {
 		if err = store.Migrate(pg, path); err != nil {
 			logger.Fatal("migration", zap.Error(err))

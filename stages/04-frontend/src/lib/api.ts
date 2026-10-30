@@ -725,6 +725,8 @@ export interface InterpretationEvidence {
 
 /** v1/v2 共有的渲染落点；v2 另给 analysis_status / facts / hypotheses / analysis */
 export interface InterpretationResult {
+  interpretation_mode?: 'fixed' | 'model'
+  template_version?: string
   protocol_version?: number
   event_key?: string
   status?: InterpretationStatus

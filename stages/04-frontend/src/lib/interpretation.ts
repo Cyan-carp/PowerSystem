@@ -85,6 +85,7 @@ export interface InsightEvidenceRow {
 }
 
 export interface InsightView {
+  fixed: boolean
   state: InsightState
   /** 状态行上的一句话，说明现在是什么阶段、为什么没有结论 */
   note: string
@@ -105,6 +106,7 @@ export interface InsightView {
 }
 
 const empty: InsightView = {
+  fixed: false,
   state: 'missing',
   note: '后端还没有为这条告警生成解读',
   conclusion: [],
@@ -181,6 +183,7 @@ export function insightView(item: Interpretation | null | undefined): InsightVie
   const result = item.result || {}
   const base: InsightView = {
     ...empty,
+    fixed: result.interpretation_mode === 'fixed',
     state: 'pending',
     reason: item.reason || result.reason || '',
     protocol: Number(result.protocol_version || 0),
@@ -201,8 +204,8 @@ export function insightView(item: Interpretation | null | undefined): InsightVie
       state: 'pending',
       note:
         item.task_status === 'running'
-          ? '模型正在分析这条告警的证据，通常几秒内出结果'
-          : '已进入解读队列，等待模型处理',
+          ? '正在整理告警证据并生成解读'
+          : '已进入解读队列，等待处理',
     }
   }
 
@@ -213,7 +216,7 @@ export function insightView(item: Interpretation | null | undefined): InsightVie
     return {
       ...base,
       state: conclusion.length || suggestions.length ? 'ready' : 'degraded',
-      note: limitations.length ? '模型已给出结论，仍存在未解释的部分，见下方局限' : '模型基于事件证据给出结论',
+      note: base.fixed ? '固定规则解读 · 未调用模型API' : limitations.length ? '模型已给出结论，仍存在未解释的部分，见下方局限' : '模型基于事件证据给出结论',
       conclusion,
       suggestions,
       limitations,

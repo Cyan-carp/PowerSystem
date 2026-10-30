@@ -273,6 +273,9 @@ func (s *Server) buildEventEvidence(ctx context.Context, item interpretationTask
 		data := evidence[0].Data.(gin.H)
 		data["origin"] = "simulation_demo"
 		data["scenario_label"] = "定期人工核查演练，不代表实际物理故障"
+		if service.IsManualAPIDemo(alarm) {
+			data["scenario_label"] = "手动API解读演示，不代表真实设备故障"
+		}
 		if alarm.ScenarioID != nil {
 			data["scenario_id"] = *alarm.ScenarioID
 		}
@@ -405,6 +408,12 @@ func retryInterpretation(reason string, attempts int) bool {
 }
 
 func (s *Server) processInterpretation(ctx context.Context, item interpretationTask) {
+	if handled, err := s.processFixedInterpretation(ctx, item); err != nil {
+		s.log.Warn("fixed_interpretation_failed")
+		return
+	} else if handled {
+		return
+	}
 	if item.ProtocolVersion == 2 {
 		s.processInterpretationV2(ctx, item)
 		return

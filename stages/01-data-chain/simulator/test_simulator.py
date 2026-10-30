@@ -462,6 +462,19 @@ class WindowInjectionTests(unittest.TestCase):
                 self.assertFalse(active)
                 self.assertLessEqual(payload[scenario.metric], limits[scenario.metric])
 
+    def test_default_samples_obey_ingress_contract_at_every_window(self):
+        for scenario in WINDOW_SCENARIOS:
+            instant = self.stamp(scenario.hour, minute=5)
+            for config in self.configs:
+                raw, _ = make_sample(config.device_code, 100, int(instant.timestamp() * 1000),
+                                     2026, "safe-default", fault_mode="off", config=config)
+                payload = json.loads(raw)
+                self.assertLessEqual(payload["temperature"], 85)
+                self.assertLessEqual(payload["current"], 160.4)
+                self.assertLessEqual(payload["power"], 110)
+                calculated = math.sqrt(3) * payload["voltage"] * payload["current"] * .99 / 1000
+                self.assertAlmostEqual(payload["power"], calculated, delta=2)
+
     def test_fault_mode_does_not_gate_the_window(self):
         # Production runs with --fault-mode off; windows must still inject.
         for scenario in WINDOW_SCENARIOS:
@@ -480,15 +493,18 @@ class WindowInjectionTests(unittest.TestCase):
                     for metric, limit in limits.items():
                         self.assertLessEqual(payload[metric], limit)
 
-    def test_current_injection_keeps_power_and_voltage_untouched(self):
-        scenario = next(item for item in WINDOW_SCENARIOS if item.metric == "current")
-        config = self.by_code[self.target(scenario.station_code)]
-        instant = self.stamp(scenario.hour, minute=5)
-        payload, _ = self.sample(config, instant)
-        natural, _ = self.sample(config, instant, window_mode="off")
-        self.assertEqual(payload["power"], natural["power"])
-        self.assertEqual(payload["voltage"], natural["voltage"])
-        self.assertGreaterEqual(payload["current"], scenario.target)
+    def test_temperature_injection_keeps_electrical_identity(self):
+        for scenario in WINDOW_SCENARIOS:
+            if scenario.metric != "temperature":
+                continue
+            config = self.by_code[self.target(scenario.station_code)]
+            instant = self.stamp(scenario.hour, minute=5)
+            payload, _ = self.sample(config, instant)
+            natural, _ = self.sample(config, instant, window_mode="off")
+            for metric in ("power", "voltage", "current", "status"):
+                self.assertEqual(payload[metric], natural[metric])
+            self.assertGreaterEqual(payload["temperature"], scenario.target)
+            self.assertLessEqual(payload["temperature"], 85)
 
     def test_voltage_injection_recomputes_current(self):
         scenario = next(item for item in WINDOW_SCENARIOS if item.metric == "voltage")
@@ -498,15 +514,16 @@ class WindowInjectionTests(unittest.TestCase):
         calculated = math.sqrt(3) * payload["voltage"] * payload["current"] * 0.99 / 1000
         self.assertAlmostEqual(payload["power"], calculated, delta=0.002)
 
-    def test_baseline_power_injection_stays_inside_the_other_rules(self):
+    def test_baseline_temperature_injection_stays_inside_the_other_rules(self):
         scenario = next(item for item in WINDOW_SCENARIOS if item.station_code == "ST-01")
         config = self.by_code[self.target("ST-01")]
         payload, active = self.sample(config, self.stamp(scenario.hour, minute=5))
         self.assertFalse(active)
-        self.assertGreaterEqual(payload["power"], scenario.target)
+        self.assertGreaterEqual(payload["temperature"], scenario.target)
         self.assertEqual(payload["status"], 1)
-        self.assertLess(payload["current"], 180)
-        self.assertLess(payload["temperature"], 80)
+        self.assertLessEqual(payload["current"], 160.4)
+        self.assertLessEqual(payload["power"], 110)
+        self.assertLessEqual(payload["temperature"], 85)
         calculated = math.sqrt(3) * payload["voltage"] * payload["current"] * 0.99 / 1000
         self.assertAlmostEqual(payload["power"], calculated, delta=0.002)
 
@@ -521,8 +538,8 @@ class WindowInjectionTests(unittest.TestCase):
                 payload, _ = self.sample(config, instant, seq=minute)
                 injecting = config.device_code == target and 17 * 60 <= minute < 17 * 60 + WINDOW_MINUTES
                 for metric, limit in limits.items():
-                    if injecting and metric == "power":
-                        self.assertGreaterEqual(payload["power"], 110)
+                    if injecting and metric == "temperature":
+                        self.assertGreater(payload["temperature"], 80)
                     else:
                         self.assertLessEqual(payload[metric], limit, f"{config.device_code} {metric} at {instant}")
 

@@ -11,6 +11,28 @@ tags:
 
 ## 分级开发与普通兼容发布
 
+### 可用率小时汇总的本机管理
+
+本节命令仅适用于包含017迁移与可用率汇总代码的API，实际启用状态仍见唯一状态页。
+`-availability-rollup`只管理派生统计，不运行HTTP服务、MQTT订阅、模型或告警处理；不与`-migrate-only`或`-create-admin`混用。
+新迁移默认后台计算开启、报表读取关闭；完成固定窗口原始结果对照与性能短查后才启用读取。
+
+```bash
+api_id=$(docker ps -q --filter label=com.docker.compose.project=powersystem-stage4 --filter label=com.docker.compose.service=api)
+docker exec "$api_id" /app/server -availability-rollup status
+docker exec "$api_id" /app/server -availability-rollup step
+docker exec "$api_id" /app/server -availability-rollup enable
+docker exec "$api_id" /app/server -availability-rollup disable
+```
+
+`step`最多运行2分钟且与API后台任务共用数据库互斥锁；未获得锁即退出，不额外增加并行读取。
+`disable`仅停止报表读取汇总，恢复原始统计路径，后台可继续预热。控制表`worker_enabled`由本人本机维护，未提供HTTP写入口。
+JSON追加`statistics_updated_at`、`aggregation_state`（raw/warming/ready/degraded）、`aggregation_lag_ms`；CSV追加对应的`X-Statistics-Updated-At`、`X-Aggregation-State`、`X-Aggregation-Lag-Ms`响应头。
+缺桶、脏桶、未完成预热或心跳超过60秒均回原始计算；原始读取失败仍返回503，不返回部分成功。
+
+应用回退无需降017表结构。若回到不支持汇总失效标记的旧API，须先关闭汇总读取；以后重新启用新版前，令派生小时全部`generation=generation+1`并清空`swept_at`，完成重算/对照后再开启，不能直接沿用旧API运行期间未失效的小时。
+这是派生数据重建，不修改或回灌原始遥测；新发布仍按本页统一入口和本批恢复材料执行。
+
 ### 步骤1 · 按影响完成开发验证与一次构建
 
 本地迭代只做受影响检查，不连接生产、不新建全备。按本页“完整源码快照与构建回执”使用source-build导出明确提交及已审增量，统一LF、验证完整来源并构建一次；构建完成的固定镜像直接进入prepare，不在publish重新build/pull。
@@ -620,3 +642,24 @@ python3 /opt/powersystem/stages/04-frontend/deploy/production-stack.py publish-t
 ```
 
 新全备使用原标准入口；pending仅在该严格绑定场景下可备份。API/GW保持停止、维护true不变，RAG/Ops仍按原冻结停复协议。备份标明实际失败候选的应用镜像/来源与未变active，不自动激活；任一身份/令牌漂移即拒绝。新全备双端成功、来源/预检/排空及原完整HTTPS/WSS通过后才激活r4并清pending；失败继续停止新写者、保留两次事务及现场。完整恢复演练缺口仅按本轮本人已选延后，不外推后续豁免。
+
+### 常规固定解读与服务器手动演示
+
+自动告警解读默认使用本机固定模板，普通每日五时槽不调用模型；原官方v2模型配置、证据校验与每任务最多两次预算保留。明确的手动model演示才进入该通道；旧已完成结果不重写。功能及业务边界见[补充业务05](../../../notes/01-项目调研规划与开发建设记录/补充业务/05-告警固定解读与手动演示/01-告警固定解读与手动演示.md)，实际部署只见唯一状态页。
+
+以下命令在已登记业务VM执行，脚本动态核对active与实际API，再调用运行容器内本机命令；不在PVE宿主或电脑直接执行。创建会产生明确标记的演示告警、正常通知与解读任务。
+
+```bash
+# 默认：真正调用保留的模型API，返回alarm_id、request_id与详情路径。
+python3 /opt/powersystem/runtime/production-stack/demo-alarm.py create --device INV-1001 --level major
+
+# 零模型演示：通过相同业务和推送通道，便于先验证展示。
+python3 /opt/powersystem/runtime/production-stack/demo-alarm.py create --device INV-1001 --analysis fixed
+
+# 将ALARM_ID设为上述输出的编号；ACTOR为自己现有的admin/operator用户名。
+python3 /opt/powersystem/runtime/production-stack/demo-alarm.py status --alarm-id "$ALARM_ID"
+python3 /opt/powersystem/runtime/production-stack/demo-alarm.py set-state --alarm-id "$ALARM_ID" --state acked --actor "$ACTOR"
+python3 /opt/powersystem/runtime/production-stack/demo-alarm.py set-state --alarm-id "$ALARM_ID" --state recovered
+```
+
+同一设备只能有一个活动演示；先恢复旧演示再重新创建。`unhandled`由新建触发：也可用`set-state --state unhandled --device INV-1001`（不带alarm-id）；不擦除旧确认/恢复审计。新演示使用新request-id，断线/未知执行结果重试应加`--request-id`并沿用首次打印的键，防止重复创建/重复模型消费。`status`只读实际任务状态/model_calls/result，不追加模型调用；确认/恢复不重新分析。演示不占每日五次限额，不改遥测、规则或原日程。外部通知来自原业务outbox，网页推送由运行API核对已提交记录后发出；客户端断线仍需按实际状态刷新，不能把只改数据库当作通道验证。

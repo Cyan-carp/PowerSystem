@@ -4,6 +4,7 @@ import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router'
 import Icon from './components/Icon.vue'
 import AlarmInsight from './components/AlarmInsight.vue'
 import ToastHost from './components/ToastHost.vue'
+import AlarmNoticeHost from './components/AlarmNoticeHost.vue'
 import { api } from './lib/api'
 import { fetchAlarmViews } from './lib/data'
 import type { AlarmView } from './lib/data'
@@ -157,6 +158,10 @@ const openAlarm = (alarm: AlarmView) => {
   open.value = null
   router.push({ path: '/alarms', query: { id: String(alarm.id) } })
 }
+
+watch(() => shell.alarmRevision, () => {
+  if (authToken.value) void loadHeadline()
+})
 
 /* 顶栏数据与实时链路只在有会话时启动：登录页不拉任何鉴权接口 */
 let booted = false
@@ -399,6 +404,7 @@ onBeforeUnmount(() => {
   <RouterView v-else />
 
   <ToastHost />
+  <AlarmNoticeHost v-if="showShell" />
 </template>
 
 <style scoped>

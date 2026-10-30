@@ -13,6 +13,13 @@ import (
 // state change. The unique event key prevents repeated telemetry or retries
 // from creating duplicate deliveries.
 func QueueAlarmNotification(tx *gorm.DB, device model.Device, alarm model.AlarmRecord, state string) error {
+	if IsManualDemo(alarm) {
+		label := "手动固定解读演示"
+		if IsManualAPIDemo(alarm) {
+			label = "手动API解读演示"
+		}
+		return queueAlarmNotification(tx, device, alarm, state, map[string]any{"origin": SimulationOrigin, "simulation": true, "simulation_label": label})
+	}
 	if alarm.Metric == SimulationMetric && alarm.ScenarioID != nil {
 		var slot SimulationSlot
 		if err := tx.First(&slot, *alarm.ScenarioID).Error; err != nil {

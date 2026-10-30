@@ -105,6 +105,7 @@ export const METRIC_CN: Record<string, string> = {
   current: '电流',
   power: '功率',
   ai_failure_risk: '失效风险',
+  simulation_scenario: '演示场景',
 }
 
 /** 遥测状态码：0 停机 / 1 运行 / 2 故障（与边侧上报约定一致）。 */

@@ -14,6 +14,8 @@ services:
       - /run/powersystem-fleet/fleet.json
       - --fault-mode
       - scheduled
+      - --window-mode
+      - "on"
       - --interval-seconds
       - "5"
       - --run-id

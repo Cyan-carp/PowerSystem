@@ -11,10 +11,8 @@ import (
 // QoS1 owns replay until the SQLite FULL transaction commits. The volatile
 // buffer and per-commit batch are bounded; no registration cache survives a batch.
 func (g *Gateway) acceptTelemetry(_ mqtt.Client, m mqtt.Message) {
-	if len(m.Payload()) > 64*1024 {
-		m.Ack()
-		return
-	}
+	// Rejections must use the same FIFO as valid messages. A callback-side ACK
+	// can overtake earlier messages still waiting for their SQLite commit.
 	select {
 	case <-g.runContext.Done():
 		return
@@ -64,7 +62,6 @@ func (g *Gateway) persistAdmission(parent context.Context, batch []mqtt.Message)
 	for _, m := range batch {
 		p, e := telemetry.Parse(m.Payload())
 		if e != nil {
-			m.Ack()
 			continue
 		}
 		samples = append(samples, p)
@@ -72,6 +69,9 @@ func (g *Gateway) persistAdmission(parent context.Context, batch []mqtt.Message)
 		codes = append(codes, p.DeviceCode)
 	}
 	if len(samples) == 0 {
+		for _, m := range batch {
+			m.Ack()
+		}
 		return true
 	}
 	var registered []model.Device
@@ -102,7 +102,9 @@ func (g *Gateway) persistAdmission(parent context.Context, batch []mqtt.Message)
 		g.log.Warn("gateway_admission_commit_retry")
 		return false
 	}
-	for _, m := range messages {
+	// The single admission worker owns all ACKs, including rejected envelopes.
+	// No ACK from this batch is sent if lookup or durable persistence failed.
+	for _, m := range batch {
 		m.Ack()
 	}
 	select {

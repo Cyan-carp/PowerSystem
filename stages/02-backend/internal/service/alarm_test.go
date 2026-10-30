@@ -27,8 +27,8 @@ func TestFleetSlotWindow(t *testing.T) {
 		{"PV-01", "temperature", 9},
 		{"PV-02", "voltage", 11},
 		{"PV-03", "temperature", 13},
-		{"PV-04", "current", 15},
-		{"ST-01", "power", 17},
+		{"PV-04", "temperature", 15},
+		{"ST-01", "temperature", 17},
 	} {
 		start := time.Date(2026, 10, 22, tc.hour, 0, 0, 0, SimulationLocation())
 		if !fleetSlotWindow(tc.station, tc.metric, start) || !fleetSlotWindow(tc.station, tc.metric, start.Add(9*time.Minute+59*time.Second)) {

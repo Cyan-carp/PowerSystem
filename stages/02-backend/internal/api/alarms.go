@@ -275,23 +275,11 @@ func (s *Server) ackAlarm(c *gin.Context) {
 	now := time.Now().UTC()
 	userID := c.GetInt64("user_id")
 	var alarm model.AlarmRecord
-	errConflict := errors.New("alarm already acknowledged or recovered")
+	errConflict := service.ErrAlarmAckConflict
 	err := s.requestDB(c).Transaction(func(tx *gorm.DB) error {
-		result := tx.Model(&model.AlarmRecord{}).Where("id=? AND status='unhandled' AND recovered_at IS NULL", alarmID).Updates(map[string]any{"status": "acked", "acked_by": userID, "acked_at": now, "updated_at": now})
-		if result.Error != nil {
-			return result.Error
-		}
-		if result.RowsAffected == 0 {
-			return errConflict
-		}
-		if err := tx.First(&alarm, alarmID).Error; err != nil {
-			return err
-		}
-		var device model.Device
-		if err := tx.First(&device, alarm.DeviceID).Error; err != nil {
-			return err
-		}
-		return service.QueueAlarmNotification(tx, device, alarm, "acknowledged")
+		var err error
+		alarm, err = service.AcknowledgeAlarm(tx, alarmID, userID, now)
+		return err
 	})
 	if errors.Is(err, errConflict) {
 		fail(c, 409, 40001, "alarm is already acknowledged or recovered")

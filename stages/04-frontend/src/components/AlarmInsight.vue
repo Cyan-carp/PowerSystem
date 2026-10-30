@@ -104,6 +104,7 @@ const load = async (alarm: Alarm) => {
  * WebSocket 收到 interpretation_updated 会立刻再读一次（见下方 watch），轮询是没连上时的兜底。
  */
 let seq = 0
+let alarmRefreshSeq = 0
 let pollTimer: number | undefined
 let pollLeft = 0
 
@@ -174,8 +175,23 @@ watch(
   },
 )
 
+// State changes from the web or the server demo share alarmRevision. Refresh
+// an open detail too, so acknowledgement/recovery is visible without reopening.
+watch(() => shell.alarmRevision, async () => {
+  const mine = ++alarmRefreshSeq
+  const id = selected.value?.id
+  if (!id) { await boot(); return }
+  try {
+    const fresh = await api.alarm(id)
+    if (mine !== alarmRefreshSeq || selected.value?.id !== id) return
+    selected.value = fresh
+    void fetchInsight(id, { poll: true })
+  } catch { /* retain the current detail if the refresh is unavailable */ }
+})
+
 onUnmounted(() => {
   seq += 1
+  alarmRefreshSeq += 1
   stopPoll()
 })
 
@@ -236,7 +252,7 @@ const stateLabel = computed(() => {
   if (insightError.value) return '读取失败'
   switch (view.value.state) {
     case 'ready':
-      return '已解读'
+      return view.value.fixed ? '固定解读' : '已解读'
     case 'pending':
       return TASK_STATUS_CN[insight.value?.task_status || 'pending'] || '生成中'
     case 'degraded':
@@ -258,7 +274,7 @@ const metaLine = computed(() => {
   const item = insight.value
   if (!item) return ''
   const parts: string[] = []
-  if (view.value.state === 'ready') parts.push(view.value.model || '模型')
+  if (view.value.state === 'ready') parts.push(view.value.fixed ? '固定模板 · 未调用API' : view.value.model || '模型')
   parts.push(`#${item.id}`)
   /* pending 时 updated_at 是上一次写入的时间，显示出来会被读成「已经等了这么久」，等结果时先不显示 */
   if (item.updated_at && view.value.state !== 'pending') parts.push(across(item.updated_at))
@@ -273,7 +289,7 @@ const restFacts = computed(() => Math.max(0, view.value.factTotal - shownFacts.v
 </script>
 
 <template>
-  <Drawer title="告警解读" sub="模型结论 + 关键事实 + 建议动作，证据取自触发时刻的快照" @close="emit('close')">
+  <Drawer title="告警解读" sub="解读说明、关键事实与核查建议，固定模板和模型结果分别标明来源" @close="emit('close')">
     <div v-if="failed" class="error-box">告警未取到：{{ failed }}</div>
 
     <template v-else-if="loading">
@@ -432,7 +448,7 @@ const restFacts = computed(() => Math.max(0, view.value.factTotal - shownFacts.v
       </section>
 
       <p class="panel-note">
-        结论由模型基于证据快照给出，只用于排查顺序参考，不是故障结论；读数取自告警触发时刻，现场复测后以设备实测为准。
+        {{ view.fixed ? '当前使用固定规则模板，未调用模型API。' : '模型分析基于事件证据快照。' }}解读只用于核查参考，不是故障结论；读数取自告警触发时刻，现场复测后以设备实测为准。
       </p>
     </template>
 

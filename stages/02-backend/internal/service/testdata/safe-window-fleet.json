@@ -1,0 +1,68 @@
+{
+  "schema_version": 1,
+  "fleet_id": "pv-fleet-140-v1",
+  "sampling_seconds": 5,
+  "stations": [
+    {
+      "station_code": "PV-01",
+      "station_name": "示范园区 A 屋顶光伏片区",
+      "scope": "business",
+      "kind": "pv",
+      "device_prefix": "INV",
+      "device_count": 48,
+      "rated_power_kw": 100,
+      "profile": "generic-pv-100kw",
+      "daylight_mode": "real",
+      "group_size": 8
+    },
+    {
+      "station_code": "PV-02",
+      "station_name": "示范园区 B 屋顶光伏片区",
+      "scope": "business",
+      "kind": "pv",
+      "device_prefix": "INV",
+      "device_count": 40,
+      "rated_power_kw": 100,
+      "profile": "generic-pv-100kw",
+      "daylight_mode": "real",
+      "group_size": 8
+    },
+    {
+      "station_code": "PV-03",
+      "station_name": "示范园区 C 地面光伏场站",
+      "scope": "business",
+      "kind": "pv",
+      "device_prefix": "INV",
+      "device_count": 32,
+      "rated_power_kw": 100,
+      "profile": "generic-pv-100kw",
+      "daylight_mode": "real",
+      "group_size": 8
+    },
+    {
+      "station_code": "PV-04",
+      "station_name": "示范园区 D 屋顶光伏场站",
+      "scope": "business",
+      "kind": "pv",
+      "device_prefix": "INV",
+      "device_count": 20,
+      "rated_power_kw": 100,
+      "profile": "generic-pv-100kw",
+      "daylight_mode": "real",
+      "group_size": 8
+    },
+    {
+      "station_code": "ST-01",
+      "station_name": "原三设备演示基线站",
+      "scope": "baseline",
+      "kind": "pv",
+      "explicit": [
+        "INV-1001",
+        "INV-1002",
+        "INV-1003"
+      ],
+      "daylight_mode": "loop",
+      "daylight_loop_minutes": 60
+    }
+  ]
+}

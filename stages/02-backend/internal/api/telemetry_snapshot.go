@@ -240,6 +240,13 @@ func (s *Server) refreshDeviceSnapshot(parent context.Context, d model.Device) e
 	if result.Error != nil {
 		return result.Error
 	}
+	if source.ID > 0 && source.AlarmEvaluation == nil && source.ProcessedAt == nil {
+		if err := s.evaluateRealtimeSource(publish, d, source.ID); err != nil {
+			// Retry on the next bounded snapshot pass. An alarm/outbox failure
+			// must not prevent independently confirmed current values updating.
+			s.telemetryLog("realtime_alarm_evaluation", time.Now())
+		}
+	}
 	dep, end := context.WithTimeout(publish, telemetryDependencyBudget)
 	raw, cacheErr := s.redis.Get(dep, fmt.Sprintf("device:%d:latest", d.ID)).Bytes()
 	end()

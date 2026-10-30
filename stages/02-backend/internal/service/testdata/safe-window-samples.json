@@ -1,0 +1,312 @@
+[
+  {
+    "metric": "temperature",
+    "trigger": {
+      "schema_version": 1,
+      "run_id": "alarm-repair-2026-10-30",
+      "device_id": "PV-01-INV-20",
+      "station_id": "PV-01",
+      "seq": 1,
+      "ts_ms": 1793322060000,
+      "voltage": 400.132,
+      "current": 71.675,
+      "temperature": 65.0,
+      "power": 49.178,
+      "status": 1,
+      "fault_code": 0
+    },
+    "recover": {
+      "schema_version": 1,
+      "run_id": "alarm-repair-2026-10-30",
+      "device_id": "PV-01-INV-20",
+      "station_id": "PV-01",
+      "seq": 101,
+      "ts_ms": 1793322720000,
+      "voltage": 399.823,
+      "current": 82.445,
+      "temperature": 41.972,
+      "power": 56.523,
+      "status": 1,
+      "fault_code": 0
+    }
+  },
+  {
+    "metric": "voltage",
+    "trigger": {
+      "schema_version": 1,
+      "run_id": "alarm-repair-2026-10-30",
+      "device_id": "PV-02-INV-36",
+      "station_id": "PV-02",
+      "seq": 2,
+      "ts_ms": 1793329260000,
+      "voltage": 445.0,
+      "current": 113.887,
+      "temperature": 49.794,
+      "power": 86.902,
+      "status": 1,
+      "fault_code": 0
+    },
+    "recover": {
+      "schema_version": 1,
+      "run_id": "alarm-repair-2026-10-30",
+      "device_id": "PV-02-INV-36",
+      "station_id": "PV-02",
+      "seq": 102,
+      "ts_ms": 1793329920000,
+      "voltage": 398.456,
+      "current": 128.328,
+      "temperature": 50.009,
+      "power": 87.679,
+      "status": 1,
+      "fault_code": 0
+    }
+  },
+  {
+    "metric": "temperature",
+    "trigger": {
+      "schema_version": 1,
+      "run_id": "alarm-repair-2026-10-30",
+      "device_id": "PV-03-INV-20",
+      "station_id": "PV-03",
+      "seq": 3,
+      "ts_ms": 1793336460000,
+      "voltage": 398.979,
+      "current": 134.314,
+      "temperature": 82.0,
+      "power": 91.89,
+      "status": 1,
+      "fault_code": 0
+    },
+    "recover": {
+      "schema_version": 1,
+      "run_id": "alarm-repair-2026-10-30",
+      "device_id": "PV-03-INV-20",
+      "station_id": "PV-03",
+      "seq": 103,
+      "ts_ms": 1793337120000,
+      "voltage": 400.716,
+      "current": 128.486,
+      "temperature": 48.768,
+      "power": 88.286,
+      "status": 1,
+      "fault_code": 0
+    }
+  },
+  {
+    "metric": "temperature",
+    "trigger": {
+      "schema_version": 1,
+      "run_id": "alarm-repair-2026-10-30",
+      "device_id": "PV-04-INV-16",
+      "station_id": "PV-04",
+      "seq": 4,
+      "ts_ms": 1793343660000,
+      "voltage": 401.636,
+      "current": 79.904,
+      "temperature": 65.0,
+      "power": 55.029,
+      "status": 1,
+      "fault_code": 0
+    },
+    "recover": {
+      "schema_version": 1,
+      "run_id": "alarm-repair-2026-10-30",
+      "device_id": "PV-04-INV-16",
+      "station_id": "PV-04",
+      "seq": 104,
+      "ts_ms": 1793344320000,
+      "voltage": 401.574,
+      "current": 67.808,
+      "temperature": 38.08,
+      "power": 46.692,
+      "status": 1,
+      "fault_code": 0
+    }
+  },
+  {
+    "metric": "temperature",
+    "trigger": {
+      "schema_version": 1,
+      "run_id": "alarm-repair-2026-10-30",
+      "device_id": "INV-1002",
+      "station_id": "ST-01",
+      "seq": 5,
+      "ts_ms": 1793350860000,
+      "voltage": 400.848,
+      "current": 16.104,
+      "temperature": 82.0,
+      "power": 11.069,
+      "status": 1,
+      "fault_code": 0
+    },
+    "recover": {
+      "schema_version": 1,
+      "run_id": "alarm-repair-2026-10-30",
+      "device_id": "INV-1002",
+      "station_id": "ST-01",
+      "seq": 105,
+      "ts_ms": 1793351520000,
+      "voltage": 400.848,
+      "current": 10.91,
+      "temperature": 28.361,
+      "power": 7.499,
+      "status": 1,
+      "fault_code": 0
+    }
+  },
+  {
+    "metric": "temperature",
+    "trigger": {
+      "schema_version": 1,
+      "run_id": "alarm-repair-2026-10-31",
+      "device_id": "PV-01-INV-21",
+      "station_id": "PV-01",
+      "seq": 1,
+      "ts_ms": 1793408460000,
+      "voltage": 397.508,
+      "current": 73.854,
+      "temperature": 65.0,
+      "power": 50.34,
+      "status": 1,
+      "fault_code": 0
+    },
+    "recover": {
+      "schema_version": 1,
+      "run_id": "alarm-repair-2026-10-31",
+      "device_id": "PV-01-INV-21",
+      "station_id": "PV-01",
+      "seq": 101,
+      "ts_ms": 1793409120000,
+      "voltage": 397.457,
+      "current": 85.118,
+      "temperature": 39.998,
+      "power": 58.01,
+      "status": 1,
+      "fault_code": 0
+    }
+  },
+  {
+    "metric": "voltage",
+    "trigger": {
+      "schema_version": 1,
+      "run_id": "alarm-repair-2026-10-31",
+      "device_id": "PV-02-INV-37",
+      "station_id": "PV-02",
+      "seq": 2,
+      "ts_ms": 1793415660000,
+      "voltage": 445.0,
+      "current": 116.134,
+      "temperature": 48.375,
+      "power": 88.617,
+      "status": 1,
+      "fault_code": 0
+    },
+    "recover": {
+      "schema_version": 1,
+      "run_id": "alarm-repair-2026-10-31",
+      "device_id": "PV-02-INV-37",
+      "station_id": "PV-02",
+      "seq": 102,
+      "ts_ms": 1793416320000,
+      "voltage": 396.952,
+      "current": 130.823,
+      "temperature": 48.578,
+      "power": 89.047,
+      "status": 1,
+      "fault_code": 0
+    }
+  },
+  {
+    "metric": "temperature",
+    "trigger": {
+      "schema_version": 1,
+      "run_id": "alarm-repair-2026-10-31",
+      "device_id": "PV-03-INV-21",
+      "station_id": "PV-03",
+      "seq": 3,
+      "ts_ms": 1793422860000,
+      "voltage": 400.3,
+      "current": 133.691,
+      "temperature": 82.0,
+      "power": 91.766,
+      "status": 1,
+      "fault_code": 0
+    },
+    "recover": {
+      "schema_version": 1,
+      "run_id": "alarm-repair-2026-10-31",
+      "device_id": "PV-03-INV-21",
+      "station_id": "PV-03",
+      "seq": 103,
+      "ts_ms": 1793423520000,
+      "voltage": 401.211,
+      "current": 126.83,
+      "temperature": 50.933,
+      "power": 87.255,
+      "status": 1,
+      "fault_code": 0
+    }
+  },
+  {
+    "metric": "temperature",
+    "trigger": {
+      "schema_version": 1,
+      "run_id": "alarm-repair-2026-10-31",
+      "device_id": "PV-04-INV-17",
+      "station_id": "PV-04",
+      "seq": 4,
+      "ts_ms": 1793430060000,
+      "voltage": 402.777,
+      "current": 79.186,
+      "temperature": 65.0,
+      "power": 54.69,
+      "status": 1,
+      "fault_code": 0
+    },
+    "recover": {
+      "schema_version": 1,
+      "run_id": "alarm-repair-2026-10-31",
+      "device_id": "PV-04-INV-17",
+      "station_id": "PV-04",
+      "seq": 104,
+      "ts_ms": 1793430720000,
+      "voltage": 401.28,
+      "current": 66.655,
+      "temperature": 38.438,
+      "power": 45.864,
+      "status": 1,
+      "fault_code": 0
+    }
+  },
+  {
+    "metric": "temperature",
+    "trigger": {
+      "schema_version": 1,
+      "run_id": "alarm-repair-2026-10-31",
+      "device_id": "INV-1003",
+      "station_id": "ST-01",
+      "seq": 5,
+      "ts_ms": 1793437260000,
+      "voltage": 401.976,
+      "current": 15.825,
+      "temperature": 82.0,
+      "power": 10.908,
+      "status": 1,
+      "fault_code": 0
+    },
+    "recover": {
+      "schema_version": 1,
+      "run_id": "alarm-repair-2026-10-31",
+      "device_id": "INV-1003",
+      "station_id": "ST-01",
+      "seq": 105,
+      "ts_ms": 1793437920000,
+      "voltage": 399.77,
+      "current": 10.985,
+      "temperature": 28.119,
+      "power": 7.53,
+      "status": 1,
+      "fault_code": 0
+    }
+  }
+]

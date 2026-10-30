@@ -239,6 +239,7 @@ func (s *Server) Run(parent context.Context) (runErr error) {
 				s.setStartup("running", true)
 				launch(s.worker)
 				launch(s.snapshotWorker)
+				launch(s.manualAlarmEvents)
 				launch(s.energyWorker)
 				if s.cfg.SimulationAlarmMode != "off" && s.cfg.SimulationAlarmMode != "" {
 					launch(s.simulationAlarmWorker)

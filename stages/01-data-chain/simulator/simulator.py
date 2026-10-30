@@ -58,9 +58,9 @@ class WindowScenario:
 WINDOW_SCENARIOS = (
     WindowScenario(9, "PV-01", "temperature", 55.0, 65.0),
     WindowScenario(11, "PV-02", "voltage", 430.0, 445.0),
-    WindowScenario(13, "PV-03", "temperature", 80.0, 92.0),
-    WindowScenario(15, "PV-04", "current", 180.0, 200.0),
-    WindowScenario(17, "ST-01", "power", 110.0, 112.0),
+    WindowScenario(13, "PV-03", "temperature", 80.0, 82.0),
+    WindowScenario(15, "PV-04", "temperature", 55.0, 65.0),
+    WindowScenario(17, "ST-01", "temperature", 80.0, 82.0),
 )
 WINDOW_SCENARIO_BY_STATION: Mapping[str, WindowScenario] = {
     scenario.station_code: scenario for scenario in WINDOW_SCENARIOS
@@ -218,9 +218,9 @@ def apply_window_injection(
     label is produced. Windows are independent of ``--fault-mode``: the retired
     scheduled-fault injection is gone, so ``window_mode`` is the only switch.
     Voltage injection recomputes current to keep the electrical identity intact.
-    Current injection is a meter-level overcurrent: power is left untouched so a
-    second rule cannot fire. Outside the window nothing is modified, so the
-    natural value returns by itself.
+    Temperature windows leave the electrical identity untouched. Every enabled
+    scenario stays within the ingress physical contract. Outside the window
+    nothing is modified, so the natural value returns by itself.
     """
     if window_mode != "on":
         return None
@@ -550,7 +550,7 @@ def daylight_profile_ms(ts_ms: int, elapsed_seconds: float, cycle_minutes: float
 
 
 def make_sample(device_id: str, seq: int, ts_ms: int, seed: int, run_id: str, *, profile_ts_ms: int | None = None,
-                fault_mode: str = "scheduled", window_mode: str = "on",
+                fault_mode: str = "scheduled", window_mode: str = "off",
                 config: DeviceConfig | None = None) -> tuple[str, bool]:
     # ``fault_mode`` is kept for command-line and caller compatibility but is now
     # inert: the deterministic scheduled-fault ramp was removed, so the five
@@ -720,8 +720,8 @@ def main() -> int:
                         help="continuous demo only: repeat synthetic 08:00–16:00 daylight in this many real minutes; 0 keeps the real day/night cycle")
     parser.add_argument("--fault-mode", choices=("scheduled", "off"), default="scheduled",
                         help="deprecated and inert: the scheduled-fault ramp was removed; accepted only so existing deployments keep starting")
-    parser.add_argument("--window-mode", choices=("on", "off"), default="on",
-                        help="on: inject the five daily ten-minute telemetry windows; off: publish the natural curve only")
+    parser.add_argument("--window-mode", choices=("on", "off"), default="off",
+                        help="off (default): natural telemetry; on: five daily rule windows within the ingress contract")
     parser.add_argument("--time-scale", type=float, default=1.0)
     parser.add_argument("--seed", type=int, default=2026)
     parser.add_argument("--run-id", default="manual")
