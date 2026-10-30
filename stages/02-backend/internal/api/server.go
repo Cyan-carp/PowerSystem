@@ -65,12 +65,16 @@ type Server struct {
 	snapshotTDCircuit dependencyCircuit
 	redisCircuit      dependencyCircuit
 
-	fleetCatalog *fleet.Catalog
+	fleetCatalog    *fleet.Catalog
+	rollupInstalled bool
 }
 
 func New(cfg config.Config, db *gorm.DB, redis *redis.Client, td *tdengine.Client, log *zap.Logger) *Server {
 	gin.SetMode(gin.ReleaseMode)
 	s := &Server{cfg: cfg, db: db, redis: redis, td: td, log: log, clients: make(map[*websocket.Conn]*realtimeClient), startupPhase: "created"}
+	if db != nil {
+		s.rollupInstalled = db.Migrator().HasTable("availability_rollup_state")
+	}
 	s.telemetry.touch("start", time.Now())
 	// The fleet manifest is optional: a missing or invalid file must not stop the
 	// existing API from serving devices and alarms without scope filtering.
@@ -241,6 +245,9 @@ func (s *Server) Run(parent context.Context) (runErr error) {
 				launch(s.snapshotWorker)
 				launch(s.manualAlarmEvents)
 				launch(s.energyWorker)
+				if s.rollupInstalled {
+					launch(s.availabilityRollupWorker)
+				}
 				if s.cfg.SimulationAlarmMode != "off" && s.cfg.SimulationAlarmMode != "" {
 					launch(s.simulationAlarmWorker)
 				}
@@ -399,11 +406,15 @@ func (s *Server) receive(_ mqtt.Client, message mqtt.Message) bool {
 	// One server-side statement is one transaction. MATERIALIZED gate and device
 	// lock keep the same drain/ordering protocol while avoiding seven RTTs per
 	// serial MQTT callback. A lost acknowledgement is safely retried by identity.
+	reportDirty := ""
+	if s.rollupInstalled {
+		reportDirty = availabilityDirtyCTEFor(device.ID, sample.TS, "inserted")
+	}
 	err = db.Raw(`WITH gate AS MATERIALIZED (SELECT enabled FROM alarm_maintenance_state WHERE id=1 FOR SHARE),
  locked AS MATERIALIZED (SELECT pg_advisory_xact_lock(hashtextextended(?,0)) FROM gate WHERE NOT enabled),
  inserted AS (INSERT INTO telemetry_inbox(run_id,device_id,seq,ts_ms,payload,received_at)
  SELECT ?,?,?,?,?::jsonb,clock_timestamp() FROM locked ON CONFLICT(run_id,device_id,seq) DO NOTHING RETURNING device_id,ts_ms),
- dirty AS (INSERT INTO energy_dirty_days(device_id,day,changed_at)
+ `+reportDirty+`dirty AS (INSERT INTO energy_dirty_days(device_id,day,changed_at)
  SELECT DISTINCT device_id,(to_timestamp((ts_ms+offset_ms)/1000.0) AT TIME ZONE 'Asia/Shanghai')::date,statement_timestamp()
  FROM inserted CROSS JOIN (VALUES(-15000::bigint),(0::bigint),(15000::bigint)) offsets(offset_ms)
  ON CONFLICT(device_id,day) DO UPDATE SET changed_at=excluded.changed_at RETURNING device_id)
@@ -512,6 +523,11 @@ func (s *Server) processInboxItem(parent context.Context, item model.Inbox) {
 			}
 			if err := tx.Model(&model.Inbox{}).Where("id=?", item.ID).Update("td_confirmed_at", gorm.Expr("clock_timestamp()")).Error; err != nil {
 				return err
+			}
+			if s.rollupInstalled {
+				if err := dirtyAvailability(tx, item.DeviceID, item.TS); err != nil {
+					return err
+				}
 			}
 		}
 

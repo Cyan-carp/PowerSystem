@@ -211,13 +211,17 @@ func (s *Server) refreshDeviceSnapshot(parent context.Context, d model.Device) e
 			}
 		}
 		var accepted struct{ ID int64 }
+		dirtyCTE := ""
+		if s.rollupInstalled && i.TDConfirmedAt == nil {
+			dirtyCTE = availabilityDirtyCTE(i.DeviceID, i.TS)
+		}
 		r := s.db.WithContext(confirm).Raw(`WITH gate AS MATERIALIZED(SELECT enabled FROM alarm_maintenance_state WHERE id=1 FOR SHARE),
   locked AS MATERIALIZED(SELECT pg_advisory_xact_lock(hashtextextended(?,0)) FROM gate WHERE NOT enabled),
   confirmed AS(UPDATE telemetry_inbox i SET td_confirmed_at=COALESCE(td_confirmed_at,clock_timestamp()),
    next_attempt_at=CASE WHEN business_state='retry' AND failure_code='td_missing' THEN clock_timestamp() ELSE next_attempt_at END
    FROM locked,devices d WHERE i.id=? AND i.device_id=? AND i.run_id=? AND i.seq=? AND i.ts_ms=? AND i.payload=?::jsonb
     AND (i.business_state IS NULL OR i.business_state<>'quarantined') AND d.id=i.device_id AND d.deleted_at IS NULL AND d.device_code=? AND d.station_code=? RETURNING i.id,i.device_id,i.ts_ms),
-  source AS(INSERT INTO telemetry_snapshots(device_id,inbox_id,ts_ms,confirmed_at) SELECT device_id,id,ts_ms,clock_timestamp() FROM confirmed
+  `+dirtyCTE+`source AS(INSERT INTO telemetry_snapshots(device_id,inbox_id,ts_ms,confirmed_at) SELECT device_id,id,ts_ms,clock_timestamp() FROM confirmed
    ON CONFLICT(device_id) DO UPDATE SET inbox_id=excluded.inbox_id,ts_ms=excluded.ts_ms,confirmed_at=excluded.confirmed_at
    WHERE telemetry_snapshots.inbox_id<excluded.inbox_id AND telemetry_snapshots.ts_ms<=excluded.ts_ms RETURNING inbox_id)
   SELECT id FROM confirmed`, fmt.Sprintf("telemetry-device:%d", d.ID), i.ID, d.ID, i.RunID, i.Seq, i.TS, string(i.Payload), d.DeviceCode, d.StationCode).Scan(&accepted)

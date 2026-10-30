@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"log"
@@ -27,6 +28,7 @@ func main() {
 	migrateOnly := flag.Bool("migrate-only", false, "apply database schema and seed demo devices, then exit")
 	migrationTimeout := flag.Duration("migration-timeout", 30*time.Second, "offline migrate-only budget (30s to 15m); never changes server startup budget")
 	createAdmin := flag.String("create-admin", "", "create an admin using a password from stdin (server-local operation)")
+	rollupMode := flag.String("availability-rollup", "", "local derived statistics operation: step, enable, disable, status")
 	demoMode := flag.String("demo-alarm", "", "server-local manual demo: create, ack, recover, status")
 	demoRequest := flag.String("demo-request-id", "", "idempotency key for creating a manual demo")
 	demoDevice := flag.String("demo-device", "INV-1001", "existing demo device code")
@@ -35,7 +37,7 @@ func main() {
 	demoActor := flag.String("demo-actor", "", "existing admin/operator username for acknowledgement")
 	demoAnalysis := flag.String("demo-analysis", "model", "manual interpretation: fixed or model")
 	flag.Parse()
-	if *demoMode != "" && (*migrateOnly || *createAdmin != "") {
+	if *demoMode != "" && (*migrateOnly || *createAdmin != "" || *rollupMode != "") {
 		log.Fatal("demo_operation_must_not_be_combined_with_other_modes")
 	}
 	startupBudget, err := migrationStartupBudget(*migrateOnly, *migrationTimeout)
@@ -69,6 +71,32 @@ func main() {
 		}
 		if err := runManualDemo(startup, cfg, pg, *demoMode, *demoRequest, *demoDevice, *demoLevel, *demoID, *demoActor, *demoAnalysis); err != nil {
 			log.Fatal(err)
+		}
+		return
+	}
+	if *rollupMode != "" {
+		cancelStartup()
+		server := api.New(cfg, pg.WithContext(root), nil, tdengine.New(cfg), logger)
+		var operationErr error
+		switch *rollupMode {
+		case "step":
+			operationErr = server.AvailabilityRollupStep(root, 2*time.Minute)
+		case "enable":
+			operationErr = server.SetAvailabilityRollupRead(root, true)
+		case "disable":
+			operationErr = server.SetAvailabilityRollupRead(root, false)
+		case "status":
+			var status []map[string]any
+			operationErr = pg.WithContext(root).Raw(`SELECT s.*, (SELECT count(*) FROM availability_hourly WHERE generation<>computed_generation) pending_hours FROM availability_rollup_state s WHERE id=1`).Scan(&status).Error
+			if operationErr == nil {
+				value, _ := json.Marshal(status)
+				fmt.Println(string(value))
+			}
+		default:
+			operationErr = fmt.Errorf("unknown availability-rollup operation")
+		}
+		if operationErr != nil {
+			logger.Fatal("availability_rollup_operation", zap.Error(operationErr))
 		}
 		return
 	}

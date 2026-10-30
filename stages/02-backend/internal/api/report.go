@@ -118,40 +118,47 @@ func (a *availabilityAccumulator) finish() availabilityResult {
 // loadAvailability folds ordered status pages in constant memory. The boundary
 // sample supplies coverage at window start; the window end remains exclusive.
 func (s *Server) loadAvailability(ctx context.Context, device model.Device, start, end int64) (availabilityResult, error) {
-	if err := s.td.EnsureDevice(ctx, device); err != nil {
+	acc := availabilityAccumulator{start: start, end: end}
+	if err := s.scanAvailability(ctx, device, start, end, acc.add); err != nil {
 		return availabilityResult{}, err
 	}
-	acc := availabilityAccumulator{start: start, end: end}
+	return acc.finish(), nil
+}
+
+func (s *Server) scanAvailability(ctx context.Context, device model.Device, start, end int64, visit func(samplePoint)) error {
+	if err := s.td.EnsureDevice(ctx, device); err != nil {
+		return err
+	}
 	boundary, err := s.td.BoundarySample(ctx, device.ID, start)
 	if err != nil {
-		return availabilityResult{}, err
+		return err
 	}
 	if len(boundary) > 0 {
 		point, err := parseAvailabilitySample(boundary[0], 1)
 		if err != nil || point.TS > start {
-			return availabilityResult{}, errors.New("invalid boundary sample")
+			return errors.New("invalid boundary sample")
 		}
-		acc.add(point)
+		visit(point)
 	}
 	cursor := start - 1
 	for {
 		rows, err := s.td.StatusAfter(ctx, device.ID, cursor, end, exportPageSize)
 		if err != nil {
-			return availabilityResult{}, err
+			return err
 		}
 		for _, row := range rows {
 			point, err := parseAvailabilitySample(row, 1)
 			if err != nil || point.TS <= cursor || point.TS >= end {
-				return availabilityResult{}, errors.New("invalid or unordered availability sample")
+				return errors.New("invalid or unordered availability sample")
 			}
-			acc.add(point)
+			visit(point)
 			cursor = point.TS
 		}
 		if len(rows) < exportPageSize {
 			break
 		}
 	}
-	return acc.finish(), nil
+	return nil
 }
 
 // Bound per-request database work while preserving ledger order. Any device
@@ -247,18 +254,22 @@ func (s *Server) availability(c *gin.Context) {
 		}
 		selected = append(selected, d)
 	}
-	results, err := s.availabilityDevices(c.Request.Context(), selected, start, end)
+	results, metadata, err := s.availabilityReportDevices(c.Request.Context(), selected, start, end)
 	if err != nil {
 		fail(c, 503, 50000, "telemetry unavailable")
 		return
 	}
 	stationAgg := s.aggregateAvailability(results)
 	computedAt := time.Now().UTC().Format(time.RFC3339Nano)
+	c.Header("X-Statistics-Updated-At", metadata.UpdatedAt)
+	c.Header("X-Aggregation-State", metadata.State)
+	c.Header("X-Aggregation-Lag-Ms", strconv.FormatInt(metadata.LagMs, 10))
 	if c.Query("format") == "csv" {
 		s.availabilityCSV(c, results, stationAgg, start, end, computedAt)
 		return
 	}
-	ok(c, gin.H{"rule_version": availabilityRule, "computed_at": time.Now().UTC().Format(time.RFC3339Nano),
+	ok(c, gin.H{"rule_version": availabilityRule, "computed_at": computedAt,
+		"statistics_updated_at": metadata.UpdatedAt, "aggregation_state": metadata.State, "aggregation_lag_ms": metadata.LagMs,
 		"start": start, "end": end, "devices": results, "stations": stationAgg,
 		"complete": true, "grouping": "current_ledger", "basis": "current ledger, not historical station assignment; window starts at device creation; samples extend up to 15s; coverage<90% insufficient"})
 }

@@ -64,6 +64,7 @@ var MigrationPaths = []string{
 	"deploy/postgres/014_telemetry_reliability.sql",
 	"deploy/postgres/015_telemetry_scheduler.sql",
 	"deploy/postgres/016_telemetry_realtime.sql",
+	"deploy/postgres/017_availability_rollups.sql",
 }
 
 func Migrate(db *gorm.DB, path string) error {
@@ -86,7 +87,7 @@ func Migrate(db *gorm.DB, path string) error {
 		}
 		return nil
 	}
-	if strings.HasSuffix(path, "014_telemetry_reliability.sql") || strings.HasSuffix(path, "015_telemetry_scheduler.sql") || strings.HasSuffix(path, "016_telemetry_realtime.sql") {
+	if strings.HasSuffix(path, "014_telemetry_reliability.sql") || strings.HasSuffix(path, "015_telemetry_scheduler.sql") || strings.HasSuffix(path, "016_telemetry_realtime.sql") || strings.HasSuffix(path, "017_availability_rollups.sql") {
 		return db.Transaction(apply)
 	}
 	return apply(db)
