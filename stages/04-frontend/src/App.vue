@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router'
 import Icon from './components/Icon.vue'
 import AlarmInsight from './components/AlarmInsight.vue'
+import ModelPanel from './components/ModelPanel.vue'
 import ToastHost from './components/ToastHost.vue'
 import AlarmNoticeHost from './components/AlarmNoticeHost.vue'
 import { api } from './lib/api'
@@ -15,8 +16,10 @@ import {
   clearSession,
   currentUser,
   displayName,
+  isAdmin,
   roleLabel,
 } from './lib/auth'
+import { resetModelBoard, startModelPolling, topbarBalance, topbarTone } from './lib/model-usage'
 import { toast } from './lib/toast'
 
 import { LEVEL_CN, METRIC_CN, across } from './lib/format'
@@ -71,6 +74,8 @@ const onHotkey = (event: KeyboardEvent) => {
 
 type Pop = 'guide' | 'bell' | 'user' | null
 const insight = ref(false)
+/** 模型与额度面板：只有管理员会看到入口，普通账号打开也只会得到 403 */
+const modelOpen = ref(false)
 const open = ref<Pop>(null)
 const guideWrap = ref<HTMLElement | null>(null)
 const bellWrap = ref<HTMLElement | null>(null)
@@ -173,6 +178,8 @@ const boot = () => {
   void loadHeadline()
   void refreshUnread()
   timer = window.setInterval(loadHeadline, 60_000)
+  /* 余额接口本身要求 admin，非管理员不必发这一次请求 */
+  if (isAdmin.value) startModelPolling()
 }
 
 const halt = () => {
@@ -182,6 +189,9 @@ const halt = () => {
     timer = undefined
   }
   closeRealtime()
+  /* 余额是账号资产信息，退出时必须清掉，不能留给下一个登录的人 */
+  resetModelBoard()
+  modelOpen.value = false
   if (unreadTimer) {
     window.clearTimeout(unreadTimer)
     unreadTimer = undefined
@@ -306,6 +316,18 @@ onBeforeUnmount(() => {
           </span>
           <span class="tb-clock num">{{ clockText }}</span>
 
+          <!-- 模型额度：只在管理员侧出现，数字是解读通道的供应商余额 -->
+          <button
+            v-if="isAdmin"
+            class="tb-usage"
+            :class="`is-${topbarTone}`"
+            title="模型额度：点击查看两条通道的模型、地址与余额"
+            @click="modelOpen = true"
+          >
+            <Icon name="cpu" :size="15" />
+            <span class="num">{{ topbarBalance || '额度 —' }}</span>
+          </button>
+
           <div class="tb-actions">
           <button class="tb-icon" :class="{ 'is-open': insight }" title="告警解读" @click="insight = true">
             <Icon name="sparkles" :size="20" />
@@ -399,6 +421,7 @@ onBeforeUnmount(() => {
     </div>
 
     <AlarmInsight v-if="insight" @close="insight = false" @read="refreshUnread" />
+    <ModelPanel v-if="modelOpen" @close="modelOpen = false" />
   </div>
 
   <!-- 登录页：不套侧栏与顶栏，直接渲染视图 -->
@@ -414,6 +437,38 @@ onBeforeUnmount(() => {
   color: var(--ink-4);
   letter-spacing: 0.02em;
   white-space: nowrap;
+}
+
+/* 模型额度：胶囊要窄，宽屏显示金额、窄屏只留图标（金额在面板里看） */
+.tb-usage {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 9px;
+  border-radius: var(--r-md);
+  border: 1px solid var(--line);
+  background: var(--card);
+  color: var(--ink-2);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.tb-usage:hover {
+  background: var(--card-soft);
+  border-color: var(--line-strong);
+}
+
+.tb-usage.is-warn {
+  color: var(--warn-deep);
+  border-color: #f3d9a8;
+}
+
+.tb-usage.is-bad {
+  color: var(--bad-deep);
+  background: var(--bad-soft);
+  border-color: #f6cccc;
 }
 
 .tb-icon.is-open {
@@ -593,6 +648,15 @@ onBeforeUnmount(() => {
 @media (max-width: 1180px) {
   .tb-clock {
     display: none;
+  }
+
+  /* 窄屏只留图标：金额会被顶栏其他元素挤掉 */
+  .tb-usage span {
+    display: none;
+  }
+
+  .tb-usage {
+    padding: 0 7px;
   }
 }
 

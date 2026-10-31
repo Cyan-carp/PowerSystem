@@ -15,6 +15,7 @@ from fastapi.exceptions import RequestValidationError
 from pydantic import BaseModel, ConfigDict, Field
 from redis.asyncio import Redis
 from .config import Config
+from .balance import fetch_balance
 from .engine import Engine
 from .knowledge import Knowledge
 from .provider import Provider
@@ -123,6 +124,18 @@ def create_app(config=None, store=None, redis=None, provider=None, tools=None, r
                 "embedding_ready": app.state.embedding_ready, "boundaries": {"evidence": app.state.config.evidence_enabled, "verify": app.state.config.verify_enabled,
                 "daily_gate": app.state.config.daily_gate_enabled, "daily_rule_version": RULE_VERSION,
                 "v4_assistant": getattr(app.state.config, 'v4_assistant_enabled', False)}}
+
+    @app.get("/internal/agent/model-balance")
+    async def model_balance():
+        """只读余额：用本服务自己的主助手 Key 查，地址与密钥都不由调用方决定。"""
+        return await fetch_balance(
+            app.state.client,
+            channel="assistant",
+            label="主助手",
+            base_url=app.state.config.llm_url,
+            model=app.state.config.model,
+            api_key=app.state.config.llm_key,
+        )
 
     @app.get("/internal/agent/sessions")
     async def sessions(user_id: int, offset: int = 0):

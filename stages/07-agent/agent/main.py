@@ -19,6 +19,7 @@ from .llm import Provider, ProviderError
 from .tools import Tools, ToolDenied
 from .orchestrator import Orchestrator
 from .interpret import GuardedProvider, install_routes
+from .balance import fetch_balance
 from .interpret_provider import InterpretationProvider
 from . import interpret_v2
 from .knowledge import Knowledge
@@ -35,6 +36,7 @@ def create_app(config=None, sessions=None, provider=None, tools=None, audit=None
         redis = Redis.from_url(cfg.redis_url, decode_responses=True, socket_connect_timeout=2,
                                socket_timeout=2, retry=Retry(NoBackoff(), 0))
         app.state.config = cfg
+        app.state.http = client
         app.state.sessions = sessions or Sessions(redis, cfg.session_ttl)
         app.state.redis = redis
         app.state.provider = provider or GuardedProvider(Provider(cfg, client), redis, cfg)
@@ -93,6 +95,19 @@ def create_app(config=None, sessions=None, provider=None, tools=None, audit=None
         if not chunk:
             raise HTTPException(404, "knowledge_source_not_found")
         return {**chunk, "version": app.state.knowledge.version}
+
+    @app.get("/internal/agent/model-balance")
+    async def model_balance(request: Request):
+        """只读余额：用本服务自己的解读专用 Key 查，地址与密钥都不由调用方决定。"""
+        await authenticate(request)
+        return await fetch_balance(
+            app.state.http,
+            channel="interpret",
+            label="告警解读",
+            base_url=app.state.config.interpret_llm_url,
+            model=app.state.config.interpret_model,
+            api_key=app.state.config.interpret_api_key,
+        )
 
     @app.post("/internal/agent/probe")
     async def probe(request: Request):

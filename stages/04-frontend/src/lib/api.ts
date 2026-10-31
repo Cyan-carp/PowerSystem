@@ -774,6 +774,38 @@ export interface Interpretation {
   monitor?: Record<string, unknown> | null
 }
 
+/* ---------------- 模型通道与额度（仅管理员） ---------------- */
+
+/**
+ * 余额是**供应商私有**能力：OpenAI 兼容协议没有额度端点，目前只有 DeepSeek 官方提供
+ * `GET /user/balance`。所以 `supported=false` 表示「这条通道查不到」，不等于「没有额度」。
+ * 密钥始终留在 07/08 两个服务里，前端拿到的只有金额。
+ */
+export interface ModelBalanceEntry {
+  currency: string
+  total_balance: string
+  granted_balance: string
+  topped_up_balance: string
+}
+
+export interface ModelChannelBalance {
+  channel: string
+  label: string
+  model: string
+  base_url: string
+  supported: boolean
+  /** null = 未知；false = 供应商明确表示余额不足，调用会被拒绝 */
+  is_available: boolean | null
+  balances: ModelBalanceEntry[]
+  fetched_at: string
+  error: string
+}
+
+export interface ModelBalanceBoard {
+  channels: ModelChannelBalance[]
+  fetched_at: string
+}
+
 /* ---------------- 端点 ---------------- */
 
 const DAY = 86_400_000
@@ -895,6 +927,12 @@ export const api = {
     get<Interpretation>(`/agent/interpretations/${id}`, signal),
   /** 标记已读：只影响当前用户（agent_interpretation_reads），不改解读本身 */
   readInterpretation: (id: number) => post<{ id: number; read: boolean }>(`/agent/interpretations/${id}/read`),
+
+  /* 模型通道：状态与额度都是只读；probe 会真实调用一次模型并重排失败解读，需二次确认 */
+  modelBalance: () => get<ModelBalanceBoard>('/agent/model-balance'),
+  modelStatus: () =>
+    get<{ available: boolean; reason?: string; message?: string }>('/agent/model-status'),
+  modelProbe: () => post<{ interpretation: boolean; model?: string }>('/agent/model-probe'),
 
   /* 健康 */
   healthDevices: () => get<HealthBoard>('/health/devices'),

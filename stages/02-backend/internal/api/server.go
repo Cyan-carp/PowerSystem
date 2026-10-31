@@ -195,6 +195,7 @@ func New(cfg config.Config, db *gorm.DB, redis *redis.Client, td *tdengine.Clien
 	a.POST("/agent/interpretations/:id/read", s.readInterpretation)
 	a.GET("/agent/model-status", requireAdmin, s.agentModelStatus)
 	a.POST("/agent/model-probe", requireAdmin, s.agentModelProbe)
+	a.GET("/agent/model-balance", requireAdmin, s.agentModelBalance)
 	r.GET("/ws/realtime", s.websocket)
 	r.GET("/test/ws", func(c *gin.Context) { c.File("test/ws.html") })
 	s.router = r
