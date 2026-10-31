@@ -196,9 +196,9 @@
     "tracked": true
   },
   {
-    "workspace_path": "artifacts/workflow-efficiency-20261028-r1",
-    "proxy": "artifacts-workflow-efficiency-20261028-r1.md",
-    "relative_path": "../../artifacts/workflow-efficiency-20261028-r1",
+    "workspace_path": "artifacts/流程效率-20261028-r1",
+    "proxy": "artifacts-流程效率-20261028-r1.md",
+    "relative_path": "../../artifacts/流程效率-20261028-r1",
     "repository_url": null,
     "tracked": false
   },
@@ -217,9 +217,9 @@
     "tracked": true
   },
   {
-    "workspace_path": "artifacts/telemetry-repair-20261029-r1",
-    "proxy": "artifacts-telemetry-repair-20261029-r1.md",
-    "relative_path": "../../artifacts/telemetry-repair-20261029-r1",
+    "workspace_path": "artifacts/遥测修复-20261029-r1",
+    "proxy": "artifacts-遥测修复-20261029-r1.md",
+    "relative_path": "../../artifacts/遥测修复-20261029-r1",
     "repository_url": null,
     "tracked": false
   },
@@ -264,5 +264,12 @@
     "relative_path": "../../stages/04-frontend/dev/mock-server.mjs",
     "repository_url": null,
     "tracked": false
+  },
+  {
+    "workspace_path": "stages/02-backend/deploy/home-dev/README.md",
+    "proxy": "stages-02-backend-deploy-home-dev-README.md",
+    "relative_path": "../../stages/02-backend/deploy/home-dev/README.md",
+    "repository_url": "https://github.com/Cyan-carp/PowerSystem/blob/main/stages/02-backend/deploy/home-dev/README.md",
+    "tracked": true
   }
 ]

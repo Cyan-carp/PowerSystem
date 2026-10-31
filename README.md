@@ -2,6 +2,9 @@
 
 # 源网智联 · 新能源设备智能运维平台
 
+> **home-dev开发环境**：本机Docker Desktop可关闭；远端中间件与原生API的连接、两种开发方式及旧脚本限制见[后端远程开发说明](stages/02-backend/deploy/home-dev/README.md)。以下本地启动命令仅适用于有意在本机启动Docker的独立环境。
+
+
 新能源场站的设备监测、告警解读与受控运维一体化平台
 
 An integrated operations platform for renewable-energy assets — monitoring, alarm interpretation and guarded automation.
@@ -84,7 +87,7 @@ An integrated operations platform for renewable-energy assets — monitoring, al
 | 依赖 | 版本 |
 | --- | --- |
 | Windows PowerShell | 5.1 或 7（脚本为 PowerShell 编写） |
-| Docker Desktop | Engine 处于 running |
+| Docker | 本地模式需Desktop引擎running；home-dev模式需Docker CLI、SSH及远端引擎 |
 | Go | 1.24+ |
 | Python | 3.12 |
 | Node.js | 20.19+ 或 22.12+ |
@@ -227,7 +230,7 @@ To use the platform, open the [website](https://www.cyancarp.cn/) or install the
 
 For local development, follow the [four-step setup](#本地四步启动) above to start the data chain, backend and frontend in order.
 
-Requires Windows PowerShell 5.1+, Docker Desktop, Go 1.24+, Python 3.12 and Node 20.19+/22.12+. The console runs at `http://127.0.0.1:5173` and proxies `/api` and `/ws` to `127.0.0.1:8080`.
+Requires Windows PowerShell 5.1+, Docker CLI (Desktop engine locally or via home-dev), Go 1.24+, Python 3.12 and Node 20.19+/22.12+. The console runs at `http://127.0.0.1:5173` and proxies `/api` and `/ws` to `127.0.0.1:8080`.
 
 **Notes**
 

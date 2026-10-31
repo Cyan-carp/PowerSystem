@@ -1,5 +1,8 @@
 # 阶段一 · 数据链路运行说明
 
+> **home-dev开发**：依赖已迁到远端；当前连接命令见[远程开发说明](../02-backend/deploy/home-dev/README.md)。本页原本地Compose/preflight仅适用于有意启动本地引擎的模式，不用于home-dev日常连接。前端可直接经隧道连接远端API。
+
+
 > 供数现状：共享发布锁修复已于 2026-10-21 07:39 发布（`fleet-mqtt-lockfix-20261021-r1`，真实 Broker 探针 1430/1430），首轮有效观测恢复为 all=143、business=140、baseline=3。当前生产指针、设备口径与长观察结论见[当前系统状态](../../notes/00-当前系统状态.md)；容量与稳定性证据见[容量与长时间测试记录](../../notes/01-项目调研规划与开发建设记录/03-第三版-设备扩容/03-容量与稳定性验证/08-容量与长时间测试记录.md)。
 
 > 本地链路：**3 台 100 kW 光伏逆变器模拟器 → MQTT QoS 1 → EMQX → Go 网关 → TDengine**。
@@ -16,7 +19,7 @@
 | 依赖 | 要求 |
 | --- | --- |
 | PowerShell | Windows 自带 5.1 或 PowerShell 7 |
-| Docker | Docker Desktop（显示 Engine running） |
+| Docker | 以下本地隔离模式需Desktop引擎running；home-dev方式见页首链接 |
 | Python | 3.12+ |
 | Go | 1.24+ |
 

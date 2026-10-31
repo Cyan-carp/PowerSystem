@@ -1,5 +1,8 @@
 # 源网智联 · 前端（第四阶段）
 
+> **home-dev开发**：依赖已迁到远端；当前连接命令见[远程开发说明](../02-backend/deploy/home-dev/README.md)。本页原本地Compose/preflight仅适用于有意启动本地引擎的模式，不用于home-dev日常连接。前端可直接经隧道连接远端API。
+
+
 新能源场站云边协同智能运维平台的前端：**浅色控制台**（灰蓝底、白卡片、蓝色主色、环图与面积图）。
 Vue 3 + Vite + TypeScript，**不带 UI 组件库与图表库**——`Drawer` / `StatusChip` / `ToastHost` /
 `PowerChart` / `DonutGauge` / `Icon` 都是本目录自研。

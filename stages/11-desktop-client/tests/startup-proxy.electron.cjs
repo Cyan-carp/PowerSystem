@@ -4,7 +4,7 @@ const { once } = require('node:events');
 const fs = require('node:fs');
 const path = require('node:path');
 const assert = require('node:assert/strict');
-const run = path.resolve('../../artifacts/v5-desktop/s01-20261026-r1');
+const run = path.resolve('../../artifacts/v5-桌面客户端/S01-基础安装版-20261026-r1');
 const proxy = createStartupProxy();
 let app;
 const report = { kind: 'test-only-proxy-with-real-fixed-HTTPS-no-login', status: 'running' };

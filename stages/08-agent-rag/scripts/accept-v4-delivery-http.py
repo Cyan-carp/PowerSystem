@@ -6,7 +6,7 @@ from uuid import uuid4,UUID
 import xml.etree.ElementTree as ET
 import asyncpg,httpx
 ROOT=Path(__file__).resolve().parents[3]
-OUT=ROOT/'artifacts/v4-assistant/s05-20261023-r1'
+OUT=ROOT/'artifacts/v4-智能助手/S05-业务分析-20261023-r1'
 DSN='postgresql://s05_test@127.0.0.1:25435/v4_s05_20261023_r1_test'
 BASE='http://127.0.0.1:28952'
 

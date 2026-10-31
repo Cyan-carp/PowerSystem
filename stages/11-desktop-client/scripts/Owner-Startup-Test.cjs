@@ -6,7 +6,7 @@ const { spawn, execFileSync } = require('node:child_process');
 const crypto = require('node:crypto');
 const { createStartupProxy } = require('./startup-proxy.cjs');
 const { resolveInstallDirectory } = require('./installed-files.cjs');
-const run = path.resolve(__dirname, '../../../artifacts/v5-desktop/s01-20261026-r1');
+const run = path.resolve(__dirname, '../../../artifacts/v5-桌面客户端/S01-基础安装版-20261026-r1');
 const proxy = createStartupProxy();
 const consoleInput = readline.createInterface({ input: process.stdin, output: process.stdout });
 let launcher;

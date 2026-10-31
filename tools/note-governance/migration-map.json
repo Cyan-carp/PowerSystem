@@ -360,7 +360,7 @@
     {
       "type": "large-asset",
       "from": "notes/05-设备知识设计素材与历史归档资产/runtime",
-      "to": "artifacts/asset-archive"
+      "to": "artifacts/历史归档"
     },
     {
       "type": "note-graph",
@@ -1191,7 +1191,7 @@
     "规范/项目验收与收尾清单.md": "notes/02-工程规范边界与验收治理/项目验收与收尾清单.md",
     "资产/UI-redesign-mockup/index-v2.html": "notes/05-设备知识设计素材与历史归档资产/UI-redesign-mockup/index-v2.html",
     "资产/UI-redesign-mockup/index.html": "notes/05-设备知识设计素材与历史归档资产/UI-redesign-mockup/index.html",
-    "资产/runtime/agent-status-fix-20261009.tar.gz": "artifacts/asset-archive/agent-status-fix-20261009.tar.gz",
+    "资产/runtime/agent-status-fix-20261009.tar.gz": "artifacts/历史归档/agent-status-fix-20261009.tar.gz",
     "资产/设备知识/SUN2000-100KTL-M2-仿真参考.md": "notes/05-设备知识设计素材与历史归档资产/设备知识/SUN2000-100KTL-M2-仿真参考.md",
     "资产/设备知识/手册来源清单.json": "notes/05-设备知识设计素材与历史归档资产/设备知识/手册来源清单.json",
     "部署/独立云服务器部署/01-架构与前置门槛.md": "notes/04-系统部署发布备份与变更记录/独立云服务器部署/01-架构与前置门槛.md",

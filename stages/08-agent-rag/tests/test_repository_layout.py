@@ -137,7 +137,7 @@ class RepositoryLayoutTest(unittest.TestCase):
         administrative=script('stages/07-agent/deploy/sync-v2m4-source.py')['administrative']
         for name in ('notes/02-工程规范边界与验收治理/项目工程规范/00-索引·项目工程规范.md','notes/03-平台使用运维与二次开发手册/平台使用手册.md','notes/04-系统部署发布备份与变更记录/部署与运维日志/14-本地服务器部署笔记.md','notes/01-项目调研规划与开发建设记录/02-第二版-智能体升级/index.md'):
             self.assertTrue(administrative(PurePosixPath(name)),name)
-        for name in ('notes/02-工程规范边界与验收治理/private/secret.md','artifacts/asset-archive/release.md','notes/03-平台使用运维与二次开发手册/../.env','deploy/edge-server/独立云服务器部署/config/new.sh'):
+        for name in ('notes/02-工程规范边界与验收治理/private/secret.md','artifacts/历史归档/release.md','notes/03-平台使用运维与二次开发手册/../.env','deploy/edge-server/独立云服务器部署/config/new.sh'):
             self.assertFalse(administrative(PurePosixPath(name)),name)
 
     def test_packager_allowed_paths_retain_narrow_private_boundaries(self):
@@ -148,7 +148,7 @@ class RepositoryLayoutTest(unittest.TestCase):
         for name in ('notes/05-设备知识设计素材与历史归档资产/设备知识/source.md','notes/05-设备知识设计素材与历史归档资产/设备知识/手册来源清单.json'):
             self.assertTrue(manual(Path(name)),name)
         for allowed in (general,manual):
-            for name in ('artifacts/asset-archive/archive.tar.gz','notes/02-工程规范边界与验收治理/private/secret.md','notes/05-设备知识设计素材与历史归档资产/设备知识/private/secret.json','notes/03-平台使用运维与二次开发手册/../.env'):
+            for name in ('artifacts/历史归档/archive.tar.gz','notes/02-工程规范边界与验收治理/private/secret.md','notes/05-设备知识设计素材与历史归档资产/设备知识/private/secret.json','notes/03-平台使用运维与二次开发手册/../.env'):
                 self.assertFalse(allowed(Path(name)),name)
         self.assertFalse(manual(Path('notes/05-设备知识设计素材与历史归档资产/设备知识/original.pdf')))
 
@@ -208,7 +208,7 @@ class RepositoryLayoutTest(unittest.TestCase):
         for name in ('stages/04-frontend/deploy/backup.sh','stages/07-agent/deploy/install-reference-manual.sh'):
             raw=(ROOT/name).read_text(encoding='utf-8')
             self.assertIn('$project_dir/runtime/',raw)
-            self.assertNotIn('$project_dir/artifacts/asset-archive/',raw)
+            self.assertNotIn('$project_dir/artifacts/历史归档/',raw)
         source=(ROOT/'stages/08-agent-rag/deploy/boundary-release.py').read_text(encoding='utf-8')
         self.assertIn("r.is_relative_to(ROOT/'runtime')",source)
 

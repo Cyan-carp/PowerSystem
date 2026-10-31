@@ -26,7 +26,7 @@ class TestDirectory:
     """Windows sandbox's default TEMP has an incompatible private-directory ACL."""
 
     def __init__(self):
-        self.root = Path(os.environ.get("POWERSYSTEM_FRP_TEST_ROOT", str(Path(__file__).resolve().parents[4] / "artifacts/frp-source-tests")))
+        self.root = Path(os.environ.get("POWERSYSTEM_FRP_TEST_ROOT", str(Path(__file__).resolve().parents[4] / "artifacts/来源自动维护-测试目录")))
         self.root.mkdir(parents=True, exist_ok=True)
         self.path = self.root / uuid4().hex
         self.path.mkdir(mode=0o755)

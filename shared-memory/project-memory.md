@@ -74,3 +74,8 @@
 - 工程治理三入口已统一到notes/02-工程规范边界与验收治理的项目工程规范、运行产物说明、项目验收与收尾清单文件夹，各以00索引导航，根层不保留同名重复笔记。所有者确认开发效率优先、取消AI驻守长观察；明确免门禁/免测试/本次免备份的授权按03/05直接接受登记，未执行项不写技术通过，原始数据与权限边界保留。
 
 - 当前告警可从telemetry_snapshots的精确TD确认新鲜源独立评估，和历史路径共用持久单调telemetry_alarm_progress/事务outbox；alarm_evaluation=evaluated不等于inbox processed_at/business成功或能源提交。历史缺口与接续顺序保留，不补发陈旧告警；前端会话内防重、短断线只补查新鲜待处理告警，退出清理原桌面v1通知会话。实际部署仍只认唯一状态页。
+
+## home-dev开发连接
+
+- 开发代码/Git在本机，远端开发中间件通过home-dev SSH别名/context管理；生产VM117与home-dev分开。Docker控制连接不替代应用数据隧道；5容器对应7数据/日志卷，原生Windows API独立于容器重启策略。
+- 远程开发两种方式与命令唯一维护在stages/02-backend/deploy/home-dev/README.md；所有者要求后续本地启动后端及管理Docker先按该手册执行。日常显式--context home-dev；旧preflight/故障回归含默认Compose和Broker变更，不能当只读远程连接检查。当前完整性/重启恢复是否签收只认状态及日志73。

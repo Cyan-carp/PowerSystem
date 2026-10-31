@@ -3,7 +3,7 @@ import asyncio,hashlib,json,os,sys,time
 from pathlib import Path
 from datetime import datetime,timezone
 ROOT=Path(__file__).resolve().parents[3]
-OUT=ROOT/'artifacts/v4-assistant/s06-20261024-r1'
+OUT=ROOT/'artifacts/v4-智能助手/S06-安全审查-20261024-r1'
 for p in ('08-agent-rag','09-ops-agent','10-security-agent'):sys.path.insert(0,str(ROOT/'stages'/p))
 import httpx,uvicorn
 from fastapi import Request
@@ -18,7 +18,7 @@ SEC_REQUEST='s06-local-synthetic-sec-request-0000000'
 SEC_RESULT='s06-local-synthetic-sec-result-00000000'
 
 def candidate(role):
-    reg=json.loads((ROOT/'artifacts/v4-assistant/s03-20261023-r1/candidate-registry.json').read_text(encoding='utf-8-sig'))
+    reg=json.loads((ROOT/'artifacts/v4-智能助手/S03-持久任务-20261023-r1/candidate-registry.json').read_text(encoding='utf-8-sig'))
     value=next(x for x in reg['candidates'] if x['role']==role)
     assert value['endpoint']=='https://api.deepseek.com' and value['model']=='deepseek-flash' and value['thinking']=='disabled'
     return Path(value['credential_file']).read_text(encoding='utf-8-sig').strip()

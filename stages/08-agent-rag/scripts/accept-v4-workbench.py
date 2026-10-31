@@ -19,7 +19,7 @@ from rag_agent.tools import Tools
 from rag_agent.provider import Provider
 from rag_agent.run_store import unpack,encode
 DSN='postgresql://s04_test@127.0.0.1:25434/v4_s04_20261023_r1_test'
-OUT=ROOT/'artifacts/v4-assistant/s04-20261023-r1'
+OUT=ROOT/'artifacts/v4-智能助手/S04-工作台-20261023-r1'
 SERVICE='s04-local-synthetic-service-token-00000000'
 
 class BrowserProvider:
@@ -53,7 +53,7 @@ class BrowserTools(Tools):
 
 async def serve():
     cfg=Config(model='deepseek-flash',llm_url='https://api.deepseek.com',llm_key='',service_token=SERVICE,database_url=DSN,redis_url='redis://127.0.0.1:1',v4_assistant_enabled=True,v4_runs_enabled=True,model_thinking='disabled',total_timeout=120)
-    rows=json.loads((ROOT/'artifacts/v4-assistant/s03-20261023-r1/candidate-registry.json').read_text(encoding='utf-8-sig'))['candidates']
+    rows=json.loads((ROOT/'artifacts/v4-智能助手/S03-持久任务-20261023-r1/candidate-registry.json').read_text(encoding='utf-8-sig'))['candidates']
     row=next(r for r in rows if r['role']=='stage8_assistant')
     assert row['endpoint']==cfg.llm_url and row['model']==cfg.model and row['thinking']=='disabled'
     cfg.llm_key=Path(row['credential_file']).read_text(encoding='utf-8-sig').strip()

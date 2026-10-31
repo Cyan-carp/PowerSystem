@@ -1,6 +1,6 @@
 // Test/build tooling only. Never imported by the distributable application.
 const path = require('node:path');
-const root = path.resolve(__dirname, '../../../artifacts/v5-desktop');
+const root = path.resolve(__dirname, '../../../artifacts/v5-桌面客户端');
 function testRunDirectory(value = process.env.POWERSYSTEM_TEST_RUN_DIRECTORY) {
   const run = path.resolve(value || path.join(root, 's02-20261026-r1'));
   const relative = path.relative(root, run);

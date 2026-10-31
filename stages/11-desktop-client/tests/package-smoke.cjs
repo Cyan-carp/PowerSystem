@@ -6,7 +6,7 @@ const { spawn } = require('node:child_process');
 const asar = require('@electron/asar');
 const { getCurrentFuseWire, FuseV1Options } = require('@electron/fuses');
 const yaml = require('js-yaml');
-const run = path.resolve(process.argv[2] || '../../artifacts/v5-desktop/s02-20261026-r1');
+const run = path.resolve(process.argv[2] || '../../artifacts/v5-桌面客户端/S02-运维桌面-20261026-r1');
 const unpacked = path.join(run, 'package/win-unpacked');
 const exe = path.join(unpacked, 'PowerSystem Desktop.exe');
 const hash = target => crypto.createHash('sha256').update(fs.readFileSync(target)).digest('hex');

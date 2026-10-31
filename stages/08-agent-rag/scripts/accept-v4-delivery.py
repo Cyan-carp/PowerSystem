@@ -16,7 +16,7 @@ from rag_agent.provider import Provider
 from rag_agent.store import Store
 from rag_agent.tools import Tools
 
-OUT=ROOT/'artifacts/v4-assistant/s05-20261023-r1'
+OUT=ROOT/'artifacts/v4-智能助手/S05-业务分析-20261023-r1'
 DSN='postgresql://s05_test@127.0.0.1:25435/v4_s05_20261023_r1_test'
 SERVICE='s05-local-synthetic-service-token-00000000'
 
@@ -59,7 +59,7 @@ class AcceptanceProvider:
 
 async def serve():
     cfg=Config(model='deepseek-flash',llm_url='https://api.deepseek.com',llm_key='',service_token=SERVICE,database_url=DSN,redis_url='redis://127.0.0.1:1',backend_url='http://127.0.0.1:28952',v4_assistant_enabled=True,v4_runs_enabled=True,v4_artifacts_enabled=True,artifact_dir=OUT/'files',model_thinking='disabled',total_timeout=120)
-    registry=json.loads((ROOT/'artifacts/v4-assistant/s03-20261023-r1/candidate-registry.json').read_text(encoding='utf-8-sig'))
+    registry=json.loads((ROOT/'artifacts/v4-智能助手/S03-持久任务-20261023-r1/candidate-registry.json').read_text(encoding='utf-8-sig'))
     candidate=next(r for r in registry['candidates'] if r['role']=='stage8_assistant')
     assert candidate['endpoint']==cfg.llm_url and candidate['model']==cfg.model and candidate['thinking']=='disabled'
     cfg.llm_key=Path(candidate['credential_file']).read_text(encoding='utf-8-sig').strip()

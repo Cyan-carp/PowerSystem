@@ -44,7 +44,7 @@ def write(path,value):
 def config(official=False):
     cfg=Config(model='deepseek-flash',llm_url='https://api.deepseek.com',llm_key='',service_token=TOKEN,database_url=DSN,redis_url='redis://127.0.0.1:1',v4_assistant_enabled=True,v4_runs_enabled=True,model_thinking='disabled',total_timeout=120)
     if official:
-        rows=json.loads((ROOT/'artifacts/v4-assistant/s02-20261023-r2/candidate-registry.json').read_text(encoding='utf-8-sig'))['candidates']
+        rows=json.loads((ROOT/'artifacts/v4-智能助手/S02-回答质量-20261023-r2/candidate-registry.json').read_text(encoding='utf-8-sig'))['candidates']
         row=next(r for r in rows if r['role']=='stage8_assistant')
         assert row['endpoint']=='https://api.deepseek.com' and row['model']=='deepseek-flash' and row['thinking']=='disabled'
         cfg.llm_key=Path(row['credential_file']).read_text(encoding='utf-8-sig').strip()
@@ -236,6 +236,6 @@ async def driver(args):
 
 
 if __name__=='__main__':
-    parser=argparse.ArgumentParser();parser.add_argument('--serve',action='store_true');parser.add_argument('--official',action='store_true');parser.add_argument('--output',type=Path,default=ROOT/'artifacts/v4-assistant/s03-20261023-r1')
+    parser=argparse.ArgumentParser();parser.add_argument('--serve',action='store_true');parser.add_argument('--official',action='store_true');parser.add_argument('--output',type=Path,default=ROOT/'artifacts/v4-智能助手/S03-持久任务-20261023-r1')
     args=parser.parse_args()
     asyncio.run(serve(args) if args.serve else driver(args))

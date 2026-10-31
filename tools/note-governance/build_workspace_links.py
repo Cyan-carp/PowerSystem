@@ -29,13 +29,14 @@ def today_beijing() -> str:
 
 GENERATED_DATE = today_beijing()
 ADDITIONAL_TARGETS = (
+    "stages/02-backend/deploy/home-dev/README.md",
     "stages/04-frontend/deploy/observe-telemetry.py",
     "stages/04-frontend/deploy/test_observe_telemetry.py",
-    "artifacts/telemetry-repair-20261029-r1",
+    "artifacts/遥测修复-20261029-r1",
     "stages/04-frontend/deploy/frontend-release-backup.py",
     "stages/04-frontend/deploy/test_compatible_release.py",
     ".github/workflows/release-checks.yml",
-    "artifacts/workflow-efficiency-20261028-r1",
+    "artifacts/流程效率-20261028-r1",
     "stages/11-desktop-client/README.md",
     "README.md",
     "AGENTS.md",

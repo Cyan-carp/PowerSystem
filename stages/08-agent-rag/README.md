@@ -4,6 +4,9 @@ tags: [源网智联, Agent, RAG, 源码运行]
 
 # 阶段8 通用 Agent 与向量 RAG
 
+> **home-dev开发**：依赖已迁到远端；当前连接命令见[远程开发说明](../02-backend/deploy/home-dev/README.md)。本页原本地Compose/preflight仅适用于有意启动本地引擎的模式，不用于home-dev日常连接。前端可直接经隧道连接远端API。
+
+
 > 2026-10-14当前：SEC-M4本机限定签收及r6追加准入通过；MA-C32～C35和最终文档门槛已完成，MA-M4及联合阶段四在声明范围正式技术签收。服务器r6/v5、恢复维护修订3；本机唯一批准动作保留，写窗口关闭，生产仅登记R0。
 
 > 2026-10-13历史路线：MA-M1～M3及SEC-M1既有签收保留；SEC-M2本机限定技术验收签收、窗口已关闭并实测阻断，可进入SEC-M3开发准备但未自动启动。安全前三阶段后先SEC-M4本地集成，再评估MA-M4发布。服务器保持既有发布。最新真相入口：[[notes/01-项目调研规划与开发建设记录/02-第二版-智能体升级/多智能体协作建设/05-安全审查模型/05-功能开发与阶段交付/02-强制门禁集成/03-SEC-M2测试与交付]]。
@@ -27,11 +30,11 @@ S02的七天单设备目标由阶段9固定`get_energy_report`读取`energy_dail
 从仓库根运行，独立批次路径不能与旧证据复用。旧Python313虚拟环境当前不可启动；测试使用单独Python3.12环境，具体测试子集锁在证据目录。S02补验的正式E5使用相同模型权重，另备CPU torch2.5.1、sentence-transformers3.3.1、transformers4.46.3隔离依赖；与生产依赖版本不同，锁与权重摘要保留于本批环境证据，不能宣称已验证生产镜像。
 
 ```powershell
-$S02Python = 'artifacts/v4-assistant/s02-20261023-r1/venv/Scripts/python.exe'
+$S02Python = 'artifacts/v4-智能助手/S02-回答质量-20261023-r1/venv/Scripts/python.exe'
 $env:PYTHONPATH = 'stages/08-agent-rag'
-& $S02Python -X utf8 -m pytest stages/08-agent-rag/tests -q -p no:cacheprovider --basetemp=artifacts/v4-assistant/<新批次>/pytest --junitxml=artifacts/v4-assistant/<新批次>/pytest.xml
-& $S02Python -X utf8 stages/08-agent-rag/scripts/knowledge.py --dry-run --report artifacts/v4-assistant/<新批次>/knowledge-dryrun.json
-& $S02Python -X utf8 stages/08-agent-rag/scripts/audit-v4-knowledge.py --skip-qdrant --report artifacts/v4-assistant/<新批次>/knowledge-files.json --strict
+& $S02Python -X utf8 -m pytest stages/08-agent-rag/tests -q -p no:cacheprovider --basetemp=artifacts/v4-智能助手/<新批次>/pytest --junitxml=artifacts/v4-智能助手/<新批次>/pytest.xml
+& $S02Python -X utf8 stages/08-agent-rag/scripts/knowledge.py --dry-run --report artifacts/v4-智能助手/<新批次>/knowledge-dryrun.json
+& $S02Python -X utf8 stages/08-agent-rag/scripts/audit-v4-knowledge.py --skip-qdrant --report artifacts/v4-智能助手/<新批次>/knowledge-files.json --strict
 ```
 
 字符回退分片标记`authoritative=false`，只能检查清单/正文提取；正式集合审查需真实本地Embedding及Qdrant，去掉`--skip-qdrant`并配置实际`RAG_EMBEDDING_PATH/RAG_QDRANT_URL/RAG_COLLECTION`。审查会固定物理集合、核对完整扫描/混合摘要及别名变化，不导入、不切换别名。
@@ -42,8 +45,8 @@ $env:PYTHONPATH = 'stages/08-agent-rag'
 . stages/08-agent-rag/scripts/common.ps1
 Set-RAGEnvironment '<既有仅供评测的私有配置>.env'
 & $S02Python -X utf8 stages/08-agent-rag/scripts/accept-v4-model.py --check-only
-& $S02Python -X utf8 stages/08-agent-rag/scripts/accept-v4-model.py --run --rounds 3 --output artifacts/v4-assistant/<新批次>/model.json
-& $S02Python -X utf8 stages/08-agent-rag/scripts/accept-v4-model.py --run --cases Q02 --rounds 30 --output artifacts/v4-assistant/<新批次>/latency.json
+& $S02Python -X utf8 stages/08-agent-rag/scripts/accept-v4-model.py --run --rounds 3 --output artifacts/v4-智能助手/<新批次>/model.json
+& $S02Python -X utf8 stages/08-agent-rag/scripts/accept-v4-model.py --run --cases Q02 --rounds 30 --output artifacts/v4-智能助手/<新批次>/latency.json
 ```
 
 每步usage累计，计价未知为null；输出正文、工具调用、三轮历史及源码摘要留在忽略证据区。`status=ok`只表示调用完成，逐题质量和问题完成度另行评分；不从一次探针推断长期质量。历史失败、夹具修订前后与最终批次必须分别保留。S02不上传、不部署、不进入S03。
@@ -259,8 +262,8 @@ Supervisor保持聊天/澄清/知识和联网，对平台查询和基础设施�
 $env:RAG_RUN_TEST_URL='postgresql://s03_test@127.0.0.1:25433/v4_s03_20261023_r1_regression_test'
 $env:PYTHONPATH=(Resolve-Path stages/08-agent-rag).Path
 python -m pytest stages/08-agent-rag/tests/test_v4_runs.py -q
-python stages/08-agent-rag/scripts/accept-v4-runs.py --output artifacts/v4-assistant/s03-20261023-r1/recovery-rerun
-python stages/08-agent-rag/scripts/accept-v4-runs.py --official --output artifacts/v4-assistant/s03-20261023-r1/model-rerun
+python stages/08-agent-rag/scripts/accept-v4-runs.py --output artifacts/v4-智能助手/S03-持久任务-20261023-r1/recovery-rerun
+python stages/08-agent-rag/scripts/accept-v4-runs.py --official --output artifacts/v4-智能助手/S03-持久任务-20261023-r1/model-rerun
 ```
 
 官方模式从S02 candidate-registry读取stage8_assistant凭据文件引用，仅发送合成问题与夹具。每次独立output保留失败批，受理与最终完成各30样本，不统计快速失败为成功性能。依赖按requirements安装；本批实际解释器/环境锁与完整回归设置见证据run-regression.ps1。新受理要同时开启V4_ASSISTANT_ENABLED/V4_RUNS_ENABLED；生产保持默认关闭。服务加密密钥轮换前排空恢复任务，过期身份不能绕过阶段9复核。

@@ -252,7 +252,7 @@ def main(argv=None):
     parser.add_argument("--rounds", type=int, default=3)
     parser.add_argument("--max-steps", type=int, default=8)
     parser.add_argument("--output", type=Path,
-                        default=Path("artifacts/v4-assistant/s02-20261023-r1/model-eval.json"))
+                        default=Path("artifacts/v4-智能助手/S02-回答质量-20261023-r1/model-eval.json"))
     args = parser.parse_args(argv)
     if args.rounds < 3 or args.max_steps < 1:
         parser.error("rounds must be at least 3 and max-steps must be positive")

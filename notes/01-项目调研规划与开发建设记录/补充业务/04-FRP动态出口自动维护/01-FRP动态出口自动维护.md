@@ -209,7 +209,7 @@ R730XD 单次执行认证刷新，分别确认白名单状态与 HTTPS ping，�
 - 入口核对：删除冲突规则后SSH恢复，收紧7000后可信HTTPS ping200；20个生产容器与r2基线一致，无重启和OOM。此项为配置变更后的当前可用性核对，不是业务全套验收或自然换址实测。
 - 代码1.1.1补充重叠拒绝规则预检，已双端停用安装且源码摘要一致；仅运行新增的1项隔离检查并通过，没有重复原32/37项套件，不能将旧套件写成新版本全套通过。
 - 此批结束时待办：本人已关闭卡住的RAM页面，改用单页按用户、策略、授权顺序操作；后续完成情况见r4条目。已审查策略JSON另存新云root私有文件供复制，命令见脚本README，不重复维护命令正文。
-- 证据：本机`artifacts/frp-source-20261016-r3-console/`、新云`/opt/powersystem-edge/runtime/frp-source-20261016-r3-console/`、R730XD`/opt/powersystem/runtime/frp-source-20261016-r3-console/`；截图、真实ID和来源只在私有批次，不加入公开笔记。
+- 证据：本机`artifacts/来源自动维护-SAS控制台-20261016-r3/`、新云`/opt/powersystem-edge/runtime/frp-source-20261016-r3-console/`、R730XD`/opt/powersystem/runtime/frp-source-20261016-r3-console/`；截图、真实ID和来源只在私有批次，不加入公开笔记。
 
 **2026-10-16 · 真实认证与定时维护启用（r4-ram-activation）**
 
@@ -226,12 +226,12 @@ R730XD 单次执行认证刷新，分别确认白名单状态与 HTTPS ping，�
 - 当前来源刷新返回`allowlist_updated=true`、`entry_recovered=true`、`changed=false`。两层规则原样保持，20个生产容器与r2基线一致，12个健康、8个无健康检查，重启计数均0、无OOM；业务镜像、模拟数据、旧云入口及7070管理来源保持原状。
 - 此批没有重跑隔离套件或业务全套验收，没有主动断网、换址或强制写回相同规则。真实`ModifyFirewallRule`写分支与真实公网换址恢复尚未实测，待自然事件按独立批次补记；不能将本次`changed=false`记为实际换址成功。
 - 自动维护已启用，正常每次执行完成后60～65秒再检查。恢复异常先看客户端状态及云端失败代码；只读成功不证明写权限已实测，按原RAM单规则策略维护，不额外授予FullAccess。
-- 证据：本机`artifacts/frp-source-20261016-r4-ram-activation/`、新云`/opt/powersystem-edge/runtime/frp-source-20261016-r4-ram-activation/`、R730XD`/opt/powersystem/runtime/frp-source-20261016-r4-ram-activation/`。内含配置/Nginx前副本、真实云规则前后、初始化、认证、unit/timer和20容器核对；所有真实ID、来源及密钥均不进入公开文档。
+- 证据：本机`artifacts/来源自动维护-RAM激活-20261016-r4/`、新云`/opt/powersystem-edge/runtime/frp-source-20261016-r4-ram-activation/`、R730XD`/opt/powersystem/runtime/frp-source-20261016-r4-ram-activation/`。内含配置/Nginx前副本、真实云规则前后、初始化、认证、unit/timer和20容器核对；所有真实ID、来源及密钥均不进入公开文档。
 
 **2026-10-18 · 自然事件验证准备（r5-prep，未实测）**
 
 - 本批只做验证准备，不声明换址已验证。真实换址仍待自然事件发生；届时按本批手册执行、以 `r5-natural-event` 批次补记，不能把隔离测试或本次准备写成已上线。
-- 新增验证资产于 `deploy/artifacts/frp-source-tests/`：`自然事件验证手册.md`（四环节口径、执行步骤、证据采集与归档）与 `verify-natural-event.py`（新云侧只读脱敏核对器，不调用写分支、不改生产）。
+- 新增验证资产于 `deploy/artifacts/来源自动维护-测试目录/`：`自然事件验证手册.md`（四环节口径、执行步骤、证据采集与归档）与 `verify-natural-event.py`（新云侧只读脱敏核对器，不调用写分支、不改生产）。
 - 四环节口径：①SAS `ModifyFirewallRule` 写分支——读回目标规则来源等于新来源、历史 `committed=true`、无云错误码；②主机防火墙同步——7000 规则来源与 `allowed-client-ipv4`、accepted 两层一致且其他规则未变；③FRP 重连——7000/3667/7070 恢复监听、未手动重启；④HTTPS 恢复——可信 ping 200 且客户端 `entry_recovered=true`。
 - 本机重跑隔离套件 `test_frp_source.py` 33 项通过（原 r2 为 32 项，多出 1 项为增量保护用例），确认工具链就绪；不重跑 Linux socket 套件（37 项已在 r4 双端通过）。
 - 本批未连接服务器、未触发或模拟换址、未调用真实 `ModifyFirewallRule`。连接与执行顺序见验证手册。

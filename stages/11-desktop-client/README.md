@@ -27,7 +27,7 @@
 | scripts/Collect-S02Evidence.ps1 | 真实用户视角安装/进程/摘要/偏好/固定码采证 |
 | scripts/Owner-S02-Test.cmd / .cjs | ASCII/CRLF本人入口模板、固定服务就绪核验 |
 
-S01原夹具与采证脚本保留作历史，不用于S02关闭/通知验收。所有S02产物与日志归Git忽略的 `artifacts/v5-desktop/s02-20261026-r1/`；原S01批次不改。
+S01原夹具与采证脚本保留作历史，不用于S02关闭/通知验收。所有S02产物与日志归Git忽略的 `artifacts/v5-桌面客户端/S02-运维桌面-20261026-r1/`；原S01批次不改。
 
 ## 构建与技术验证（Codex执行）
 
@@ -35,7 +35,7 @@ S01原夹具与采证脚本保留作历史，不用于S02关闭/通知验收。�
 
 ```powershell
 $env:PATH = 'C:\Users\23103\.cache\codex-runtimes\codex-primary-runtime\dependencies\node\bin;' + $env:PATH
-$run = [IO.Path]::GetFullPath('../../artifacts/v5-desktop/s02-20261026-r1')
+$run = [IO.Path]::GetFullPath('../../artifacts/v5-桌面客户端/S02-运维桌面-20261026-r1')
 $env:ELECTRON_BUILDER_CACHE = Join-Path $run 'builder-cache'
 $env:CSC_IDENTITY_AUTO_DISCOVERY = 'false'
 node 'C:/Program Files/nodejs/node_modules/npm/bin/npm-cli.js' run typecheck
@@ -47,7 +47,7 @@ node 'C:/Program Files/nodejs/node_modules/npm/bin/npm-cli.js' test
 ```powershell
 Push-Location ../04-frontend
 node 'C:/Program Files/nodejs/node_modules/npm/bin/npm-cli.js' test
-node 'C:/Program Files/nodejs/node_modules/npm/bin/npm-cli.js' run build -- --outDir ../../artifacts/v5-desktop/s02-20261026-r1/frontend
+node 'C:/Program Files/nodejs/node_modules/npm/bin/npm-cli.js' run build -- --outDir ../../artifacts/v5-桌面客户端/S02-运维桌面-20261026-r1/frontend
 Pop-Location
 node scripts/build-isolated.cjs
 node scripts/s02-fixture.cjs
@@ -155,7 +155,7 @@ node tests/package-smoke.cjs
 此命令保持锁定，最多30分钟；另一个终端完成本人保存失败反馈后，核下载失败固定码、目标原hash与.part清理，再释放本轮锁：
 
 ```powershell
-New-Item -ItemType File -Path '../../artifacts/v5-desktop/s02-20261026-r1/stop-save-target-lock.flag'
+New-Item -ItemType File -Path '../../artifacts/v5-桌面客户端/S02-运维桌面-20261026-r1/stop-save-target-lock.flag'
 ```
 
 如果系统原生框提前拒绝目标，按实际提示记录，不把取消当作主进程保存失败。夹具不入安装包，不影响生产与其他文件。
@@ -171,7 +171,7 @@ New-Item -ItemType File -Path '../../artifacts/v5-desktop/s02-20261026-r1/stop-s
 提前停止时，仅创建本轮精确停止标记：
 
 ```powershell
-New-Item -ItemType File -Path '../../artifacts/v5-desktop/s02-20261026-r1/stop-owner-evidence-watch.flag'
+New-Item -ItemType File -Path '../../artifacts/v5-桌面客户端/S02-运维桌面-20261026-r1/stop-owner-evidence-watch.flag'
 ```
 
 电脑禁止重启；睡眠不能执行时如实记未执行，不用模拟resume替代。关闭和卸载之间至少停留8秒，保留自动采证时间。
@@ -181,22 +181,22 @@ New-Item -ItemType File -Path '../../artifacts/v5-desktop/s02-20261026-r1/stop-o
 实际取证脚本保存在本轮忽略目录，只包含固定inventory/rag/alarms查询。经既有7070管理入口与PVE/QGA定位DL380G9/VM117，断言guest hostname=powersystem-prod；精确项目Postgres容器内BEGIN READ ONLY、10秒语句超时、SHOW transaction_read_only、COMMIT。只输出计数/时间/状态，不输出连接串/认证密封/业务正文，不上传项目文件。
 
 ```powershell
-& 'C:/Users/23103/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/python.exe' '../../artifacts/v5-desktop/s02-20261026-r1/server-readonly-probe.py' rag
-& 'C:/Users/23103/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/python.exe' '../../artifacts/v5-desktop/s02-20261026-r1/server-readonly-probe.py' alarms
+& 'C:/Users/23103/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/python.exe' '../../artifacts/v5-桌面客户端/S02-运维桌面-20261026-r1/server-readonly-probe.py' rag
+& 'C:/Users/23103/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/python.exe' '../../artifacts/v5-桌面客户端/S02-运维桌面-20261026-r1/server-readonly-probe.py' alarms
 ```
 
 该脚本绑定本次两段实际退出窗；新批次先重新核身份/时窗，不能沿用旧结论。没有有效任务或窗口内没有新增记录均不通过，不自动创建、恢复或批准任务。
 
 ## T16定向补测入口（R2）
 
-`artifacts/v5-desktop/s02-20261027-r2/`沿用R1同SHA256的0.2.0隔离包与原样前端构建，证据独立。R2入口S02-T16-Test.cmd为ASCII/CRLF，自动核本批服务，固定4175不变。测试脚本的run-directory只选择本仓库artifacts/v5-desktop内证据目录，不修改原生包来源。
+`artifacts/v5-桌面客户端/S02-运维桌面-20261027-r2/`沿用R1同SHA256的0.2.0隔离包与原样前端构建，证据独立。R2入口S02-T16-Test.cmd为ASCII/CRLF，自动核本批服务，固定4175不变。测试脚本的run-directory只选择本仓库artifacts/v5-desktop内证据目录，不修改原生包来源。
 
 Codex准备检查入口：
 
 ```powershell
 node --check scripts/s02-fixture.cjs
 node --check scripts/Owner-S02-Test.cjs
-node scripts/Owner-S02-Test.cjs --run-directory '../../artifacts/v5-desktop/s02-20261027-r2'
+node scripts/Owner-S02-Test.cjs --run-directory '../../artifacts/v5-桌面客户端/S02-运维桌面-20261027-r2'
 ```
 
 本人：打开R2入口并安装同摘要隔离包，A/synthetic登录后输入草稿不发送；控制页断开测试服务，确认断线；保持断线进入Windows睡眠30–60秒，唤醒后再点恢复测试服务，等实时重新连接并确认草稿/页面状态。保持客户端打开后统一反馈，由Codex核系统电源时刻与新ticket/WebSocket/只读请求时序，无任务/批准/下载重放。R2增加method/path/time合成请求日志，不记录认证或正文。不把睡眠时间延长本身当通过；必须实际观察到醒后恢复路径。
@@ -204,7 +204,7 @@ node scripts/Owner-S02-Test.cjs --run-directory '../../artifacts/v5-desktop/s02-
 T19需核真正退出窗口时，由Codex启动只读监测器（精确两个桌面程序名，30分钟上限；首次关闭后重开即结束）。点窗口×只是隐藏，不作为退出。
 
 ```powershell
-./scripts/Watch-S02TaskExit.ps1 -RunDirectory '../../artifacts/v5-desktop/s02-20261027-r2'
+./scripts/Watch-S02TaskExit.ps1 -RunDirectory '../../artifacts/v5-桌面客户端/S02-运维桌面-20261027-r2'
 ```
 
 本人申请恢复已有暂停任务后仍须原审批界面本人批准。记下下次触发，托盘右键退出所有项目客户端，跨该时间后再打开网页核历史并暂停；Codex对照进程0窗口和真实slot/run/artifact时刻。监测器不改变计划或代点批准。
@@ -214,15 +214,15 @@ T19需核真正退出窗口时，由Codex启动只读监测器（精确两个桌
 R3仅核自然新告警与当前退出状态；没有样本不能签收，不自动生成告警、改阈值或恢复任务。当前快照不等于期间连续退出，审计若有重开须重新绑定实际窗口。以下是本次固定查询；后续运行须用新证据目录并重新登记时窗，不覆盖R3。
 
 ```powershell
-./scripts/Collect-S02Evidence.ps1 -Phase closed -Isolated -RunDirectory '../../artifacts/v5-desktop/s02-20261027-r3'
-& 'C:/Users/23103/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/python.exe' '../../artifacts/v5-desktop/s02-20261027-r3/server-readonly-probe.py' alarms
+./scripts/Collect-S02Evidence.ps1 -Phase closed -Isolated -RunDirectory '../../artifacts/v5-桌面客户端/S02-运维桌面-20261027-r3'
+& 'C:/Users/23103/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/python.exe' '../../artifacts/v5-桌面客户端/S02-运维桌面-20261027-r3/server-readonly-probe.py' alarms
 ```
 
 ## S03执行入口与冻结候选
 
 以下为S03本轮操作；上面S02分组和命令保留作历史，不原样重跑。S03复用冻结0.2.0安装包，不重新打包覆盖S01/S02；原electron-builder默认输出仍为S02路径，任何后续新包必须显式指定一个新目录再冻结版本和摘要。
 
-- `artifacts/v5-desktop/s03-20261027-r1/`：本机回退/升级、团队交付、Workbuddy和正式材料。
+- `artifacts/v5-桌面客户端/S03-联合验收-20261027-r1/`：本机回退/升级、团队交付、Workbuddy和正式材料。
 - `s03-20261027-r2/`：中间前端候选与失败证据；`s03-20261027-r3/`：最终前端构建、兼容和发布。
 - 团队包SHA256：045f1aa62ba42428cbf43cffb07b05d6a44ee0545952ab59713880873a71ca23。
 - 0.1.0基础回退包SHA256：87f21ead5f0dee049510390810068962e6eff05e2646da1b6d25607466a60be5；无托盘、通知、原生保存和S02恢复。
@@ -234,7 +234,7 @@ R3仅核自然新告警与当前退出状态；没有样本不能签收，不自
 
 ```powershell
 $env:PATH = 'C:\Users\23103\.cache\codex-runtimes\codex-primary-runtime\dependencies\node\bin;' + $env:PATH
-$env:POWERSYSTEM_TEST_RUN_DIRECTORY = [IO.Path]::GetFullPath('../../artifacts/v5-desktop/s03-20261027-r3')
+$env:POWERSYSTEM_TEST_RUN_DIRECTORY = [IO.Path]::GetFullPath('../../artifacts/v5-桌面客户端/S03-联合验收-20261027-r3')
 node 'C:/Program Files/nodejs/node_modules/npm/bin/npm-cli.js' run typecheck
 node --test tests/test-run-directory.test.cjs
 node scripts/build-isolated.cjs
@@ -256,14 +256,14 @@ s03-compat使用无preload的sandboxed Chromium及浏览器/S01方法表/未知�
 ```powershell
 Push-Location ../04-frontend
 node 'C:/Program Files/nodejs/node_modules/npm/bin/npm-cli.js' test
-node 'C:/Program Files/nodejs/node_modules/npm/bin/npm-cli.js' run build -- --outDir ../../artifacts/v5-desktop/s03-20261027-r3/frontend
+node 'C:/Program Files/nodejs/node_modules/npm/bin/npm-cli.js' run build -- --outDir ../../artifacts/v5-桌面客户端/S03-联合验收-20261027-r3/frontend
 Pop-Location
 ```
 
 本轮沿用原安装包，不执行打包。如以后确需新候选，须改版本并把输出覆盖参数指向新运行目录，禁止默认写S02：
 
 ```powershell
-node 'C:/Program Files/nodejs/node_modules/npm/bin/npm-cli.js' run package:win -- --config.directories.output=../../artifacts/v5-desktop/NEW-UNUSED-RUN/package
+node 'C:/Program Files/nodejs/node_modules/npm/bin/npm-cli.js' run package:win -- --config.directories.output=../../artifacts/v5-桌面客户端/NEW-UNUSED-RUN/package
 ```
 
 NEW-UNUSED-RUN是占位，不能视为本轮已产出新包。服务器构建/冻结/备份/发布/回退只按[阶段四部署README](../04-frontend/deploy/README.md)及当批目录定位卡执行；本轮已审驱动脚本和固定证据归R3目录，不能重放到下一批。无备份延后或资源缩减例外。
@@ -277,8 +277,8 @@ A机升级与回退：先启动R1/team-delivery/S03-Start-A.cmd、通知关、�
 采证器/监测器的开发调用（本人不需要运行）：
 
 ```powershell
-./scripts/Collect-S03Evidence.ps1 -RunDirectory '../../artifacts/v5-desktop/s03-20261027-r1/team-delivery/evidence' -Machine A -Node after-upgrade
-./scripts/Watch-S03Evidence.ps1 -RunDirectory '../../artifacts/v5-desktop/s03-20261027-r1/team-delivery/evidence' -Machine A
+./scripts/Collect-S03Evidence.ps1 -RunDirectory '../../artifacts/v5-桌面客户端/S03-联合验收-20261027-r1/team-delivery/evidence' -Machine A -Node after-upgrade
+./scripts/Watch-S03Evidence.ps1 -RunDirectory '../../artifacts/v5-桌面客户端/S03-联合验收-20261027-r1/team-delivery/evidence' -Machine A
 ```
 
 真实用户视角执行。只读HKCU登记/合法DisplayIcon、程序和asar摘要、进程/窗口、三布尔偏好、窗口bounds及固定事件码；不读取凭据值或输出浏览器存储。快照不是连续退出证明，须结合watch时序及本人观察。B机证据通过已验证渠道传给所有者/Codex，单独归档machine-B-return，不公开原始文件。

@@ -3,7 +3,7 @@ import asyncio,json,sys,time,hashlib,re
 from pathlib import Path
 from uuid import UUID,uuid4
 from datetime import datetime,timezone,timedelta
-ROOT=Path(__file__).resolve().parents[3];OUT=ROOT/'artifacts/v4-assistant/s08-20261024-r1'
+ROOT=Path(__file__).resolve().parents[3];OUT=ROOT/'artifacts/v4-智能助手/S08-定期任务-20261024-r1'
 for p in ('08-agent-rag','09-ops-agent','10-security-agent'):sys.path.insert(0,str(ROOT/'stages'/p))
 sys.path.insert(0,str(OUT/'runtime-deps'))
 import asyncpg,httpx

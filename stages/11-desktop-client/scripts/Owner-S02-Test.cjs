@@ -1,7 +1,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { spawn } = require('node:child_process');
-const artifactRoot = path.resolve(__dirname, '../../../artifacts/v5-desktop');
+const artifactRoot = path.resolve(__dirname, '../../../artifacts/v5-桌面客户端');
 const runArg = process.argv.indexOf('--run-directory');
 const run = path.resolve(runArg >= 0 ? process.argv[runArg + 1] : path.join(artifactRoot, 's02-20261026-r1'));
 if (!run.startsWith(artifactRoot + path.sep)) throw new Error('Unexpected run directory.');

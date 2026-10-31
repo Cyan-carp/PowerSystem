@@ -4,6 +4,9 @@ tags: [源网智联, 后端, 源码运行]
 
 # 阶段二 · 后端主体
 
+> **home-dev开发**：依赖已迁到远端；当前连接命令见[远程开发说明](deploy/home-dev/README.md)。本页原本地Compose/preflight仅适用于有意启动本地引擎的模式，不用于home-dev日常连接。前端可直接经隧道连接远端API。
+
+
 可用率报表保持`availability-v1`与原查询参数，新增可选统计元数据`statistics_updated_at`、`aggregation_state`、`aggregation_lag_ms`；JSON与CSV使用同一时长结果。017只新增派生小时汇总及控制状态，完整小时汇总与窗口首尾原始补算组合，未知时长与15秒样本上限不变。缺桶、脏桶、过期或停用读取时回到原始计算。后台任务与回退管理命令唯一维护在[阶段四部署README](../04-frontend/deploy/README.md#可用率小时汇总的本机管理)，实际是否部署/开启仍以[唯一状态页](../../notes/00-当前系统状态.md)为准。
 
 遥测链路修复的四阶段方案与验收见[专项总索引](../../notes/01-项目调研规划与开发建设记录/专项修复-遥测链路可靠性/00-索引·遥测链路可靠性修复.md)，新对话从[接续入口](../../notes/01-项目调研规划与开发建设记录/专项修复-遥测链路可靠性/03-跨对话交接/00-TR当前接续入口.md)开始；新增实际命令仍维护本README，运行状态只看[唯一状态页](../../notes/00-当前系统状态.md)。
@@ -28,7 +31,7 @@ tags: [源网智联, 后端, 源码运行]
 
 V4-S02提前提供最小只读`GET /api/v1/reports/energy`：`start_date/end_date`为北京时间自然日、end不含、1..31天；`scope/station_code/device_id`筛选取交集。仅汇总`energy_daily`中有有效段且值有限非负的记录，返回逐日、总量、实际窗口、聚合时间和缺测；无记录不补零，不作额外两位小数舍入。无新迁移，不生成文件，S05仍负责报表产物验收。补验使用`S02_ENERGY_TEST_DATABASE_URL`指向本轮新建回环25432隔离库；`go test ./internal/api -run TestEnergyReport -count=1 -v`覆盖真实PG DATE/小数/非有限值与接口鉴权。未配置专用测试库时该PG用例跳过，不能计通过。
 
-依赖 Windows PowerShell 5.1+、Docker Desktop、Go 1.24+ 和可运行的 Python 3.12 环境。阶段一预检会准备 `.venv`；若它在含中文的仓库路径下启动失败，按下文烟测说明改用其他已安装依赖的解释器。所有命令从仓库根目录执行：
+以下本地全套模式依赖 Windows PowerShell 5.1+、本机Docker Desktop、Go 1.24+ 和可运行的 Python 3.12 环境。阶段一预检会准备 `.venv`；若它在含中文的仓库路径下启动失败，按下文烟测说明改用其他已安装依赖的解释器。所有命令从仓库根目录执行：
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\stages\02-backend\scripts\preflight-stage2.ps1
@@ -268,8 +271,8 @@ bash stages/02-backend/scripts/tr-s01-fixture.sh reset
 以下PowerShell从阶段二目录执行。证据目录应事先建立并在每次修订后另建批次；测试缺依赖会失败，不能把SKIP算作通过。
 
 ```powershell
-go build -o ../../artifacts/telemetry-reliability/TR-S01-local/api.exe ./cmd/api
-$env:TR_S01_API_BIN=(Resolve-Path ../../artifacts/telemetry-reliability/TR-S01-local/api.exe).Path
+go build -o ../../artifacts/遥测可靠性/TR-S01-local/api.exe ./cmd/api
+$env:TR_S01_API_BIN=(Resolve-Path ../../artifacts/遥测可靠性/TR-S01-local/api.exe).Path
 $env:TR_S01_TEST_DSN='postgres://tr_s01@127.0.0.1:15439/tr_s01_test?sslmode=disable'
 go test -tags tr_s01 ./internal/api -run '^TestTRS01Isolated$' -v -count=1 -timeout 90s
 ```
@@ -283,7 +286,7 @@ go test -tags tr_s01 ./internal/api -run '^TestTRS01Isolated$' -v -count=1 -time
 ```bash
 python3 stages/02-backend/scripts/test-telemetry-alerts.py \
   --bin-dir /home/user23103/tr-s01-fixture/deps/root/usr/bin \
-  --evidence artifacts/telemetry-reliability/TR-S01-local/alerts-r1
+  --evidence artifacts/遥测可靠性/TR-S01-local/alerts-r1
 python3 stages/02-backend/scripts/telemetry-rule-boundaries.py /home/user23103/tr-s01-fixture/rules.json
 /home/user23103/tr-s01-fixture/deps/root/usr/bin/promtool test rules /home/user23103/tr-s01-fixture/rules.json
 bash -n stages/02-backend/scripts/tr-s01-fixture.sh
@@ -325,7 +328,7 @@ bash stages/02-backend/scripts/tr-s02-fixture.sh stop
 先创建新的批次目录，以下示例名称仅作示意，不覆盖已归档批次。每次修订另存输出；缺依赖测试失败，不能用SKIP代偿。测试会重建固定专用测试库的public schema，以及`tr_s02_startup_test`，所有数据均为本地合成夹具。
 
 ```powershell
-$trEvidence='../../artifacts/telemetry-reliability/TR-S02-local'
+$trEvidence='../../artifacts/遥测可靠性/TR-S02-local'
 New-Item -ItemType Directory -Force $trEvidence | Out-Null
 $env:GOCACHE=(Join-Path (Resolve-Path $trEvidence).Path 'go-cache')
 go build -o "$trEvidence/api.exe" ./cmd/api
@@ -362,7 +365,7 @@ bash stages/02-backend/scripts/tr-s03-fixture.sh stop
 从阶段二目录在PowerShell运行。测试仅允许精确的S03 DSN，缺依赖直接失败；每个T01—T08用例以实际API空库/重复迁移准入，并在下个用例重置public前复制合成数据到`retained_testtrs03...` schema。T02的服务间隔取真实时钟；长宽限使用明确的合成策略时间，不冒充长时间容量观察。
 
 ```powershell
-$trEvidence='../../artifacts/telemetry-reliability/TR-S03-local'
+$trEvidence='../../artifacts/遥测可靠性/TR-S03-local'
 New-Item -ItemType Directory -Force $trEvidence | Out-Null
 $env:GOCACHE=(Join-Path (Resolve-Path $trEvidence).Path 'go-cache')
 go build -o "$trEvidence/api.exe" ./cmd/api
@@ -424,7 +427,7 @@ summary、overview、health及watchdog复用同一时间谓词。summary/overvie
 只对`tr-s04-*`四个专用容器及回环15442/16392/16042/11884操作。首次全新环境使用start；若已有本轮专用容器，先inventory核身份并保存回执，不能覆盖或停止同名但不归本轮的资源。
 
 ```powershell
-$trEvidence=Join-Path (Get-Location) 'artifacts/telemetry-reliability/TR-S04-local'
+$trEvidence=Join-Path (Get-Location) 'artifacts/遥测可靠性/TR-S04-local'
 ./stages/02-backend/scripts/tr-s04-fixture.ps1 -Action start -EvidenceRoot $trEvidence
 # 本轮已知专用夹具改用 -Action inventory，保留实际容器ID/镜像与配额回执。
 ./stages/02-backend/scripts/tr-s04-validate.ps1 -Run final-r1 -EvidenceRoot $trEvidence -OldApiBinary '实际保存的pre-S04隔离API绝对路径.exe'
@@ -440,3 +443,8 @@ $trEvidence=Join-Path (Get-Location) 'artifacts/telemetry-reliability/TR-S04-loc
 普通API启动预算保持30秒；`-migration-timeout`只有同时传`-migrate-only`才可设为30秒至15分钟，非离线模式拒绝延长。大表索引工作须由统一发布器在旧API/gateway均停止、候选后全备可核时执行一次性迁移；成功后正常启动只重复已存在的schema。禁止让普通API反复超时建索引、手工SQL代偿或直接切旧镜像。
 
 本轮生产前适配、用户接受的失败冻结停写边界及真实同量级迁移证据见[发布记录53](../../notes/04-系统部署发布备份与变更记录/部署与运维日志/05-发布工具链与文档治理/53-遥测可靠性修复发布与前滚门禁.md)。正式生产命令只在[部署README](../04-frontend/deploy/README.md)维护；隔离验收不授权通用历史积压/告警重放。
+
+
+## home-dev远程开发
+
+本地启动后端及连接/管理开发Docker前，先读[远程连接手册](deploy/home-dev/README.md)。该文件集中维护连接命令、两种开发方式、端口、卷、旧脚本限制及恢复边界；本页不再复制正文。

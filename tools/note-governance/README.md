@@ -18,4 +18,4 @@ python tools/note-graph/build_graph.py
 
 GitHub Actions 在 `notes/**`、`shared-memory/**`、`stages/**`、`deploy/**` 或本目录变更时执行 `--ci` 模式（`.github/workflows/notes-check.yml`），失败即阻断合并；提交前应先跑严格模式。
 
-迁移前的文件哈希、用户已修改验收清单和旧图谱备份保存在被 Git 忽略的 `artifacts/note-reorg-20261017-baseline/`。
+迁移前的文件哈希、用户已修改验收清单和旧图谱备份保存在被 Git 忽略的 `artifacts/笔记重整基线-20261017/`。

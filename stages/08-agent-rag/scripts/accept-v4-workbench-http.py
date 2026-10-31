@@ -2,7 +2,7 @@ import asyncio,json,time,hashlib
 from pathlib import Path
 from uuid import uuid4
 import httpx
-OUT=Path.cwd()/'artifacts/v4-assistant/s04-20261023-r1'
+OUT=Path.cwd()/'artifacts/v4-智能助手/S04-工作台-20261023-r1'
 BASE='http://127.0.0.1:28942/api/v1';DRILL='http://127.0.0.1:28941/drill'
 report={'environment':'real loopback Go JWT + FastAPI Store.open + PostgreSQL; synthetic business/provider unless marked official','checks':{},'receipts':{},'failures':[],'timeline':[],'official_cost':{'amount':None,'reason':'account billing not inspected'}}
 async def main():

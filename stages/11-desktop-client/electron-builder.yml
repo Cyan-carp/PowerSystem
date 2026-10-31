@@ -6,7 +6,7 @@ appId: cn.cyancarp.powersystem.desktop
 productName: 源网智联
 
 directories:
-  output: ../../artifacts/v5-desktop/s02-20261026-r1/package
+  output: ../../artifacts/v5-桌面客户端/S02-运维桌面-20261026-r1/package
 
 # 不自动发布、不自动更新：无 provider、无 release 产物流程。
 publish: null

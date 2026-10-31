@@ -134,7 +134,7 @@ RAG恢复首探针因挂载脚本位于根目录而缺Python模块路径失败�
 
 ## 十、证据与限制
 
-- 独立证据目录：`artifacts/pve-migration-20261025-r1/`。核心小文件含 `cold-progress-01.json`、`cold-source-start.json`、`source-full-backup-start.json`、`retirement-approved-result.json`、`guest-provision-result.json`、`guest-static-final.json`、`image-content-verified.json`、`frp-role-file-transferred.json`、`host-registration.json`、`target-runtime-prepared.json`、`offsite-capacity.json`。
+- 独立证据目录：`artifacts/迁入独立虚拟机-20261025-r1/`。核心小文件含 `cold-progress-01.json`、`cold-source-start.json`、`source-full-backup-start.json`、`retirement-approved-result.json`、`guest-provision-result.json`、`guest-static-final.json`、`image-content-verified.json`、`frp-role-file-transferred.json`、`host-registration.json`、`target-runtime-prepared.json`、`offsite-capacity.json`。
 - 证据不含口令、令牌、私钥或未脱敏日志；FRP 角色文件只记录传输与摘要，值未导出本机。
 - Workbuddy迁机复核、备份主机材料、资产纯函数、离线恢复校验工具均实际返回；Codex逐项复核并修正了role文件名推断，改读归档TOML显式引用。资产已用20真实ID及单元摘要导入；恢复核验Linux8项（含符号链接拒绝）全过，随后又对真实最终归档完成适用隔离恢复。两个观察器委派超时且无交付文件，实际观察器由Codex完成并复核，不把委派当作交付。
 - 自动审批曾拒绝过一次过宽的只读布局输出（可能含 Executor 连接配置），未执行；改为按 runtime 路径与字段名/计数检查后获准，未输出值。

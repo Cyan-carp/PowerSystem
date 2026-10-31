@@ -17,6 +17,6 @@
 
 ## 证据与清理
 
-本轮证据 `artifacts/v4-assistant/s05-20261023-r1/` 为忽略目录。新增补验使用独立批号，不覆盖failed_batch、超时或现有下载。下载审计的stream_served仅表示服务端输出，不能宣称客户端保存。
+本轮证据 `artifacts/v4-智能助手/S05-业务分析-20261023-r1/` 为忽略目录。新增补验使用独立批号，不覆盖failed_batch、超时或现有下载。下载审计的stream_served仅表示服务端输出，不能宣称客户端保存。
 
 先核对 `/drill/identity` 中 instance/PID 与环境登记，再停止本轮服务；runs 支持 `POST /drill/shutdown`。清理以cleanup.json为准，不假定旧服务仍运行。运行时/专用库保留至2026-10-30，证据至2026-11-22或复核完成（较晚者），不得删除原S02/S03/S04材料。
