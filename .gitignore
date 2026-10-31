@@ -34,4 +34,6 @@ backups/*
 !backups/README.md
 # 前端本地假后端与启动脚本（只服务本机联调，不入库）
 stages/04-frontend/dev/
+# 本机个人工具脚本（积分插件等本机辅助脚本），不入库
+/local-scripts/
 
