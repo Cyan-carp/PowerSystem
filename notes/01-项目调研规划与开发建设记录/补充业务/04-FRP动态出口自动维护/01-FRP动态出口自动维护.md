@@ -7,7 +7,7 @@ tags:
   - 自动恢复
 status: 现行
 scope: 补充业务
-updated: 2026-10-18
+updated: 2026-11-01
 ---
 
 # 01 · FRP动态出口自动维护
@@ -235,6 +235,15 @@ R730XD 单次执行认证刷新，分别确认白名单状态与 HTTPS ping，�
 - 四环节口径：①SAS `ModifyFirewallRule` 写分支——读回目标规则来源等于新来源、历史 `committed=true`、无云错误码；②主机防火墙同步——7000 规则来源与 `allowed-client-ipv4`、accepted 两层一致且其他规则未变；③FRP 重连——7000/3667/7070 恢复监听、未手动重启；④HTTPS 恢复——可信 ping 200 且客户端 `entry_recovered=true`。
 - 本机重跑隔离套件 `test_frp_source.py` 33 项通过（原 r2 为 32 项，多出 1 项为增量保护用例），确认工具链就绪；不重跑 Linux socket 套件（37 项已在 r4 双端通过）。
 - 本批未连接服务器、未触发或模拟换址、未调用真实 `ModifyFirewallRule`。连接与执行顺序见验证手册。
+
+**2026-11-01 · 真实换址事件：机制未接管，人工恢复后重建基线**
+
+- 真实换址发生：出口 `120.82.32.121` → `120.82.32.222`。但机制自 **2026-10-28 10:45** 起已持续失败，失败码 `non_target_cloud_change`，**本次没有自动恢复**；公网入口中断约 10 小时 42 分，由所有者手工改轻量防火墙后恢复。
+- 根因：10-16 建基线后，防火墙新增一条 `6000/6050`（备注「备用主机」，frp-remote 使用）。机制的「非目标规则变化」保护把自身锁死，且失败只写 `last-error.json`，无任何告警。逐条排除定位：移除 `RuleId d5c2f320…` 后指纹等于旧基线。
+- 处置：旧基线归档为 `baseline-archive-20261101.json`（600，root:powersystem-source）。`reconcile.py:25` 硬校验基线不存在才允许 `initialize`，故按「不删除证据」归档后重建。新 cloud `9bd98903…`；host `2a72c2b5…` **未变**，说明这 4 天主机侧一直正确。
+- 恢复后核验：`check` → `ready=true, sources_match=true`；`client` → `allowlist_updated=true, changed=false, entry_recovered=true`；systemd 由 failed 转 `Finished`。
+- **口径修正**：本次真实换址由**人工**完成，不是机制的写分支。历史 `history` 中有一次 `120.82.32.130 → .121` 的 `committed=true` 提交记录，但本次换址未经机制，故 `ModifyFirewallRule` 自动写分支在真实换址下的可用性**仍不能记为已验证**。
+- **设计缺口**：任何合法的非目标规则新增都会永久锁死机制，且自身失效无告警。入口探活已于同批上线（见 [[75-公网入口中断处置与入口探活上线]]），但覆盖不到机制自身的失败，需另行监控。
 
 **核验范围**
 
