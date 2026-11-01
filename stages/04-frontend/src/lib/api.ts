@@ -426,6 +426,96 @@ export interface PredictionRow extends Prediction {
   group_name: string
 }
 
+/* ---------------- 预测质量（离线评估结果，不是线上预测本身） ---------------- */
+
+/** 质量汇总参数：窗口是左闭右开的 ISO 时间，按场站 / 模型版本可再收窄 */
+export type PredictionQualityParams = Query & {
+  from?: string
+  to?: string
+  station_code?: string
+  model_version?: string
+}
+
+/**
+ * null 一律表示「算不出来」（窗口内没有到期样本、或分母为 0），
+ * 界面要显示「—」而不是 0：0% 命中率与「还没有样本」是两件事。
+ */
+export interface PredictionQualitySummary {
+  samples: number
+  tp: number
+  fp: number
+  fn: number
+  tn: number
+  precision: number | null
+  recall: number | null
+  f1: number | null
+  accuracy: number | null
+  ece: number | null
+  prob_mean: number | null
+  high_ratio: number | null
+  model_version: string | null
+}
+
+/** GET /predictions/quality/series —— 按天一行，day 是 YYYY-MM-DD */
+export interface PredictionQualityPoint {
+  day: string
+  samples: number
+  precision: number | null
+  recall: number | null
+  f1: number | null
+  accuracy: number | null
+  ece: number | null
+  prob_mean: number | null
+}
+
+export interface PredictionQualitySeries {
+  points: PredictionQualityPoint[]
+}
+
+/** 校准分桶：lower/upper 是预测概率区间，actual_rate 是桶内真实故障占比 */
+export interface CalibrationBucket {
+  lower: number
+  upper: number
+  count: number
+  predicted_mean: number | null
+  actual_rate: number | null
+}
+
+export interface PredictionQualityCalibration {
+  buckets: CalibrationBucket[]
+  ece: number | null
+}
+
+/** 只有 candidate 能被提升为 active；retired / rejected 只作为历史留档 */
+export type ModelVersionStatus = 'active' | 'candidate' | 'retired' | 'rejected'
+
+export interface PredictionModelVersion {
+  model_version: string
+  status: ModelVersionStatus
+  threshold: number | null
+  data_source: string | null
+  train_samples: number | null
+  positive_samples: number | null
+  /** 后端 JSONB：真实评估指标，字段名由训练脚本决定，这里只保证是数值 */
+  metrics: Record<string, number> | null
+  baseline_metrics: Record<string, number> | null
+  trained_at: string | null
+  promoted_at: string | null
+  rejected_reason: string | null
+}
+
+/** triggered = 指标已越线并触发处置；watch = 仅登记观察 */
+export interface DriftEvent {
+  id: number
+  detected_at: string
+  level: string
+  signal: string
+  observed: number | null
+  baseline: number | null
+  threshold: number | null
+  action: string | null
+}
+
 /* ---------------- 报表 ---------------- */
 
 export interface AvailabilityItem {
@@ -941,6 +1031,23 @@ export const api = {
   /* 预测 */
   predictions: (page = 1, pageSize = 20) => get<Page<PredictionRow>>(`/predictions${query({ page, page_size: pageSize })}`),
   prediction: (id: number) => get<Prediction>(`/devices/${id}/prediction`),
+
+  /* 预测质量：只读离线评估结果，promote 之外没有写操作 */
+  predictionQualitySummary: (params: PredictionQualityParams = {}, signal?: AbortSignal) =>
+    get<PredictionQualitySummary>(`/predictions/quality/summary${query(params)}`, signal),
+  predictionQualitySeries: (days = 30, signal?: AbortSignal) =>
+    get<PredictionQualitySeries>(`/predictions/quality/series${query({ days })}`, signal),
+  predictionQualityCalibration: (days = 30, signal?: AbortSignal) =>
+    get<PredictionQualityCalibration>(`/predictions/quality/calibration${query({ days })}`, signal),
+  predictionQualityModels: (signal?: AbortSignal) =>
+    get<{ items: PredictionModelVersion[] }>('/predictions/quality/models', signal),
+  /** 只切平台登记的现役版本，不搬模型文件；返回后端实际落下的状态 */
+  promoteModel: (version: string) =>
+    post<{ model_version: string; status: ModelVersionStatus }>(
+      `/predictions/quality/models/${encodeURIComponent(version)}/promote`,
+    ),
+  predictionQualityDrift: (limit = 50, signal?: AbortSignal) =>
+    get<{ items: DriftEvent[] }>(`/predictions/quality/drift${query({ limit })}`, signal),
 
   /* 报表：JSON 与 CSV 同一路由，后端 availability()/alarmTimeliness() 命中 ?format=csv 时走
      report_export.go 的 writeReportCSV（含场站汇总行，Content-Type=text/csv），比前端拼当前页更全 */

@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import Icon from '../components/Icon.vue'
 import Drawer from '../components/Drawer.vue'
 import Pager from '../components/Pager.vue'
+import PredictionQuality from '../components/PredictionQuality.vue'
 import StatusChip from '../components/StatusChip.vue'
 import { api } from '../lib/api'
 import type { Prediction, PredictionRow, StationRow } from '../lib/api'
@@ -12,6 +13,16 @@ import { n, pct, stamp, timeOf } from '../lib/format'
 
 const route = useRoute()
 const router = useRouter()
+
+type TabKey = 'rank' | 'quality'
+const tabs: { key: TabKey; label: string }[] = [
+  { key: 'rank', label: '预测排行' },
+  { key: 'quality', label: '预测质量' },
+]
+
+const tab = ref<TabKey>('rank')
+/** 质量面板首次进入才挂载，之后用 v-show 保活：切回排行再切回来不重复拉数 */
+const qualityMounted = ref(false)
 
 /** 概率来源：真后端给 scheduled，历史 mock 给 synthetic-trained */
 const sourceLabel = (source: string | null) => {
@@ -56,6 +67,7 @@ const keyword = ref('')
 const page = ref(1)
 const pageSize = 8
 const selected = ref<PredictionRow | null>(null)
+const detail = ref<Prediction | null>(null)
 
 const load = async () => {
   loading.value = true
@@ -75,7 +87,20 @@ const load = async () => {
 }
 onMounted(load)
 
+/** 页签、筛选条件、抽屉都写进 URL；刷新后回到同一屏，不再靠组件内部状态记忆 */
+const writeQuery = () => {
+  const next: Record<string, string> = {}
+  if (tab.value === 'quality') next.tab = 'quality'
+  if (riskFilter.value !== 'all') next.risk = riskFilter.value
+  if (keyword.value.trim()) next.q = keyword.value.trim()
+  if (selected.value) next.id = String(selected.value.device_id)
+  void router.replace({ query: next })
+}
+
 const applyQuery = () => {
+  tab.value = route.query.tab === 'quality' ? 'quality' : 'rank'
+  /* setup 期赋值不会触发下面的 watch(tab)，首次进入直接读 URL 时要自己点亮挂载标记 */
+  if (tab.value === 'quality') qualityMounted.value = true
   const risk = route.query.risk as string | undefined
   if (risk === 'high' || risk === 'low') riskFilter.value = risk
   const q = route.query.q as string | undefined
@@ -91,10 +116,16 @@ watch(
 )
 watch([riskFilter, keyword], () => {
   page.value = 1
-  const query: Record<string, string> = {}
-  if (riskFilter.value !== 'all') query.risk = riskFilter.value
-  if (keyword.value.trim()) query.q = keyword.value.trim()
-  router.replace({ query })
+  writeQuery()
+})
+watch(tab, (value) => {
+  /* 切到质量页先把抽屉收起，否则详情会压在新内容上 */
+  if (value === 'quality') {
+    qualityMounted.value = true
+    selected.value = null
+    detail.value = null
+  }
+  writeQuery()
 })
 
 const stationName = computed(() => {
@@ -158,8 +189,6 @@ const buckets = computed(() => {
 
 const isStale = computed(() => rows.value.some((row) => row.stale))
 
-const detail = ref<Prediction | null>(null)
-
 /** 列表接口只给概率与阈值；特征贡献在详情接口里，打开抽屉时补一次 */
 const loadDetail = async (deviceId: number) => {
   detail.value = null
@@ -172,21 +201,20 @@ const loadDetail = async (deviceId: number) => {
 
 const openRow = (row: PredictionRow) => {
   selected.value = row
-  router.replace({ query: { ...route.query, id: String(row.device_id) } })
+  writeQuery()
   void loadDetail(row.device_id)
 }
 const closeDrawer = () => {
   selected.value = null
   detail.value = null
-  const query = { ...route.query }
-  delete query.id
-  router.replace({ query })
+  writeQuery()
 }
 watch(
   () => [rows.value, route.query.id] as const,
   () => {
     const id = Number(route.query.id)
-    if (!id) return
+    /* 质量页没有设备抽屉，带 id 的深链在质量页上不弹出来 */
+    if (!id || tab.value === 'quality') return
     const hit = rows.value.find((row) => row.device_id === id)
     if (hit) {
       selected.value = hit
@@ -198,16 +226,21 @@ watch(
 
 <template>
   <div class="page-head">
+    <div class="seg">
+      <button v-for="item in tabs" :key="item.key" :class="{ 'is-on': tab === item.key }" @click="tab = item.key">
+        {{ item.label }}
+      </button>
+    </div>
     <div class="page-actions">
-      <button class="btn" :disabled="loading" @click="load">
+      <button v-if="tab === 'rank'" class="btn" :disabled="loading" @click="load">
         <Icon name="refresh" :size="15" />刷新
       </button>
     </div>
   </div>
 
-  <div v-if="failed" class="error-box">预测数据未取到：{{ failed }}</div>
+  <div v-if="failed && tab === 'rank'" class="error-box">预测数据未取到：{{ failed }}</div>
 
-  <section class="card strip">
+  <section v-if="tab === 'rank'" class="card strip">
     <div v-for="item in strip" :key="item.key" class="strip-cell">
       <span class="strip-label"><i :style="{ background: item.color }"></i>{{ item.label }}</span>
       <span class="strip-value num">{{ item.value }}</span>
@@ -215,7 +248,7 @@ watch(
     </div>
   </section>
 
-  <div class="pd-grid">
+  <div v-if="tab === 'rank'" class="pd-grid">
     <section class="card">
       <div class="card-head">
         <span class="card-title">预测清单</span>
@@ -339,6 +372,9 @@ watch(
       </section>
     </aside>
   </div>
+
+  <!-- 首次进入才挂载，之后保活：来回切页签不重复请求，也不丢已选的窗口 -->
+  <PredictionQuality v-if="qualityMounted" v-show="tab === 'quality'" />
 
   <Drawer
     v-if="selected"

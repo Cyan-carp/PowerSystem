@@ -128,6 +128,14 @@ func New(cfg config.Config, db *gorm.DB, redis *redis.Client, td *tdengine.Clien
 	a.GET("/devices/:id/telemetry/export", s.exportTelemetry)
 	a.GET("/devices/:id/prediction", s.getPrediction)
 	a.GET("/predictions", s.listPredictions)
+	// 预测质量：真值回填后的混淆矩阵、校准曲线、模型台账与漂移事件。
+	a.GET("/predictions/quality/summary", s.predictionQualitySummary)
+	a.GET("/predictions/quality/series", s.predictionQualitySeries)
+	a.GET("/predictions/quality/calibration", s.predictionQualityCalibration)
+	a.GET("/predictions/quality/models", s.predictionQualityModels)
+	a.POST("/predictions/quality/models/import", requireAdmin, s.predictionQualityImportModel)
+	a.POST("/predictions/quality/models/:version/promote", requireAdmin, s.predictionQualityPromote)
+	a.GET("/predictions/quality/drift", s.predictionQualityDrift)
 	a.GET("/alarm-rules", s.listRules)
 	a.POST("/alarm-rules", requireAdmin, s.createRule)
 	a.GET("/alarm-rules/:id", s.getRule)
@@ -273,6 +281,7 @@ func (s *Server) Run(parent context.Context) (runErr error) {
 				}
 				if s.cfg.AIEnabled {
 					launch(s.predictionWorker)
+					launch(s.qualityWorker)
 				}
 				return
 			}

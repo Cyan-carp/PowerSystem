@@ -65,6 +65,7 @@ var MigrationPaths = []string{
 	"deploy/postgres/015_telemetry_scheduler.sql",
 	"deploy/postgres/016_telemetry_realtime.sql",
 	"deploy/postgres/017_availability_rollups.sql",
+	"deploy/postgres/018_prediction_quality.sql",
 }
 
 func Migrate(db *gorm.DB, path string) error {
