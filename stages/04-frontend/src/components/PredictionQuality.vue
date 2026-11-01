@@ -372,6 +372,7 @@ const isTriggered = (item: DriftEvent) => item.action === 'triggered' || item.le
                 <div class="cell-stack">
                   <span class="num">{{ stamp(item.promoted_at) }}</span>
                   <span class="cell-note num">训练 {{ stamp(item.trained_at) }}</span>
+                  <span v-if="item.promoted_by" class="cell-note">操作人 {{ item.promoted_by }}</span>
                 </div>
               </td>
               <td>

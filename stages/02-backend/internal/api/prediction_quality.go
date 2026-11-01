@@ -646,6 +646,7 @@ type qualityModelItem struct {
 	BaselineMetrics json.RawMessage `json:"baseline_metrics"`
 	TrainedAt       *time.Time      `json:"trained_at"`
 	PromotedAt      *time.Time      `json:"promoted_at"`
+	PromotedBy      *string         `json:"promoted_by"`
 	RejectedReason  *string         `json:"rejected_reason"`
 }
 
@@ -664,7 +665,8 @@ func (s *Server) predictionQualityModels(c *gin.Context) {
 			ModelVersion: row.ModelVersion, Status: row.Status, Threshold: row.Threshold,
 			DataSource: row.DataSource, TrainSamples: row.TrainSamples, PositiveSamples: row.PositiveSamples,
 			Metrics: row.Metrics, BaselineMetrics: row.BaselineMetrics,
-			TrainedAt: row.TrainedAt, PromotedAt: row.PromotedAt, RejectedReason: row.RejectedReason,
+			TrainedAt: row.TrainedAt, PromotedAt: row.PromotedAt, PromotedBy: row.PromotedBy,
+			RejectedReason: row.RejectedReason,
 		})
 	}
 	ok(c, gin.H{"items": items})

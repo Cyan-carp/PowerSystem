@@ -501,6 +501,8 @@ export interface PredictionModelVersion {
   baseline_metrics: Record<string, number> | null
   trained_at: string | null
   promoted_at: string | null
+  /** 执行提升的管理员账号；直接登记为现役的版本为 null */
+  promoted_by: string | null
   rejected_reason: string | null
 }
 
