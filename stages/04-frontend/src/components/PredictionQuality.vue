@@ -533,13 +533,23 @@ const isTriggered = (item: DriftEvent) => item.action === 'triggered' || item.le
 
 .qq-grid {
   display: grid;
-  grid-template-columns: minmax(0, 330px) minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: 16px;
-  align-items: start;
+  align-items: stretch;
+}
+
+/* 两张卡等高；内容在卡内垂直居中，避免底部留出大片空白 */
+.qq-grid > .card {
+  display: flex;
+  flex-direction: column;
 }
 
 /* ---- 混淆矩阵 ---- */
 .cm-wrap {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
   padding: 0 18px 16px;
 }
 

@@ -33,7 +33,7 @@ const pad = { top: 18, right: 16, bottom: 42, left: 46 }
 /** 绘图区强制正方形：45° 参考线只有宽高相等时才真正是 45°，否则视觉斜率失真 */
 const side = computed(() => {
   const available = Math.max(120, width.value - pad.left - pad.right)
-  return Math.round(Math.min(available, 300))
+  return Math.round(Math.min(available, 400))
 })
 /** 正方形在容器内水平居中，宽屏下不会被拉成长条 */
 const originX = computed(() => pad.left + Math.max(0, (width.value - pad.left - pad.right - side.value) / 2))
