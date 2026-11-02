@@ -659,6 +659,8 @@ type qualityModelItem struct {
 	PromotedBy      *string         `json:"promoted_by"`
 	RejectedReason  *string         `json:"rejected_reason"`
 	ArtifactPath    *string         `json:"artifact_path"`
+	TrialStartedAt  *time.Time      `json:"trial_started_at"`
+	PreviousVersion *string         `json:"previous_version"`
 }
 
 // runtimeModelVersion 读取推理服务实际加载的模型版本。
@@ -709,6 +711,7 @@ func (s *Server) predictionQualityModels(c *gin.Context) {
 			Metrics: row.Metrics, BaselineMetrics: row.BaselineMetrics,
 			TrainedAt: row.TrainedAt, PromotedAt: row.PromotedAt, PromotedBy: row.PromotedBy,
 			RejectedReason: row.RejectedReason, ArtifactPath: row.ArtifactPath,
+			TrialStartedAt: row.TrialStartedAt, PreviousVersion: row.PreviousVersion,
 		})
 	}
 	ok(c, gin.H{"items": items, "runtime_version": s.runtimeModelVersion(c.Request.Context())})
