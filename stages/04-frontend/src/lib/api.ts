@@ -487,7 +487,7 @@ export interface PredictionQualityCalibration {
 }
 
 /** 只有 candidate 能被提升为 active；retired / rejected 只作为历史留档 */
-export type ModelVersionStatus = 'active' | 'candidate' | 'retired' | 'rejected'
+export type ModelVersionStatus = 'active' | 'candidate' | 'trial' | 'retired' | 'rejected'
 
 export interface PredictionModelVersion {
   model_version: string
@@ -506,6 +506,10 @@ export interface PredictionModelVersion {
   rejected_reason: string | null
   /** 候选模型文件的落地目录；训练在服务器上跑，这个路径给运维取文件用 */
   artifact_path: string | null
+  /** 试用开始时刻；trial 状态用它算 24 小时观察期 */
+  trial_started_at: string | null
+  /** 试用前的现役版本；回退只认这个字段 */
+  previous_version: string | null
 }
 
 /** triggered = 指标已越线并触发处置；watch = 仅登记观察 */
@@ -1069,6 +1073,21 @@ export const api = {
   promoteModel: (version: string) =>
     post<{ model_version: string; status: ModelVersionStatus }>(
       `/predictions/quality/models/${encodeURIComponent(version)}/promote`,
+    ),
+  /** 试用：切到该版本并开始 24 小时观察；失败时模型文件与台账都不动 */
+  trialModel: (version: string) =>
+    post<{ model_version: string; status: ModelVersionStatus; trial_started_at: string; previous_version: string }>(
+      `/predictions/quality/models/${encodeURIComponent(version)}/trial`,
+    ),
+  /** 确认：试用满 24 小时后转正 */
+  confirmModel: (version: string) =>
+    post<{ model_version: string; status: ModelVersionStatus; promoted_at: string }>(
+      `/predictions/quality/models/${encodeURIComponent(version)}/confirm`,
+    ),
+  /** 回退：把试用版本退回上一版，模型文件与台账同时回滚 */
+  rollbackModel: (version: string) =>
+    post<{ model_version: string; status: ModelVersionStatus; rolled_back_to: string }>(
+      `/predictions/quality/models/${encodeURIComponent(version)}/rollback`,
     ),
   predictionQualityDrift: (limit = 50, signal?: AbortSignal) =>
     get<{ items: DriftEvent[] }>(`/predictions/quality/drift${query({ limit })}`, signal),

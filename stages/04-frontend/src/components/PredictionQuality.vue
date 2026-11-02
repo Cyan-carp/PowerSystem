@@ -159,6 +159,7 @@ const kpis = computed(() => {
 const MODEL_STATUS: Record<string, { label: string; tone: string }> = {
   active: { label: '现役', tone: 'ok' },
   candidate: { label: '候选', tone: 'brand' },
+  trial: { label: '试用中', tone: 'warn' },
   retired: { label: '已退役', tone: 'idle' },
   rejected: { label: '已拒绝', tone: 'bad' },
 }
@@ -196,6 +197,69 @@ const promote = async (item: PredictionModelVersion) => {
     await loadModels()
   } catch (error) {
     toast('bad', `提升失败：${error instanceof Error ? error.message : String(error)}`)
+  } finally {
+    promoting.value = ''
+  }
+}
+
+/* ---------------- 试用与回退 ---------------- */
+
+/** 试用：切过去并开始 24 小时观察。失败时后端不会改台账，这里只提示原因。 */
+const trialModel = async (item: PredictionModelVersion) => {
+  const target = item.model_version
+  const ok = await askConfirm({
+    title: `试用 ${target}`,
+    body: '切换后立即生效并开始 24 小时观察，不满意可一键回退到上一版。',
+    confirmText: '开始试用',
+  })
+  if (!ok) return
+  promoting.value = target
+  try {
+    const result = await api.trialModel(target)
+    toast('ok', `已切到试用：${result.model_version}，观察 24 小时`)
+    await loadModels()
+  } catch (error) {
+    toast('bad', `试用失败：${error instanceof Error ? error.message : String(error)}`)
+  } finally {
+    promoting.value = ''
+  }
+}
+
+const confirmTrial = async (item: PredictionModelVersion) => {
+  const target = item.model_version
+  const ok = await askConfirm({
+    title: `确认 ${target} 转正`,
+    body: '确认后该版本成为现役，原现役改为已退役。建议先看试用期的命中率再决定。',
+    confirmText: '确认转正',
+  })
+  if (!ok) return
+  promoting.value = target
+  try {
+    const result = await api.confirmModel(target)
+    toast('ok', `${result.model_version} 已转正`)
+    await loadModels()
+  } catch (error) {
+    toast('bad', `转正失败：${error instanceof Error ? error.message : String(error)}`)
+  } finally {
+    promoting.value = ''
+  }
+}
+
+const rollbackTrial = async (item: PredictionModelVersion) => {
+  const target = item.model_version
+  const ok = await askConfirm({
+    title: `回退 ${target}`,
+    body: `将恢复到 ${item.previous_version ?? '上一版本'}，该版本回到候选状态。回退不重启服务。`,
+    confirmText: '回退',
+  })
+  if (!ok) return
+  promoting.value = target
+  try {
+    const result = await api.rollbackModel(target)
+    toast('ok', `已回退到 ${result.rolled_back_to}`)
+    await loadModels()
+  } catch (error) {
+    toast('bad', `回退失败：${error instanceof Error ? error.message : String(error)}`)
   } finally {
     promoting.value = ''
   }
@@ -395,15 +459,41 @@ const isTriggered = (item: DriftEvent) => item.action === 'triggered' || item.le
                 </div>
               </td>
               <td>
-                <button
-                  v-if="item.status === 'candidate' && isAdmin"
-                  class="btn btn-sm"
-                  :disabled="promoting === item.model_version"
-                  @click="promote(item)"
-                >
-                  {{ promoting === item.model_version ? '提升中…' : '提升为现役' }}
-                </button>
-                <span v-else class="muted">—</span>
+                <div class="row-actions">
+                  <template v-if="item.status === 'candidate' && isAdmin">
+                    <button
+                      class="btn btn-sm"
+                      :disabled="promoting === item.model_version"
+                      @click="trialModel(item)"
+                    >
+                      {{ promoting === item.model_version ? '切换中…' : '试用' }}
+                    </button>
+                    <button
+                      class="btn btn-sm btn-quiet"
+                      :disabled="promoting === item.model_version"
+                      @click="promote(item)"
+                    >
+                      直接提升
+                    </button>
+                  </template>
+                  <template v-else-if="item.status === 'trial' && isAdmin">
+                    <button
+                      class="btn btn-sm"
+                      :disabled="promoting === item.model_version"
+                      @click="confirmTrial(item)"
+                    >
+                      确认转正
+                    </button>
+                    <button
+                      class="btn btn-sm btn-quiet"
+                      :disabled="promoting === item.model_version"
+                      @click="rollbackTrial(item)"
+                    >
+                      回退
+                    </button>
+                  </template>
+                  <span v-else class="muted">—</span>
+                </div>
               </td>
             </tr>
             <tr v-if="!models.length">
@@ -578,6 +668,13 @@ const isTriggered = (item: DriftEvent) => item.action === 'triggered' || item.le
   font-size: 11.5px;
   line-height: 1.6;
   color: var(--ink-3);
+}
+
+/* 操作列：试用/提升、确认/回退各一组，窄屏时会换行 */
+.row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
 }
 
 .model-warn {

@@ -137,12 +137,26 @@ def health() -> dict[str, object]:
         raise HTTPException(status_code=503, detail=f"model unavailable: {error}") from error
 
 
+def switch_current(version: str) -> None:
+    """原子切换 current 软链：先建临时链再 rename，读方不会看到半成品。
+
+    要求 /model 可写；只读挂载时会抛 OSError，由调用方决定是否中止。
+    """
+    current = MODEL_DIR / "current"
+    staging = MODEL_DIR / ".current.tmp"
+    if staging.is_symlink() or staging.exists():
+        staging.unlink()
+    staging.symlink_to(f"versions/{version}")
+    os.replace(staging, current)
+
+
 @app.post("/admin/reload")
 def admin_reload(body: ReloadRequest | None = None) -> dict[str, object]:
     """重新加载模型。成功才替换运行时引用，失败保留旧模型继续服务。
 
-    这里不修改 current 软链：软链由调用方（S03 的 trial/rollback）管理，
-    失败时由调用方负责改回，避免接口在不知情的情况下删掉正确的指向。
+    传 version 时会顺带切换 current 软链——顺序必须是「先加载成功、再切软链」，
+    这样加载失败时软链与内存中的模型都停在旧版本，不会出现「软链指向坏目录、
+    下次重启起不来」的情况。
     """
     global _runtime
     version = body.version if body else None
@@ -160,6 +174,20 @@ def admin_reload(body: ReloadRequest | None = None) -> dict[str, object]:
                 status_code=409,
                 detail={"ok": False, "reason": "load_failed", "detail": str(error), "previous": previous},
             ) from error
+        switched = False
+        if version:
+            try:
+                switch_current(version)
+                switched = True
+            except OSError as error:
+                # 只读挂载或权限不足：模型已加载但软链没动，重启后会回到旧版本，必须明确告知
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "ok": False, "reason": "switch_readonly", "detail": str(error),
+                        "previous": previous, "loaded_but_not_persisted": True,
+                    },
+                ) from error
         _runtime = candidate
         return {
             "ok": True,
@@ -167,6 +195,7 @@ def admin_reload(body: ReloadRequest | None = None) -> dict[str, object]:
             "previous": previous,
             "loaded_at": candidate.loaded_at,
             "source_path": candidate.source_path,
+            "link_switched": switched,
         }
 
 

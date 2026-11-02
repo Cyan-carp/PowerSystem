@@ -66,7 +66,11 @@ type ModelRegistry struct {
 	PromotedAt      *time.Time      `json:"promoted_at"`
 	PromotedBy      *string         `json:"promoted_by"`
 	RejectedReason  *string         `json:"rejected_reason"`
-	CreatedAt       time.Time       `json:"created_at"`
+	/** 试用开始时刻：trial 状态用它算 24 小时观察期 */
+	TrialStartedAt *time.Time `json:"trial_started_at"`
+	/** 试用前的现役版本：回退只认这个字段，不靠猜 */
+	PreviousVersion *string   `json:"previous_version"`
+	CreatedAt       time.Time `json:"created_at"`
 }
 
 func (ModelRegistry) TableName() string { return "model_registry" }

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"math"
 	"net/http"
 	"strconv"
@@ -1070,6 +1071,147 @@ func (s *Server) predictionQualityPromote(c *gin.Context) {
 		return
 	}
 	ok(c, gin.H{"model_version": version, "status": "active", "promoted_at": now, "promoted_by": username})
+}
+
+// trialHours 是试用观察期。期满前不允许确认，避免刚切过去就下结论。
+const trialHours = 24
+
+// reloadModel 让推理服务加载指定版本。接口内部会切 current 软链，
+// 顺序是「先加载成功、再切软链」，失败时软链与内存都停在旧版本。
+func (s *Server) reloadModel(ctx context.Context, version string) error {
+	payload := strings.NewReader(fmt.Sprintf(`{"version":%q}`, version))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		strings.TrimRight(s.cfg.AIURL, "/")+"/admin/reload", payload)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := (&http.Client{Timeout: 30 * time.Second}).Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		return fmt.Errorf("reload %d: %s", resp.StatusCode, strings.TrimSpace(string(raw)))
+	}
+	return nil
+}
+
+// predictionQualityTrial 把候选切到试用：先 reload，成功后才改台账。
+// reload 失败时台账不动，页面会显示「切换失败，已保留原模型」。
+func (s *Server) predictionQualityTrial(c *gin.Context) {
+	version := c.Param("version")
+	if version == "" || len(version) > 64 {
+		fail(c, 400, 40001, "invalid model version")
+		return
+	}
+	ctx := c.Request.Context()
+	var target model.ModelRegistry
+	if err := s.db.WithContext(ctx).Where("model_version = ?", version).First(&target).Error; err != nil {
+		fail(c, 404, 40401, "model version not found")
+		return
+	}
+	if target.Status != "candidate" {
+		fail(c, 409, 40901, "只有候选版本可以试用")
+		return
+	}
+	previous := ""
+	var active model.ModelRegistry
+	if err := s.db.WithContext(ctx).Where("status = ?", "active").First(&active).Error; err == nil {
+		previous = active.ModelVersion
+	}
+	if err := s.reloadModel(ctx, version); err != nil {
+		fail(c, 502, 50201, "切换失败，已保留原模型："+err.Error())
+		return
+	}
+	now := time.Now().UTC()
+	if err := s.db.WithContext(ctx).Model(&model.ModelRegistry{}).Where("id = ?", target.ID).
+		Updates(map[string]any{
+			"status": "trial", "trial_started_at": now, "previous_version": nullableString(previous),
+		}).Error; err != nil {
+		fail(c, 503, 50000, "model trial failed")
+		return
+	}
+	ok(c, gin.H{
+		"model_version": version, "status": "trial",
+		"trial_started_at": now, "previous_version": previous,
+	})
+}
+
+// predictionQualityConfirm 试用期满后转正；未满 24 小时直接拒绝并给出剩余时间。
+func (s *Server) predictionQualityConfirm(c *gin.Context) {
+	version := c.Param("version")
+	ctx := c.Request.Context()
+	var target model.ModelRegistry
+	if err := s.db.WithContext(ctx).Where("model_version = ?", version).First(&target).Error; err != nil {
+		fail(c, 404, 40401, "model version not found")
+		return
+	}
+	if target.Status != "trial" || target.TrialStartedAt == nil {
+		fail(c, 409, 40901, "只有试用中的版本可以确认")
+		return
+	}
+	elapsed := time.Since(*target.TrialStartedAt)
+	if elapsed < trialHours*time.Hour {
+		fail(c, 409, 40902, fmt.Sprintf("试用未满 %d 小时，还需 %.1f 小时", trialHours, (trialHours*time.Hour-elapsed).Hours()))
+		return
+	}
+	var actor struct {
+		Username string `gorm:"column:username"`
+	}
+	_ = s.db.WithContext(ctx).Table("users").Select("username").
+		Where("id = ?", c.GetInt64("user_id")).Scan(&actor).Error
+	now := time.Now().UTC()
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Model(&model.ModelRegistry{}).Where("status = ?", "active").
+			Update("status", "retired").Error; err != nil {
+			return err
+		}
+		return tx.Model(&model.ModelRegistry{}).Where("id = ?", target.ID).
+			Updates(map[string]any{"status": "active", "promoted_at": now, "promoted_by": actor.Username}).Error
+	})
+	if err != nil {
+		fail(c, 503, 50000, "model confirm failed")
+		return
+	}
+	ok(c, gin.H{"model_version": version, "status": "active", "promoted_at": now})
+}
+
+// predictionQualityRollback 把试用版本退回上一版：reload 回 previous 成功后才改台账。
+func (s *Server) predictionQualityRollback(c *gin.Context) {
+	version := c.Param("version")
+	ctx := c.Request.Context()
+	var target model.ModelRegistry
+	if err := s.db.WithContext(ctx).Where("model_version = ?", version).First(&target).Error; err != nil {
+		fail(c, 404, 40401, "model version not found")
+		return
+	}
+	if target.Status != "trial" {
+		fail(c, 409, 40901, "只有试用中的版本可以回退")
+		return
+	}
+	if target.PreviousVersion == nil || *target.PreviousVersion == "" {
+		fail(c, 409, 40901, "没有可回退的版本")
+		return
+	}
+	previous := *target.PreviousVersion
+	if err := s.reloadModel(ctx, previous); err != nil {
+		fail(c, 502, 50201, "回退失败，当前模型未改动："+err.Error())
+		return
+	}
+	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Model(&model.ModelRegistry{}).Where("model_version = ?", previous).
+			Update("status", "active").Error; err != nil {
+			return err
+		}
+		return tx.Model(&model.ModelRegistry{}).Where("id = ?", target.ID).
+			Updates(map[string]any{"status": "candidate", "trial_started_at": nil}).Error
+	}); err != nil {
+		fail(c, 503, 50000, "model rollback failed")
+		return
+	}
+	ok(c, gin.H{"model_version": version, "status": "candidate", "rolled_back_to": previous})
 }
 
 // predictionQualityDrift 返回最近的漂移事件，只读事实，不触发训练。
