@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"math"
 	"net/http"
 	"strconv"
@@ -729,6 +730,182 @@ type qualityModelImportRequest struct {
 	Eligible        bool            `json:"eligible"`
 	RejectionReason string          `json:"rejection_reason"`
 	Status          string          `json:"status"`
+}
+
+// 重训门槛：天数与样本两个维度都要过。只看样本量会让模型背时刻表——
+// 当前一天只有 5 个窗口，样本再多也只是同一批钟点。
+const (
+	trainRequiredDays      = 10
+	trainRequiredSamples   = 5000
+	trainRequiredPositives = 50
+)
+
+type qualityTrainEligibility struct {
+	Days              int64    `json:"days"`
+	Samples           int64    `json:"samples"`
+	Positives         int64    `json:"positives"`
+	RequiredDays      int      `json:"required_days"`
+	RequiredSamples   int      `json:"required_samples"`
+	RequiredPositives int      `json:"required_positives"`
+	Ready             bool     `json:"ready"`
+	Blockers          []string `json:"blockers"`
+}
+
+// qualityEligibility 统计新形态（qualityEpochMS 之后）的可用样本。
+// 只算已结算且有标签的行，未到期的预测不能进训练集。
+func (s *Server) qualityEligibility(ctx context.Context) (qualityTrainEligibility, error) {
+	var row struct {
+		Days      int64
+		Samples   int64
+		Positives int64
+	}
+	err := s.db.WithContext(ctx).Raw(`
+		SELECT count(DISTINCT date_trunc('day', to_timestamp(window_end_ms/1000) AT TIME ZONE 'Asia/Shanghai')) AS days,
+		       count(*) AS samples,
+		       COALESCE(sum(CASE WHEN actual_fault THEN 1 ELSE 0 END), 0) AS positives
+		FROM prediction_outcomes
+		WHERE window_end_ms >= ?`, qualityEpochMS).Scan(&row).Error
+	if err != nil {
+		return qualityTrainEligibility{}, err
+	}
+	result := qualityTrainEligibility{
+		Days: row.Days, Samples: row.Samples, Positives: row.Positives,
+		RequiredDays: trainRequiredDays, RequiredSamples: trainRequiredSamples, RequiredPositives: trainRequiredPositives,
+	}
+	if result.Days < int64(trainRequiredDays) {
+		result.Blockers = append(result.Blockers, fmt.Sprintf("新形态数据仅 %d 天，需 %d 天", result.Days, trainRequiredDays))
+	}
+	if result.Samples < int64(trainRequiredSamples) {
+		result.Blockers = append(result.Blockers, fmt.Sprintf("样本 %d 条，需 %d 条", result.Samples, trainRequiredSamples))
+	}
+	if result.Positives < int64(trainRequiredPositives) {
+		result.Blockers = append(result.Blockers, fmt.Sprintf("正样本 %d 个，需 %d 个", result.Positives, trainRequiredPositives))
+	}
+	result.Ready = len(result.Blockers) == 0
+	return result, nil
+}
+
+// predictionQualityTrainEligibility 供页面预判重训按钮是否可点。
+func (s *Server) predictionQualityTrainEligibility(c *gin.Context) {
+	result, err := s.qualityEligibility(c.Request.Context())
+	if err != nil {
+		fail(c, 503, 50000, "eligibility query failed")
+		return
+	}
+	ok(c, result)
+}
+
+type trainerResponse struct {
+	OK              bool            `json:"ok"`
+	RunID           string          `json:"run_id"`
+	Eligible        bool            `json:"eligible"`
+	RejectionReason string          `json:"rejection_reason"`
+	ArtifactPath    string          `json:"artifact_path"`
+	Seconds         float64         `json:"seconds"`
+	Log             string          `json:"log"`
+	Report          json.RawMessage `json:"report"`
+}
+
+type retrainReport struct {
+	ModelVersion    string          `json:"model_version"`
+	Threshold       *float64        `json:"threshold"`
+	Metrics         json.RawMessage `json:"metrics"`
+	TrainSamples    *int            `json:"train_samples"`
+	PositiveSamples *int            `json:"positive_samples"`
+	TrainedAt       string          `json:"trained_at"`
+	Eligible        bool            `json:"eligible"`
+}
+
+// predictionQualityTrain 触发一次重训；过准入的候选自动登记进台账。
+// 训练本身在 ai-trainer 容器里跑，本接口只做准入校验、转发与登记。
+func (s *Server) predictionQualityTrain(c *gin.Context) {
+	ctx := c.Request.Context()
+	eligibility, err := s.qualityEligibility(ctx)
+	if err != nil {
+		fail(c, 503, 50000, "eligibility query failed")
+		return
+	}
+	if !eligibility.Ready {
+		fail(c, 409, 40902, strings.Join(eligibility.Blockers, "；"))
+		return
+	}
+	if strings.TrimSpace(s.cfg.TrainerURL) == "" {
+		fail(c, 503, 50000, "trainer not configured")
+		return
+	}
+	body := strings.NewReader(`{"days":120}`)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(s.cfg.TrainerURL, "/")+"/train", body)
+	if err != nil {
+		fail(c, 500, 50000, "trainer request build failed")
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	client := &http.Client{Timeout: 35 * time.Minute}
+	resp, err := client.Do(req)
+	if err != nil {
+		fail(c, 502, 50201, "trainer unreachable: "+err.Error())
+		return
+	}
+	defer resp.Body.Close()
+	var payload trainerResponse
+	decoderErr := json.NewDecoder(resp.Body).Decode(&payload)
+	if resp.StatusCode != http.StatusOK || decoderErr != nil {
+		fail(c, 502, 50201, "trainer failed: "+strings.TrimSpace(payload.Log))
+		return
+	}
+
+	var report retrainReport
+	if len(payload.Report) > 0 {
+		if err := json.Unmarshal(payload.Report, &report); err != nil {
+			fail(c, 502, 50201, "trainer report invalid")
+			return
+		}
+	}
+	if !payload.Eligible {
+		ok(c, gin.H{"eligible": false, "rejection_reason": payload.RejectionReason, "run_id": payload.RunID})
+		return
+	}
+
+	now := time.Now().UTC()
+	if report.TrainedAt != "" {
+		if parsed, err := time.Parse(time.RFC3339, report.TrainedAt); err == nil {
+			now = parsed
+		}
+	}
+	var existing model.ModelRegistry
+	lookupErr := s.db.WithContext(ctx).Where("model_version = ?", report.ModelVersion).First(&existing).Error
+	if lookupErr == nil {
+		if existing.Status == "active" {
+			fail(c, 409, 40901, "该版本已是现役，不覆盖")
+			return
+		}
+	} else if !errors.Is(lookupErr, gorm.ErrRecordNotFound) {
+		fail(c, 503, 50000, "model registry query failed")
+		return
+	}
+	artifact := payload.ArtifactPath
+	source := "synthetic_window"
+	record := model.ModelRegistry{
+		ModelVersion: report.ModelVersion, Algorithm: "xgboost", Status: "candidate",
+		Threshold: report.Threshold, Metrics: report.Metrics,
+		DataSource: &source, TrainSamples: report.TrainSamples, PositiveSamples: report.PositiveSamples,
+		ArtifactPath: &artifact, TrainedAt: &now,
+	}
+	if len(report.Metrics) == 0 || string(report.Metrics) == "null" {
+		record.Metrics = nil
+	}
+	if err := s.db.WithContext(ctx).Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "model_version"}},
+		DoUpdates: clause.AssignmentColumns([]string{"status", "threshold", "metrics", "data_source", "train_samples", "positive_samples", "artifact_path", "trained_at"}),
+	}).Create(&record).Error; err != nil {
+		fail(c, 503, 50000, "model register failed")
+		return
+	}
+	ok(c, gin.H{
+		"eligible": true, "run_id": payload.RunID, "seconds": payload.Seconds,
+		"model_version": report.ModelVersion, "artifact_path": artifact,
+		"train_samples": report.TrainSamples, "positive_samples": report.PositiveSamples,
+	})
 }
 
 // predictionQualityImportModel 登记一个模型版本。

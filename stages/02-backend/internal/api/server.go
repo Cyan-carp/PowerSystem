@@ -133,6 +133,8 @@ func New(cfg config.Config, db *gorm.DB, redis *redis.Client, td *tdengine.Clien
 	a.GET("/predictions/quality/series", s.predictionQualitySeries)
 	a.GET("/predictions/quality/calibration", s.predictionQualityCalibration)
 	a.GET("/predictions/quality/models", s.predictionQualityModels)
+	a.GET("/predictions/quality/models/train-eligibility", s.predictionQualityTrainEligibility)
+	a.POST("/predictions/quality/models/train", requireAdmin, s.predictionQualityTrain)
 	a.POST("/predictions/quality/models/import", requireAdmin, s.predictionQualityImportModel)
 	a.POST("/predictions/quality/models/:version/promote", requireAdmin, s.predictionQualityPromote)
 	a.GET("/predictions/quality/drift", s.predictionQualityDrift)

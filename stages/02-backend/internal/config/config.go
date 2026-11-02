@@ -27,6 +27,7 @@ type Config struct {
 	JWTSecret               string
 	AIURL                   string
 	AIEnabled               bool
+	TrainerURL              string
 	AIPollSeconds           int
 	WSAllowedOrigins        []string
 	BusinessNotifyEnabled   bool
@@ -60,6 +61,7 @@ func Load(service string) (Config, error) {
 	v.SetDefault("AGENT_CHAT_RATE", 10)
 	v.SetDefault("AGENT_CHAT_CONCURRENCY", 4)
 	v.SetDefault("AI_URL", "http://127.0.0.1:8090")
+	v.SetDefault("TRAINER_URL", "http://ai-trainer:8091")
 	v.SetDefault("AI_ENABLED", false)
 	v.SetDefault("AI_POLL_SECONDS", 300)
 	v.SetDefault("MQTT_BROKER", "tcp://127.0.0.1:1883")
@@ -83,7 +85,7 @@ func Load(service string) (Config, error) {
 		RedisAddr: v.GetString("REDIS_ADDR"), RedisPassword: v.GetString("REDIS_PASSWORD"),
 		TDURL: v.GetString("TDENGINE_URL"), TDUser: v.GetString("TDENGINE_USER"),
 		TDPassword: v.GetString("TDENGINE_ROOT_PASSWORD"), TDDatabase: v.GetString("TDENGINE_DATABASE"),
-		JWTSecret: v.GetString("JWT_SECRET"), AIURL: v.GetString("AI_URL"), AIEnabled: v.GetBool("AI_ENABLED"), AIPollSeconds: v.GetInt("AI_POLL_SECONDS"),
+		JWTSecret: v.GetString("JWT_SECRET"), AIURL: v.GetString("AI_URL"), AIEnabled: v.GetBool("AI_ENABLED"), AIPollSeconds: v.GetInt("AI_POLL_SECONDS"), TrainerURL: v.GetString("TRAINER_URL"),
 		BusinessNotifyEnabled: v.GetBool("FEISHU_BUSINESS_ENABLED"), BusinessNotifyURL: v.GetString("FEISHU_BUSINESS_URL"),
 		AgentEnabled: v.GetBool("AGENT_ENABLED"), AgentURL: v.GetString("AGENT_URL"),
 		AgentChatURL: v.GetString("AGENT_CHAT_URL"), AgentChatTimeoutSeconds: v.GetInt("AGENT_CHAT_TIMEOUT_SECONDS"),

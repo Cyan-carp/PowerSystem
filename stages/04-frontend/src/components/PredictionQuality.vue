@@ -12,6 +12,7 @@ import type {
   PredictionQualityCalibration,
   PredictionQualitySeries,
   PredictionQualitySummary,
+  TrainEligibility,
 } from '../lib/api'
 import { isAdmin } from '../lib/auth'
 import { n, pct, stamp } from '../lib/format'
@@ -38,6 +39,9 @@ const summaryRequest = useLatestRequest<PredictionQualitySummary>()
 const seriesRequest = useLatestRequest<PredictionQualitySeries>()
 const calibrationRequest = useLatestRequest<PredictionQualityCalibration>()
 const modelsRequest = useLatestRequest<{ items: PredictionModelVersion[]; runtime_version: string }>()
+const eligibilityRequest = useLatestRequest<TrainEligibility>()
+const training = ref(false)
+const eligibility = computed(() => eligibilityRequest.data.value)
 const driftRequest = useLatestRequest<DriftEvent[]>()
 
 const summary = computed(() => summaryRequest.data.value)
@@ -89,11 +93,35 @@ const loadModels = () =>
   modelsRequest.run(async (signal) => await api.predictionQualityModels(signal), { keepData: true })
 const loadDrift = () =>
   driftRequest.run(async (signal) => (await api.predictionQualityDrift(50, signal)).items, { keepData: true })
+const loadEligibility = () =>
+  eligibilityRequest.run(async (signal) => await api.predictionQualityTrainEligibility(signal), { keepData: true })
+
+/** 数据不够时按钮置灰，并直接展示后端给的原因，不在前端拼文案 */
+const startTrain = async () => {
+  if (training.value || !eligibility.value?.ready) return
+  training.value = true
+  try {
+    const result = await api.predictionQualityTrain()
+    if (result.eligible) {
+      toast('ok', `训练完成，候选 ${result.model_version ?? ''} 已登记`)
+      void loadModels()
+    } else {
+      const reason = result.rejection_reason || '未达准入'
+      toast('bad', `训练完成但未过准入：${reason}`)
+    }
+  } catch (error) {
+    toast('bad', `重训失败：${error instanceof Error ? error.message : String(error)}`)
+  } finally {
+    training.value = false
+    void loadEligibility()
+  }
+}
 
 const reload = () => {
   loadCore()
   void loadModels()
   void loadDrift()
+  void loadEligibility()
 }
 
 onMounted(reload)
@@ -284,7 +312,20 @@ const isTriggered = (item: DriftEvent) => item.action === 'triggered' || item.le
       <div class="card-head">
         <span class="card-title">模型版本</span>
         <span class="card-sub">{{ models.length }} 个版本 · 仅候选版本支持提升</span>
+        <div class="card-tools">
+          <button
+            class="btn btn-sm"
+            :disabled="!eligibility?.ready || training"
+            :title="eligibility?.ready ? '用新形态数据重训一份候选' : (eligibility?.blockers.join('；') || '正在读取数据量')"
+            @click="startTrain"
+          >
+            {{ training ? '训练中…' : '用新数据重训' }}
+          </button>
+        </div>
       </div>
+      <p v-if="eligibility && !eligibility.ready" class="train-hint">
+        暂不可重训：{{ eligibility.blockers.join('；') }}
+      </p>
       <p v-if="versionMismatch" class="model-warn" role="alert">
         台账现役为 <b class="num">{{ ledgerActive }}</b>，推理服务实际加载的是 <b class="num">{{ runtimeVersion }}</b>。
         提升只改台账，需要运维替换模型文件并重启推理服务后才会一致。
@@ -532,6 +573,13 @@ const isTriggered = (item: DriftEvent) => item.action === 'triggered' || item.le
 }
 
 /* 台账与运行态不一致时必须显眼：提完不换文件会静默跑旧模型 */
+.train-hint {
+  margin: 0 18px 10px;
+  font-size: 11.5px;
+  line-height: 1.6;
+  color: var(--ink-3);
+}
+
 .model-warn {
   margin: 0 18px 10px;
   padding: 9px 12px;

@@ -509,6 +509,17 @@ export interface PredictionModelVersion {
 }
 
 /** triggered = 指标已越线并触发处置；watch = 仅登记观察 */
+export interface TrainEligibility {
+  days: number
+  samples: number
+  positives: number
+  required_days: number
+  required_samples: number
+  required_positives: number
+  ready: boolean
+  /** 未达标的项目，直接展示给用户，不要自己拼文案 */
+  blockers: string[]
+}
 export interface DriftEvent {
   id: number
   detected_at: string
@@ -1045,6 +1056,15 @@ export const api = {
     get<PredictionQualityCalibration>(`/predictions/quality/calibration${query({ days })}`, signal),
   predictionQualityModels: (signal?: AbortSignal) =>
     get<{ items: PredictionModelVersion[]; runtime_version: string }>('/predictions/quality/models', signal),
+  /** 重训资格：天数、样本、正样本三项都要过；blockers 是具体差多少 */
+  predictionQualityTrainEligibility: (signal?: AbortSignal) =>
+    get<TrainEligibility>('/predictions/quality/models/train-eligibility', signal),
+  /** 触发一次窗口模式重训；过准入的候选自动登记为 candidate */
+  predictionQualityTrain: () =>
+    post<{ eligible: boolean; run_id?: string; model_version?: string; rejection_reason?: string }>(
+      '/predictions/quality/models/train',
+      {},
+    ),
   /** 只切平台登记的现役版本，不搬模型文件；返回后端实际落下的状态 */
   promoteModel: (version: string) =>
     post<{ model_version: string; status: ModelVersionStatus }>(

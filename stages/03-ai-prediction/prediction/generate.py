@@ -37,6 +37,19 @@ WINDOW_SCENARIOS = (
     (17, "temperature", 82.0),
 )
 WINDOW_MINUTES = 10
+# 前兆时长与爬升比例，必须与 simulator.py 的 --precursor-minutes / WINDOW_PRECURSOR_RATIO 一致，
+# 否则训练形态与线上形态仍然对不上（这是 2026-11-02 首轮"窗口训练"效果差的根因）。
+WINDOW_PRECURSOR_MINUTES = 60
+WINDOW_PRECURSOR_RATIO = 0.7
+
+
+def shape_value(base: float, target: float, ratio: float) -> float:
+    """窗口内取 max(base, target)；前兆期按比例插值，且不超过目标值。"""
+    if ratio >= 1.0:
+        return max(base, target)
+    if base >= target:
+        return base
+    return min(target, base + (target - base) * ratio * WINDOW_PRECURSOR_RATIO)
 
 
 def generate(out: Path, days: int, start: date, seed: int, window_mode: bool = False) -> dict[str, object]:
@@ -111,17 +124,22 @@ def generate(out: Path, days: int, start: date, seed: int, window_mode: bool = F
                     fault = False
 
                     if window_mode:
-                        hit = next(
-                            (w for w in device_windows if w["start_minute"] <= minute < w["end_minute"]),
-                            None,
-                        )
+                        hit = None
+                        ratio = 0.0
+                        for w in device_windows:
+                            if w["start_minute"] <= minute < w["end_minute"]:
+                                hit, ratio = w, 1.0
+                                break
+                            window_start = w["start_minute"]
+                            if WINDOW_PRECURSOR_MINUTES > 0 and window_start - WINDOW_PRECURSOR_MINUTES <= minute < window_start:
+                                hit = w
+                                ratio = 1.0 - (window_start - minute) / WINDOW_PRECURSOR_MINUTES
+                                break
                         if hit is not None:
-                            fault = True
-                            if hit["metric"] == "temperature":
-                                # 生产侧是 max(当前值, target)，这里同样只抬不压
-                                pass
-                            elif hit["metric"] == "voltage":
-                                voltage = max(voltage, float(hit["target"]))
+                            # 只有进入窗口才算故障；前兆期是"即将发生"，标签仍为正常
+                            fault = ratio >= 1.0
+                            if hit["metric"] == "voltage":
+                                voltage = shape_value(voltage, float(hit["target"]), ratio)
                     else:
                         lead = onset_minute - minute
                         ramp = 12 * (1 - lead / PRECURSOR_MINUTES) if 0 < lead <= PRECURSOR_MINUTES else 0.0
@@ -132,9 +150,8 @@ def generate(out: Path, days: int, start: date, seed: int, window_mode: bool = F
                     current = power * 1000 / (math.sqrt(3) * voltage * 0.99)
                     temp = 25 + 0.25 * power + 3 * max(0.0, math.sin(math.pi * (hour - 7) / 12)) + ramp + rng.uniform(-0.7, 0.7)
 
-                    if window_mode and hit is not None:
-                        if hit["metric"] == "temperature":
-                            temp = max(temp, float(hit["target"]))
+                    if window_mode and hit is not None and hit["metric"] == "temperature":
+                        temp = shape_value(temp, float(hit["target"]), ratio)
                         # 电压窗口只抬电压，电流已按新的电压重算，温度不动
 
                     status = 2 if fault else (1 if power > 0.05 else 0)
@@ -157,7 +174,7 @@ def generate(out: Path, days: int, start: date, seed: int, window_mode: bool = F
         "devices": list(DEVICES),
         "sampling_seconds": 60,
         "fault_mode": "window_injection" if window_mode else "precursor_ramp",
-        "precursor_minutes": 0 if window_mode else PRECURSOR_MINUTES,
+        "precursor_minutes": WINDOW_PRECURSOR_MINUTES if window_mode else PRECURSOR_MINUTES,
         "fault_minutes": WINDOW_MINUTES if window_mode else FAULT_MINUTES,
         "window_scenarios": (
             [{"hour": h, "metric": m, "target": t} for h, m, t in WINDOW_SCENARIOS] if window_mode else []
