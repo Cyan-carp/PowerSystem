@@ -108,10 +108,10 @@ const kpis = computed(() => {
   return [
     {
       key: 'samples',
-      label: '样本数',
+      label: '样本量',
       color: 'var(--brand)',
       value: value ? n(value.samples) : '—',
-      note: '窗口内已到期、有真实结果的预测',
+      note: '窗口已结算且有真值标注的预测',
     },
     { key: 'precision', label: '命中率', color: 'var(--ok)', value: value ? ratioOf(value.precision) : '—', note: 'precision = TP ÷ (TP + FP)' },
     { key: 'miss', label: '漏报率', color: 'var(--bad)', value: value ? ratioOf(missRate.value) : '—', note: '1 − recall = FN ÷ (TP + FN)' },
@@ -152,7 +152,7 @@ const promote = async (item: PredictionModelVersion) => {
   const target = item.model_version
   const ok = await askConfirm({
     title: `把 ${target} 提升为现役`,
-    body: '确认后只切换平台登记的现役版本，真实模型文件由运维替换；已经产生的预测不会被重算。',
+    body: '确认后仅变更登记的现役版本；模型文件由运维更新，历史预测不重算。',
     confirmText: '提升为现役',
   })
   if (!ok) return
@@ -239,7 +239,7 @@ const isTriggered = (item: DriftEvent) => item.action === 'triggered' || item.le
       <section class="card">
         <div class="card-head">
           <span class="card-title">混淆矩阵</span>
-          <span class="card-sub">概率达阈值判为故障</span>
+          <span class="card-sub">按阈值判定的预测结果</span>
         </div>
         <div class="cm-wrap">
           <table class="cm">
@@ -257,14 +257,14 @@ const isTriggered = (item: DriftEvent) => item.action === 'triggered' || item.le
                   <div class="cm-cell is-hit">
                     <b class="num">{{ cellText('tp') }}</b>
                     <span>命中</span>
-                    <em>确实故障</em>
+                    <em>预测故障且实际故障</em>
                   </div>
                 </td>
                 <td>
                   <div class="cm-cell is-miss">
                     <b class="num">{{ cellText('fn') }}</b>
                     <span>漏报</span>
-                    <em>故障被放过</em>
+                    <em>实际故障但未预测出</em>
                   </div>
                 </td>
               </tr>
@@ -274,21 +274,21 @@ const isTriggered = (item: DriftEvent) => item.action === 'triggered' || item.le
                   <div class="cm-cell is-false">
                     <b class="num">{{ cellText('fp') }}</b>
                     <span>误报</span>
-                    <em>白跑一趟</em>
+                    <em>预测故障但实际正常</em>
                   </div>
                 </td>
                 <td>
                   <div class="cm-cell is-safe">
                     <b class="num">{{ cellText('tn') }}</b>
                     <span>正确拒绝</span>
-                    <em>确实正常</em>
+                    <em>预测正常且实际正常</em>
                   </div>
                 </td>
               </tr>
             </tbody>
           </table>
           <p class="cm-note">
-            命中与漏报此消彼长：把阈值调低能捞回漏报，代价是误报变多。四格都看，才不会被单看命中率误导。
+            命中率与漏报率此消彼长：降低阈值可减少漏报，代价是误报增加。需结合四格共同判断，单看命中率会失真。
           </p>
         </div>
       </section>
@@ -308,7 +308,7 @@ const isTriggered = (item: DriftEvent) => item.action === 'triggered' || item.le
 
     <section class="card">
       <div class="card-head">
-        <span class="card-title">按天趋势</span>
+        <span class="card-title">按日趋势</span>
         <span class="card-sub">近 {{ days }} 天 · 命中率与漏报率</span>
       </div>
       <QualityTrend :points="points" :pending="seriesRequest.pending.value" />
@@ -317,7 +317,7 @@ const isTriggered = (item: DriftEvent) => item.action === 'triggered' || item.le
     <section class="card">
       <div class="card-head">
         <span class="card-title">模型版本</span>
-        <span class="card-sub">{{ models.length }} 个版本 · 只有候选版本可提升</span>
+        <span class="card-sub">{{ models.length }} 个版本 · 仅候选版本支持提升</span>
       </div>
       <div class="table-wrap">
         <table class="table md-table">
@@ -394,14 +394,14 @@ const isTriggered = (item: DriftEvent) => item.action === 'triggered' || item.le
         </table>
       </div>
       <div class="pager">
-        <span>提升只改平台登记的现役版本，模型文件由运维替换；退役与被拒版本只作留档，不能回切。</span>
+        <span>提升仅变更登记的现役版本，模型文件由运维更新；退役与被拒版本仅作留档，不支持回退。</span>
       </div>
     </section>
 
     <section class="card">
       <div class="card-head">
         <span class="card-title">漂移事件</span>
-        <span class="card-sub">最近 {{ drift.length }} 条 · 指标越线时自动登记</span>
+        <span class="card-sub">最近 {{ drift.length }} 条 · 指标越限时自动登记</span>
       </div>
       <div class="table-wrap">
         <table class="table dr-table">
@@ -438,13 +438,13 @@ const isTriggered = (item: DriftEvent) => item.action === 'triggered' || item.le
               </td>
             </tr>
             <tr v-if="!drift.length">
-              <td colspan="6" class="empty">{{ driftRequest.pending.value ? '正在读取漂移事件…' : '窗口内没有漂移事件' }}</td>
+              <td colspan="6" class="empty">{{ driftRequest.pending.value ? '正在读取漂移事件…' : '窗口内无漂移事件' }}</td>
             </tr>
           </tbody>
         </table>
       </div>
       <div class="pager">
-        <span>观测值与基线按同一口径记录；「观察」只登记不处置，处置动作仍需人工确认。</span>
+        <span>观测值与基线采用同一口径；观察级事件仅登记，处置需人工确认。</span>
       </div>
     </section>
   </div>

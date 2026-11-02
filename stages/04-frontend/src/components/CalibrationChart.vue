@@ -9,8 +9,8 @@ import { n, pct } from '../lib/format'
  * 图不引图表库，宽度按容器测出来，字才不会随容器缩放糊成一片。
  */
 const props = withDefaults(
-  defineProps<{ buckets: CalibrationBucket[]; ece: number | null; pending?: boolean; height?: number }>(),
-  { pending: false, height: 236 },
+  defineProps<{ buckets: CalibrationBucket[]; ece: number | null; pending?: boolean }>(),
+  { pending: false },
 )
 
 const wrap = ref<HTMLElement | null>(null)
@@ -29,12 +29,18 @@ onMounted(() => {
 
 onBeforeUnmount(() => observer?.disconnect())
 
-const pad = { top: 16, right: 16, bottom: 42, left: 42 }
-const plotW = computed(() => Math.max(120, width.value - pad.left - pad.right))
-const plotH = computed(() => Math.max(70, props.height - pad.top - pad.bottom))
+const pad = { top: 18, right: 16, bottom: 42, left: 46 }
+/** 绘图区强制正方形：45° 参考线只有宽高相等时才真正是 45°，否则视觉斜率失真 */
+const side = computed(() => {
+  const available = Math.max(120, width.value - pad.left - pad.right)
+  return Math.round(Math.min(available, 300))
+})
+/** 正方形在容器内水平居中，宽屏下不会被拉成长条 */
+const originX = computed(() => pad.left + Math.max(0, (width.value - pad.left - pad.right - side.value) / 2))
+const svgH = computed(() => pad.top + side.value + pad.bottom)
 
-const xAt = (value: number) => pad.left + Math.min(1, Math.max(0, value)) * plotW.value
-const yAt = (value: number) => pad.top + plotH.value - Math.min(1, Math.max(0, value)) * plotH.value
+const xAt = (value: number) => originX.value + Math.min(1, Math.max(0, value)) * side.value
+const yAt = (value: number) => pad.top + side.value - Math.min(1, Math.max(0, value)) * side.value
 
 /** 空桶（count = 0）不画点：没有样本就没有发生率，不能当成 0 */
 const points = computed(() => {
@@ -71,14 +77,14 @@ const coveredText = computed(() => `${points.value.length} / ${props.buckets.len
       <svg
         v-else
         :width="width"
-        :height="height"
-        :viewBox="`0 0 ${width} ${height}`"
+        :height="svgH"
+        :viewBox="`0 0 ${width} ${svgH}`"
         role="img"
         aria-label="预测概率与实际发生率的校准曲线"
       >
         <g class="grid">
-          <line v-for="tick in ticks" :key="`gy-${tick}`" :x1="pad.left" :x2="width - pad.right" :y1="yAt(tick)" :y2="yAt(tick)" />
-          <line v-for="tick in ticks" :key="`gx-${tick}`" :x1="xAt(tick)" :x2="xAt(tick)" :y1="pad.top" :y2="pad.top + plotH" />
+          <line v-for="tick in ticks" :key="`gy-${tick}`" :x1="originX" :x2="originX + side" :y1="yAt(tick)" :y2="yAt(tick)" />
+          <line v-for="tick in ticks" :key="`gx-${tick}`" :x1="xAt(tick)" :x2="xAt(tick)" :y1="pad.top" :y2="pad.top + side" />
         </g>
 
         <!-- 45° 参考线：完全校准的模型应当贴着它 -->
@@ -91,22 +97,22 @@ const coveredText = computed(() => `${points.value.length} / ${props.buckets.len
         </g>
 
         <g class="axis">
-          <text v-for="tick in ticks" :key="`y-${tick}`" :x="pad.left - 8" :y="yAt(tick) + 3.5" text-anchor="end">
+          <text v-for="tick in ticks" :key="`y-${tick}`" :x="originX - 8" :y="yAt(tick) + 3.5" text-anchor="end">
             {{ tickLabel(tick) }}
           </text>
-          <text v-for="tick in ticks" :key="`x-${tick}`" :x="xAt(tick)" :y="height - 20" text-anchor="middle">
+          <text v-for="tick in ticks" :key="`x-${tick}`" :x="xAt(tick)" :y="svgH - 20" text-anchor="middle">
             {{ tickLabel(tick) }}
           </text>
         </g>
 
-        <text class="axis-title" :x="pad.left" :y="10">实际发生率</text>
-        <text class="axis-title" :x="width - pad.right" :y="height - 4" text-anchor="end">预测概率</text>
+        <text class="axis-title" :x="originX" :y="10">实际发生率</text>
+        <text class="axis-title" :x="originX + side" :y="svgH - 4" text-anchor="end">预测概率</text>
       </svg>
     </div>
 
     <p class="cal-foot">
       <span>ECE <b class="num">{{ ece == null ? '—' : n(ece, 3) }}</b></span>
-      <span>虚线为完全校准参考线，点越贴近越好</span>
+      <span>虚线为完全校准参考线（预测概率 = 实际发生率）</span>
       <span>{{ coveredText }}</span>
     </p>
   </div>
