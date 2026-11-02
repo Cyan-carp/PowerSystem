@@ -37,6 +37,17 @@ BASELINE_PROFILE = "generic-pv-100kw"
 # "five cases per day" stay intact while alarms are now derived from telemetry.
 WINDOW_MINUTES = 10
 
+# 窗口前的前兆时长（分钟）与爬升幅度。
+# >0 时指标在窗口开始前先线性爬升到目标的 70%，让预测模型有可学前兆；
+# 0 保持原来的「窗口内突变」行为（用于告警链路回归测试）。
+WINDOW_PRECURSOR_RATIO = 0.7
+PRECURSOR_MINUTES = 0
+
+
+def set_precursor_minutes(value: int) -> None:
+    global PRECURSOR_MINUTES
+    PRECURSOR_MINUTES = max(0, int(value))
+
 
 @dataclass(frozen=True)
 class WindowScenario:
@@ -195,6 +206,31 @@ def window_active(instant: datetime, scenario: WindowScenario) -> bool:
     return start <= minute < start + WINDOW_MINUTES
 
 
+def window_phase(instant: datetime, scenario: WindowScenario, precursor_minutes: int) -> tuple[str, float] | None:
+    """Return ``("active", 1.0)`` inside the window, ``("precursor", ratio)`` before it.
+
+    ``precursor_minutes=0`` reproduces the original behaviour exactly: nothing
+    happens before the window, so the injected value jumps at ``HH:00``.
+    """
+    minute = instant.hour * 60 + instant.minute
+    start = scenario.hour * 60
+    if start <= minute < start + WINDOW_MINUTES:
+        return "active", 1.0
+    if precursor_minutes > 0 and start - precursor_minutes <= minute < start:
+        # ratio 从 0 线性升到 1：离窗口越近，爬升越多
+        return "precursor", 1.0 - (start - minute) / precursor_minutes
+    return None
+
+
+def shape_value(base: float, target: float, kind: str, ratio: float) -> float:
+    """窗口内取 ``max(base, target)``；前兆期按比例插值，且不超过目标值。"""
+    if kind == "active":
+        return max(base, target)
+    if base >= target:
+        return base
+    return min(target, base + (target - base) * ratio * WINDOW_PRECURSOR_RATIO)
+
+
 def window_device_code(scenario: WindowScenario, device_codes: Sequence[str], day: date) -> str | None:
     """Stable per-day device rotation: sorted device_code, next day shifts by one."""
     codes = sorted(device_codes)
@@ -225,23 +261,28 @@ def apply_window_injection(
     if window_mode != "on":
         return None
     scenario = WINDOW_SCENARIO_BY_STATION.get(station_code)
-    if scenario is None or not window_active(instant, scenario):
+    if scenario is None:
+        return None
+    phase = window_phase(instant, scenario, PRECURSOR_MINUTES)
+    if phase is None:
         return None
     if window_device_code(scenario, device_codes, instant.date()) != device_id:
         return None
+    kind, ratio = phase
     metric = scenario.metric
+    target = scenario.target
     if metric == "power":
-        power = max(float(payload["power"]), scenario.target)
+        power = shape_value(float(payload["power"]), target, kind, ratio)
         payload["power"] = round(power, 3)
         voltage = float(payload["voltage"])
         payload["current"] = round(power * 1000.0 / (math.sqrt(3) * voltage * 0.99), 3)
         payload["status"] = 1
     elif metric == "voltage":
-        voltage = max(float(payload["voltage"]), scenario.target)
+        voltage = shape_value(float(payload["voltage"]), target, kind, ratio)
         payload["voltage"] = round(voltage, 3)
         payload["current"] = round(float(payload["power"]) * 1000.0 / (math.sqrt(3) * voltage * 0.99), 3)
     else:
-        payload[metric] = round(max(float(payload[metric]), scenario.target), 3)
+        payload[metric] = round(shape_value(float(payload[metric]), target, kind, ratio), 3)
     return metric
 
 
@@ -722,6 +763,8 @@ def main() -> int:
                         help="deprecated and inert: the scheduled-fault ramp was removed; accepted only so existing deployments keep starting")
     parser.add_argument("--window-mode", choices=("on", "off"), default="off",
                         help="off (default): natural telemetry; on: five daily rule windows within the ingress contract")
+    parser.add_argument("--precursor-minutes", type=int, default=0,
+                        help="仅 window-mode=on 时生效：窗口前先线性爬升到目标的 70%，给预测模型可学前兆；0 保持突变")
     parser.add_argument("--time-scale", type=float, default=1.0)
     parser.add_argument("--seed", type=int, default=2026)
     parser.add_argument("--run-id", default="manual")
@@ -736,6 +779,9 @@ def main() -> int:
         parser.error("samples, interval-seconds, and time-scale must be positive")
     if not math.isfinite(args.daylight_loop_minutes) or args.daylight_loop_minutes < 0:
         parser.error("daylight-loop-minutes must be nonnegative and finite")
+    if args.precursor_minutes < 0:
+        parser.error("precursor-minutes must be nonnegative")
+    set_precursor_minutes(args.precursor_minutes)
     if args.daylight_loop_minutes and not args.continuous:
         parser.error("daylight-loop-minutes requires continuous mode")
     signal.signal(signal.SIGINT, lambda *_: STOP.set())
