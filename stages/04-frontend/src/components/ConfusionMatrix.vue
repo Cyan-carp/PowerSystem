@@ -16,24 +16,25 @@ interface Cell {
   label: string
   note: string
   value: number
-  good: boolean
 }
 
 const cells = computed<Cell[]>(() => [
-  { key: 'tp', label: '命中', note: '预测故障 · 实际故障', value: props.tp, good: true },
-  { key: 'fn', label: '漏报', note: '预测正常 · 实际故障', value: props.fn, good: false },
-  { key: 'fp', label: '误报', note: '预测故障 · 实际正常', value: props.fp, good: false },
-  { key: 'tn', label: '正确拒绝', note: '预测正常 · 实际正常', value: props.tn, good: true },
+  { key: 'tp', label: '命中', note: '预测故障 · 实际故障', value: props.tp },
+  { key: 'fn', label: '漏报', note: '预测正常 · 实际故障', value: props.fn },
+  { key: 'fp', label: '误报', note: '预测故障 · 实际正常', value: props.fp },
+  { key: 'tn', label: '正确拒绝', note: '预测正常 · 实际正常', value: props.tn },
 ])
 
 /** 对数刻度：样本极不均衡时，线性映射会让小格完全看不出差异 */
 const strength = (value: number) => Math.log1p(Math.max(0, value)) / Math.log1p(max.value)
-const background = (cell: Cell) => {
-  const mix = Math.round(10 + 78 * strength(cell.value))
-  const base = cell.good ? 'var(--ok)' : 'var(--bad)'
-  return `color-mix(in srgb, ${base} ${mix}%, var(--card))`
-}
-const isStrong = (cell: Cell) => strength(cell.value) > 0.62
+
+/**
+ * 单色品牌蓝：与全站主色一致，深浅只表达样本量。
+ * 好坏判定由位置（对角 = 判对）与文字标签承担，不再用红绿两套颜色，避免页面花。
+ */
+const mixOf = (value: number) => Math.round(8 + 74 * strength(value))
+const background = (cell: Cell) => `color-mix(in srgb, var(--brand) ${mixOf(cell.value)}%, var(--card))`
+const isStrong = (cell: Cell) => mixOf(cell.value) > 52
 
 const fmt = (value: number) => value.toLocaleString('zh-CN')
 const pctText = (value: number) => (total.value ? `${((value / total.value) * 100).toFixed(2)}%` : '—')
