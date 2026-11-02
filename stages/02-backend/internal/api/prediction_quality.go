@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"math"
+	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -654,6 +656,38 @@ type qualityModelItem struct {
 	PromotedAt      *time.Time      `json:"promoted_at"`
 	PromotedBy      *string         `json:"promoted_by"`
 	RejectedReason  *string         `json:"rejected_reason"`
+	ArtifactPath    *string         `json:"artifact_path"`
+}
+
+// runtimeModelVersion 读取推理服务实际加载的模型版本。
+// 台账提升只改登记状态、不替换模型文件，两者可能长期不一致；
+// 列表里一并返回，前端据此提示，避免「台账 A、运行 B」被静默忽略。
+// 任何失败都返回空串：这是辅助信息，不能让它拖垮列表接口。
+func (s *Server) runtimeModelVersion(ctx context.Context) string {
+	if s.cfg.AIURL == "" {
+		return ""
+	}
+	reqCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, strings.TrimRight(s.cfg.AIURL, "/")+"/health", nil)
+	if err != nil {
+		return ""
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return ""
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return ""
+	}
+	var payload struct {
+		ModelVersion string `json:"model_version"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		return ""
+	}
+	return payload.ModelVersion
 }
 
 // predictionQualityModels 列出模型台账，活动版本与最近训练版本在前。
@@ -672,10 +706,10 @@ func (s *Server) predictionQualityModels(c *gin.Context) {
 			DataSource: row.DataSource, TrainSamples: row.TrainSamples, PositiveSamples: row.PositiveSamples,
 			Metrics: row.Metrics, BaselineMetrics: row.BaselineMetrics,
 			TrainedAt: row.TrainedAt, PromotedAt: row.PromotedAt, PromotedBy: row.PromotedBy,
-			RejectedReason: row.RejectedReason,
+			RejectedReason: row.RejectedReason, ArtifactPath: row.ArtifactPath,
 		})
 	}
-	ok(c, gin.H{"items": items})
+	ok(c, gin.H{"items": items, "runtime_version": s.runtimeModelVersion(c.Request.Context())})
 }
 
 // qualityModelImportRequest 是训练作业 retrain-report.json 的提交体。

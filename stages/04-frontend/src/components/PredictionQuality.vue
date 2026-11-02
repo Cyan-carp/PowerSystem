@@ -37,13 +37,19 @@ const days = ref<RangeKey>(30)
 const summaryRequest = useLatestRequest<PredictionQualitySummary>()
 const seriesRequest = useLatestRequest<PredictionQualitySeries>()
 const calibrationRequest = useLatestRequest<PredictionQualityCalibration>()
-const modelsRequest = useLatestRequest<PredictionModelVersion[]>()
+const modelsRequest = useLatestRequest<{ items: PredictionModelVersion[]; runtime_version: string }>()
 const driftRequest = useLatestRequest<DriftEvent[]>()
 
 const summary = computed(() => summaryRequest.data.value)
 const points = computed(() => seriesRequest.data.value?.points ?? [])
 const calibration = computed(() => calibrationRequest.data.value)
-const models = computed(() => modelsRequest.data.value ?? [])
+const models = computed(() => modelsRequest.data.value?.items ?? [])
+/** 推理服务实际加载的版本；与台账现役不一致时必须提示，否则会静默跑错模型 */
+const runtimeVersion = computed(() => modelsRequest.data.value?.runtime_version ?? '')
+const ledgerActive = computed(() => models.value.find((item) => item.status === 'active')?.model_version ?? '')
+const versionMismatch = computed(
+  () => Boolean(runtimeVersion.value && ledgerActive.value && runtimeVersion.value !== ledgerActive.value),
+)
 const drift = computed(() => driftRequest.data.value ?? [])
 
 const loading = computed(
@@ -80,7 +86,7 @@ const loadCore = () => {
 
 /** 版本与漂移不随窗口变化，进页面拉一次即可；重拉时保留旧行，避免整表先闪成空 */
 const loadModels = () =>
-  modelsRequest.run(async (signal) => (await api.predictionQualityModels(signal)).items, { keepData: true })
+  modelsRequest.run(async (signal) => await api.predictionQualityModels(signal), { keepData: true })
 const loadDrift = () =>
   driftRequest.run(async (signal) => (await api.predictionQualityDrift(50, signal)).items, { keepData: true })
 
@@ -279,17 +285,22 @@ const isTriggered = (item: DriftEvent) => item.action === 'triggered' || item.le
         <span class="card-title">模型版本</span>
         <span class="card-sub">{{ models.length }} 个版本 · 仅候选版本支持提升</span>
       </div>
+      <p v-if="versionMismatch" class="model-warn" role="alert">
+        台账现役为 <b class="num">{{ ledgerActive }}</b>，推理服务实际加载的是 <b class="num">{{ runtimeVersion }}</b>。
+        提升只改台账，需要运维替换模型文件并重启推理服务后才会一致。
+      </p>
       <div class="table-wrap">
         <table class="table md-table">
           <colgroup>
-            <col style="width: 17%" />
-            <col style="width: 13%" />
-            <col style="width: 13%" />
             <col style="width: 15%" />
-            <col style="width: 9%" />
-            <col style="width: 9%" />
-            <col style="width: 14%" />
+            <col style="width: 11%" />
             <col style="width: 10%" />
+            <col style="width: 12%" />
+            <col style="width: 8%" />
+            <col style="width: 8%" />
+            <col style="width: 16%" />
+            <col style="width: 12%" />
+            <col style="width: 8%" />
           </colgroup>
           <thead>
             <tr>
@@ -299,6 +310,7 @@ const isTriggered = (item: DriftEvent) => item.action === 'triggered' || item.le
               <th>训练样本</th>
               <th>命中率</th>
               <th>漏报率</th>
+              <th>文件位置</th>
               <th>上线时间</th>
               <th>操作</th>
             </tr>
@@ -329,6 +341,12 @@ const isTriggered = (item: DriftEvent) => item.action === 'triggered' || item.le
               <td class="num">{{ metricOf(item, 'precision') }}</td>
               <td class="num">{{ missOf(item) }}</td>
               <td>
+                <span v-if="item.artifact_path" class="cell-path num" :title="item.artifact_path">
+                  {{ item.artifact_path }}
+                </span>
+                <span v-else class="muted">—</span>
+              </td>
+              <td>
                 <div class="cell-stack">
                   <span class="num">{{ stamp(item.promoted_at) }}</span>
                   <span class="cell-note num">训练 {{ stamp(item.trained_at) }}</span>
@@ -348,7 +366,7 @@ const isTriggered = (item: DriftEvent) => item.action === 'triggered' || item.le
               </td>
             </tr>
             <tr v-if="!models.length">
-              <td colspan="8" class="empty">{{ modelsRequest.pending.value ? '正在读取模型版本…' : '暂无登记的模型版本' }}</td>
+              <td colspan="9" class="empty">{{ modelsRequest.pending.value ? '正在读取模型版本…' : '暂无登记的模型版本' }}</td>
             </tr>
           </tbody>
         </table>
@@ -511,6 +529,30 @@ const isTriggered = (item: DriftEvent) => item.action === 'triggered' || item.le
   flex-direction: column;
   min-height: 0;
   padding: 0 18px 14px;
+}
+
+/* 台账与运行态不一致时必须显眼：提完不换文件会静默跑旧模型 */
+.model-warn {
+  margin: 0 18px 10px;
+  padding: 9px 12px;
+  border: 1px solid var(--warn);
+  border-radius: var(--r-md);
+  background: var(--warn-soft);
+  font-size: 11.5px;
+  line-height: 1.6;
+  color: var(--ink-1);
+}
+
+.model-warn b {
+  font-weight: 700;
+}
+
+.cell-path {
+  display: block;
+  font-size: 10.5px;
+  line-height: 1.45;
+  color: var(--ink-3);
+  word-break: break-all;
 }
 
 .cm-note {

@@ -504,6 +504,8 @@ export interface PredictionModelVersion {
   /** 执行提升的管理员账号；直接登记为现役的版本为 null */
   promoted_by: string | null
   rejected_reason: string | null
+  /** 候选模型文件的落地目录；训练在服务器上跑，这个路径给运维取文件用 */
+  artifact_path: string | null
 }
 
 /** triggered = 指标已越线并触发处置；watch = 仅登记观察 */
@@ -1042,7 +1044,7 @@ export const api = {
   predictionQualityCalibration: (days = 30, signal?: AbortSignal) =>
     get<PredictionQualityCalibration>(`/predictions/quality/calibration${query({ days })}`, signal),
   predictionQualityModels: (signal?: AbortSignal) =>
-    get<{ items: PredictionModelVersion[] }>('/predictions/quality/models', signal),
+    get<{ items: PredictionModelVersion[]; runtime_version: string }>('/predictions/quality/models', signal),
   /** 只切平台登记的现役版本，不搬模型文件；返回后端实际落下的状态 */
   promoteModel: (version: string) =>
     post<{ model_version: string; status: ModelVersionStatus }>(
