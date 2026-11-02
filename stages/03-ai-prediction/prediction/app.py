@@ -1,9 +1,20 @@
-"""Loopback FastAPI inference service for the trained stage-three model."""
+"""Loopback FastAPI inference service for the trained stage-three model.
+
+模型目录支持两种布局：
+
+- **新布局**：``<MODEL_DIR>/current`` 是指向 ``versions/<v>/`` 的软链，切换版本只改软链；
+- **旧布局**：``<MODEL_DIR>/{model.json,metadata.json}`` 直接放文件，用于兼容改造前的部署。
+
+``POST /admin/reload`` 重新加载模型：先完整构造新的 ``Runtime``，成功后才替换全局引用，
+失败时旧模型继续服务——请求线程要么看到旧模型、要么看到新模型，不会看到半个。
+"""
 
 from __future__ import annotations
 
 import json
 import os
+import threading
+import time
 from pathlib import Path
 
 import numpy as np
@@ -18,7 +29,7 @@ if "STAGE3_MODEL_DIR" in os.environ:
     MODEL_DIR = Path(os.environ["STAGE3_MODEL_DIR"])
 else:
     MODEL_DIR = Path(__file__).resolve().parents[3] / "artifacts" / "stage3" / "model"
-app = FastAPI(title="PowerSystem Fault Risk", version="1.0")
+app = FastAPI(title="PowerSystem Fault Risk", version="1.1")
 
 
 class Sample(BaseModel):
@@ -35,8 +46,16 @@ class PredictionRequest(BaseModel):
     samples: list[Sample] = Field(min_length=27, max_length=500)
 
 
+class ReloadRequest(BaseModel):
+    """缺省 version 时读 current 软链指向的目录。"""
+
+    version: str | None = None
+
+
 class Runtime:
     def __init__(self, directory: Path) -> None:
+        self.source_path = str(directory)
+        self.loaded_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
         self.metadata = json.loads((directory / "metadata.json").read_text(encoding="utf-8"))
         if tuple(self.metadata["feature_names"]) != FEATURE_NAMES:
             raise ValueError("model feature schema differs from inference code")
@@ -65,22 +84,90 @@ class Runtime:
         }
 
 
+def resolve_model_dir(version: str | None = None) -> Path:
+    """定位要加载的目录；找不到或断链时抛 FileNotFoundError，由调用方转成 404。"""
+    if version:
+        candidate = MODEL_DIR / "versions" / version
+        if not candidate.is_dir():
+            raise FileNotFoundError(f"model version not found: {version}")
+        return candidate
+    current = MODEL_DIR / "current"
+    if current.is_symlink() or current.is_dir():
+        target = current.resolve()
+        if not target.is_dir():
+            raise FileNotFoundError(f"current points to a missing directory: {target}")
+        return target
+    # 旧布局：兼容未做目录迁移的部署
+    if (MODEL_DIR / "model.json").is_file():
+        return MODEL_DIR
+    raise FileNotFoundError(f"no model found under {MODEL_DIR}")
+
+
 _runtime: Runtime | None = None
+_lock = threading.Lock()
 
 
 def runtime() -> Runtime:
     global _runtime
     if _runtime is None:
-        _runtime = Runtime(MODEL_DIR)
+        with _lock:
+            if _runtime is None:
+                _runtime = Runtime(resolve_model_dir(None))
     return _runtime
 
 
-@app.get("/health")
-def health() -> dict[str, str]:
+def current_version() -> str:
     try:
-        return {"status": "ok", "model_version": str(runtime().metadata["model_version"])}
+        return str(runtime().metadata["model_version"])
+    except Exception:  # noqa: BLE001 - 健康检查不该因模型问题抛栈
+        return ""
+
+
+@app.get("/health")
+def health() -> dict[str, object]:
+    try:
+        current = runtime()
+        return {
+            "status": "ok",
+            "model_version": str(current.metadata["model_version"]),
+            "loaded_at": current.loaded_at,
+            "source_path": current.source_path,
+        }
     except (OSError, ValueError, KeyError, json.JSONDecodeError) as error:
         raise HTTPException(status_code=503, detail=f"model unavailable: {error}") from error
+
+
+@app.post("/admin/reload")
+def admin_reload(body: ReloadRequest | None = None) -> dict[str, object]:
+    """重新加载模型。成功才替换运行时引用，失败保留旧模型继续服务。
+
+    这里不修改 current 软链：软链由调用方（S03 的 trial/rollback）管理，
+    失败时由调用方负责改回，避免接口在不知情的情况下删掉正确的指向。
+    """
+    global _runtime
+    version = body.version if body else None
+    with _lock:
+        previous = str(_runtime.metadata["model_version"]) if _runtime else ""
+        try:
+            candidate = Runtime(resolve_model_dir(version))
+        except FileNotFoundError as error:
+            raise HTTPException(
+                status_code=404,
+                detail={"ok": False, "reason": "version_not_found", "detail": str(error), "previous": previous},
+            ) from error
+        except (OSError, ValueError, KeyError, json.JSONDecodeError) as error:
+            raise HTTPException(
+                status_code=409,
+                detail={"ok": False, "reason": "load_failed", "detail": str(error), "previous": previous},
+            ) from error
+        _runtime = candidate
+        return {
+            "ok": True,
+            "model_version": str(candidate.metadata["model_version"]),
+            "previous": previous,
+            "loaded_at": candidate.loaded_at,
+            "source_path": candidate.source_path,
+        }
 
 
 @app.post("/predict")
