@@ -108,7 +108,10 @@ def build_model(args: argparse.Namespace) -> tuple[Path, Path | None]:
         if args.data_dir is not None:
             raise ValueError("--synthetic 与 --data-dir 不能同时使用")
         temp_root = Path(tempfile.mkdtemp(prefix="stage3-retrain-"))
-        manifest = generate_module.generate(temp_root / "synthetic", args.days, SYNTHETIC_START, args.seed)
+        manifest = generate_module.generate(
+            temp_root / "synthetic", args.days, SYNTHETIC_START, args.seed,
+            window_mode=args.window_mode,
+        )
         log({"step": "generate", "days": args.days, "seed": args.seed, "rows": manifest["rows"],
              "fault_events": manifest["fault_events"]})
         return temp_root / "synthetic", temp_root
@@ -190,6 +193,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--synthetic", action="store_true", help="先生成合成数据再训练")
     parser.add_argument("--days", type=int, default=180, help="合成数据天数，默认 180（generate.py 要求至少 10）")
     parser.add_argument("--seed", type=int, default=2026, help="合成数据种子，默认 2026")
+    parser.add_argument(
+        "--window-mode", action="store_true",
+        help="按生产窗口注入生成突变型故障（无前兆），与 simulator.py 的 WINDOW_SCENARIOS 对齐",
+    )
     parser.add_argument("--baseline-version", default=None, help="现役版本号，仅写进报告，不参与训练")
     parser.add_argument("--report", type=Path, default=None, help="报告输出路径，默认 <out-dir>/retrain-report.json")
     args = parser.parse_args(argv)

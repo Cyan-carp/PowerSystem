@@ -82,27 +82,28 @@ def load_windows(data_dir: Path) -> tuple[list[str], np.ndarray, np.ndarray]:
                 timezone_from_offset()
             ).date().isoformat()
             grouped[(row["device_id"], local_day)].append(row)
-    onsets: dict[tuple[str, str], dict[str, object]] = {}
+    onsets: dict[tuple[str, str], list[dict[str, object]]] = defaultdict(list)
     for event in events.values():
         day = datetime.fromtimestamp(event["onset_ms"] / 1000, timezone_from_offset()).date().isoformat()
-        onsets[(event["device_id"], day)] = event
+        onsets[(event["device_id"], day)].append(event)
     days: list[str] = []
     features: list[list[float]] = []
     labels: list[int] = []
     for key in sorted(grouped):
         rows = sorted(grouped[key], key=lambda row: int(row["ts_ms"]))
-        event = onsets[key]
-        onset = int(event["onset_ms"])
-        recovery = int(event["recovery_ms"])
+        # 一台设备一天可能有多个注入窗口（窗口模式），逐个比较，不能只取一个
+        day_events = onsets.get(key, [])
+        starts = [int(event["onset_ms"]) for event in day_events]
+        recoveries = [int(event["recovery_ms"]) for event in day_events]
         for end_index in range(29, len(rows), STEP_MINUTES):
             end_ms = int(rows[end_index]["ts_ms"])
-            if onset <= end_ms < recovery + 30 * 60_000:
+            if any(start <= end_ms < recovery + 30 * 60_000 for start, recovery in zip(starts, recoveries)):
                 continue
             window = rows[end_index - 29:end_index + 1]
             vector = extract(window, end_ms)
             days.append(key[1])
             features.append([vector[name] for name in FEATURE_NAMES])
-            labels.append(int(end_ms < onset <= end_ms + HOUR_MS))
+            labels.append(int(any(end_ms < start <= end_ms + HOUR_MS for start in starts)))
     return days, np.asarray(features, dtype=np.float32), np.asarray(labels, dtype=np.int8)
 
 
