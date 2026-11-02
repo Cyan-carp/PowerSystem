@@ -21,6 +21,9 @@ import (
 const (
 	// qualityBackfillDays 是每轮回填的预测时间回看天数。
 	qualityBackfillDays = 3
+	// qualityEpochMS 是质量统计起点（毫秒）：早于此刻结束的预测不再回填。
+	// 2026-11-02T07:20:00Z 切换模拟器故障形态，用它切断新旧数据混算；0 表示不限制。
+	qualityEpochMS = int64(1_793_604_000_000)
 	// qualityRefreshDays 是每轮重算日指标的天数，覆盖 3 天近期指标与 7 天漂移基线。
 	qualityRefreshDays = 10
 	// qualityBatchSize 是单批写入的行数，避免长事务。
@@ -128,6 +131,9 @@ func (s *Server) backfillOutcomes(ctx context.Context, days int) error {
 	}
 	now := time.Now()
 	cutoff := now.Add(-time.Duration(days) * 24 * time.Hour).UnixMilli()
+	if qualityEpochMS > cutoff {
+		cutoff = qualityEpochMS
+	}
 	// 窗口右端未到期时不判定，否则会把还没发生的事写成"无故障"。
 	closed := now.Add(-time.Duration(predictionWindowMS) * time.Millisecond).UnixMilli()
 	var rows []pendingPrediction
