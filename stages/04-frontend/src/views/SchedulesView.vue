@@ -643,6 +643,37 @@ onUnmounted(() => {
         </div>
       </section>
 
+
+    </div>
+
+    <aside class="sc-side">
+      <section class="card">
+        <div class="card-head">
+          <span class="card-title">使用说明</span>
+        </div>
+        <div class="note-body">
+          <p>任务只会<b>读取</b>数据并生成报告，不会改动设备，也不会修改报警规则。</p>
+          <p>有效期到了任务会自动暂停，不会默默续期；要继续用需要重新审批。</p>
+          <p>报告只放在平台站内，暂不支持发到邮箱或其它系统。</p>
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="card-head">
+          <span class="card-title">最近的操作记录</span>
+          <span class="card-sub">最新 {{ runs.length }} 条 · 只列本人提交</span>
+        </div>
+        <div class="review-list">
+          <button v-for="item in runs" :key="item.run_id" class="review" @click="openRun(item)">
+            <span class="review-cap">{{ CAP_CN[item.capability] || item.capability }}</span>
+            <span class="review-id num">{{ shortRunID(item.run_id) }}</span>
+            <StatusChip :dot="false" :tone="runTone(item.status)" :label="RUN_STATUS_CN[item.status] || item.status" />
+          </button>
+          <div v-if="!runs.length" class="empty small">还没有配置审查或预演记录</div>
+        </div>
+      </section>
+    </aside>
+
       <!-- 方案预演：先试算再改规则 -->
       <section class="card preview-card">
         <div class="card-head">
@@ -791,35 +822,6 @@ onUnmounted(() => {
           </div>
         </div>
       </section>
-    </div>
-
-    <aside class="sc-side">
-      <section class="card">
-        <div class="card-head">
-          <span class="card-title">使用说明</span>
-        </div>
-        <div class="note-body">
-          <p>任务只会<b>读取</b>数据并生成报告，不会改动设备，也不会修改报警规则。</p>
-          <p>有效期到了任务会自动暂停，不会默默续期；要继续用需要重新审批。</p>
-          <p>报告只放在平台站内，暂不支持发到邮箱或其它系统。</p>
-        </div>
-      </section>
-
-      <section class="card">
-        <div class="card-head">
-          <span class="card-title">最近的操作记录</span>
-          <span class="card-sub">最新 {{ runs.length }} 条 · 只列本人提交</span>
-        </div>
-        <div class="review-list">
-          <button v-for="item in runs" :key="item.run_id" class="review" @click="openRun(item)">
-            <span class="review-cap">{{ CAP_CN[item.capability] || item.capability }}</span>
-            <span class="review-id num">{{ shortRunID(item.run_id) }}</span>
-            <StatusChip :dot="false" :tone="runTone(item.status)" :label="RUN_STATUS_CN[item.status] || item.status" />
-          </button>
-          <div v-if="!runs.length" class="empty small">还没有配置审查或预演记录</div>
-        </div>
-      </section>
-    </aside>
   </div>
 
   <!-- 任务详情 + 运行历史 -->
@@ -1100,6 +1102,11 @@ onUnmounted(() => {
   flex-direction: column;
   gap: 16px;
   min-width: 0;
+}
+
+/* 试算工具放在网格最后并跨两列：收起时只占一行，不抢主区注意力 */
+.preview-card {
+  grid-column: 1 / -1;
 }
 
 .sc-side {
