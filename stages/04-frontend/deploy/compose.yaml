@@ -74,6 +74,25 @@ services:
       retries: 12
     restart: unless-stopped
 
+  ai-trainer:
+    build:
+      context: ../../03-ai-prediction
+      dockerfile: trainer/Dockerfile
+    environment:
+      STAGE3_MODEL_DIR: /model
+      TRAINER_WORK_DIR: /work
+      TRAIN_TIMEOUT_SECONDS: "1800"
+    volumes:
+      # 训练要往 versions/ 写候选，必须可写；推理侧仍然是只读以外的独立挂载
+      - ${POWERSYSTEM_MODEL_DIR:?set POWERSYSTEM_MODEL_DIR}:/model:rw
+      - ${POWERSYSTEM_TRAINER_DIR:?set POWERSYSTEM_TRAINER_DIR}:/work
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8091/health',timeout=5)"]
+      interval: 30s
+      timeout: 8s
+      retries: 5
+    restart: unless-stopped
+
   gateway:
     build:
       context: ../../02-backend

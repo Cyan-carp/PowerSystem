@@ -12,6 +12,7 @@ import type {
   PredictionQualityCalibration,
   PredictionQualitySeries,
   PredictionQualitySummary,
+  QualityAnalysis,
   TrainEligibility,
 } from '../lib/api'
 import { isAdmin } from '../lib/auth'
@@ -96,6 +97,32 @@ const loadDrift = () =>
 const loadEligibility = () =>
   eligibilityRequest.run(async (signal) => await api.predictionQualityTrainEligibility(signal), { keepData: true })
 
+const driftAnalysisRequest = useLatestRequest<QualityAnalysis[]>()
+const trialAnalysisRequest = useLatestRequest<QualityAnalysis[]>()
+const analyzing = ref<'drift' | 'trial' | ''>('')
+const driftAnalysis = computed(() => driftAnalysisRequest.data.value?.[0] ?? null)
+const trialAnalysis = computed(() => trialAnalysisRequest.data.value?.[0] ?? null)
+
+const loadAnalysis = () => {
+  driftAnalysisRequest.run(async (signal) => (await api.predictionQualityAnalysisLatest('drift', signal)).items, { keepData: true })
+  trialAnalysisRequest.run(async (signal) => (await api.predictionQualityAnalysisLatest('trial', signal)).items, { keepData: true })
+}
+
+/** AI 解读只写 analysis 表，不碰模型与台账；失败时页面保留原始指标 */
+const runAnalysis = async (kind: 'drift' | 'trial') => {
+  if (analyzing.value) return
+  analyzing.value = kind
+  try {
+    const result = await api.predictionQualityAnalysis(kind)
+    toast('ok', `解读完成：${result.conclusion}`)
+    await loadAnalysis()
+  } catch (error) {
+    toast('bad', `解读失败：${error instanceof Error ? error.message : String(error)}`)
+  } finally {
+    analyzing.value = ''
+  }
+}
+
 /** 数据不够时按钮置灰，并直接展示后端给的原因，不在前端拼文案 */
 const startTrain = async () => {
   if (training.value || !eligibility.value?.ready) return
@@ -122,6 +149,7 @@ const reload = () => {
   void loadModels()
   void loadDrift()
   void loadEligibility()
+  void loadAnalysis()
 }
 
 onMounted(reload)
@@ -374,22 +402,69 @@ const isTriggered = (item: DriftEvent) => item.action === 'triggered' || item.le
 
     <section class="card">
       <div class="card-head">
-        <span class="card-title">模型版本</span>
-        <span class="card-sub">{{ models.length }} 个版本 · 仅候选版本支持提升</span>
-        <div class="card-tools">
-          <button
-            class="btn btn-sm"
-            :disabled="!eligibility?.ready || training"
-            :title="eligibility?.ready ? '用新形态数据重训一份候选' : (eligibility?.blockers.join('；') || '正在读取数据量')"
-            @click="startTrain"
-          >
-            {{ training ? '训练中…' : '用新数据重训' }}
-          </button>
+        <span class="card-title">模型运营</span>
+        <span class="card-sub">重训与解读 · 只给建议，不自动执行</span>
+      </div>
+      <div class="ops">
+        <div class="ops-block">
+          <div class="ops-head">
+            <span class="ops-title">用新数据重训</span>
+            <button
+              class="btn btn-sm"
+              :disabled="!eligibility?.ready || training"
+              :title="eligibility?.ready ? '按最近 120 天窗口模式数据重训一份候选' : (eligibility?.blockers.join('；') || '正在读取数据量')"
+              @click="startTrain"
+            >
+              {{ training ? '训练中…' : '开始重训' }}
+            </button>
+          </div>
+          <p v-if="eligibility" class="ops-meta">
+            已积累 <b class="num">{{ eligibility.days }}</b> 天 ·
+            <b class="num">{{ eligibility.samples }}</b> 条样本 ·
+            <b class="num">{{ eligibility.positives }}</b> 个正样本
+          </p>
+          <p v-if="eligibility" class="ops-note-line" :class="eligibility.ready ? 'is-ok' : 'is-blocked'">
+            {{ eligibility.ready ? '已达准入门槛，可以重训' : eligibility.blockers.join('；') }}
+          </p>
+        </div>
+
+        <div class="ops-block">
+          <div class="ops-head">
+            <span class="ops-title">AI 解读</span>
+            <div class="ops-actions">
+              <button class="btn btn-sm" :disabled="analyzing !== ''" @click="runAnalysis('drift')">
+                {{ analyzing === 'drift' ? '分析中…' : '分析漂移' }}
+              </button>
+              <button class="btn btn-sm btn-quiet" :disabled="analyzing !== ''" @click="runAnalysis('trial')">
+                {{ analyzing === 'trial' ? '分析中…' : '对比试用' }}
+              </button>
+            </div>
+          </div>
+          <div v-if="driftAnalysis" class="ops-result">
+            <p class="ops-conclusion">{{ driftAnalysis.conclusion }}</p>
+            <ul v-if="driftAnalysis.reasons.length" class="ops-list">
+              <li v-for="reason in driftAnalysis.reasons" :key="reason">{{ reason }}</li>
+            </ul>
+            <p v-if="driftAnalysis.suggestions.length" class="ops-suggest">建议：{{ driftAnalysis.suggestions.join('；') }}</p>
+            <p class="ops-tokens">
+              {{ driftAnalysis.created_at ? stamp(driftAnalysis.created_at) : '' }} ·
+              tokens {{ driftAnalysis.prompt_tokens + driftAnalysis.completion_tokens }}
+            </p>
+          </div>
+          <p v-else class="ops-empty">还没有解读记录，点「分析漂移」让模型读一遍分时误差</p>
+          <div v-if="trialAnalysis" class="ops-result ops-result-trial">
+            <p class="ops-conclusion">试用对比：{{ trialAnalysis.conclusion }}</p>
+            <p v-if="trialAnalysis.suggestions.length" class="ops-suggest">建议：{{ trialAnalysis.suggestions.join('；') }}</p>
+          </div>
         </div>
       </div>
-      <p v-if="eligibility && !eligibility.ready" class="train-hint">
-        暂不可重训：{{ eligibility.blockers.join('；') }}
-      </p>
+    </section>
+
+    <section class="card">
+      <div class="card-head">
+        <span class="card-title">模型版本</span>
+        <span class="card-sub">{{ models.length }} 个版本 · 候选可试用，试用期满可转正</span>
+      </div>
       <p v-if="versionMismatch" class="model-warn" role="alert">
         台账现役为 <b class="num">{{ ledgerActive }}</b>，推理服务实际加载的是 <b class="num">{{ runtimeVersion }}</b>。
         提升只改台账，需要运维替换模型文件并重启推理服务后才会一致。
@@ -675,6 +750,114 @@ const isTriggered = (item: DriftEvent) => item.action === 'triggered' || item.le
   display: flex;
   flex-wrap: wrap;
   gap: 4px;
+}
+
+/* 模型运营：左重训、右解读 */
+.ops {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr);
+  gap: 18px;
+  padding: 14px 18px 18px;
+}
+
+.ops-block {
+  min-width: 0;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--surface-2, var(--surface));
+}
+
+.ops-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.ops-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink-1);
+}
+
+.ops-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.ops-meta {
+  margin: 0;
+  font-size: 11.5px;
+  line-height: 1.7;
+  color: var(--ink-2);
+}
+
+.ops-note-line {
+  margin: 6px 0 0;
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+.ops-note-line.is-ok {
+  color: var(--ok);
+}
+
+.ops-note-line.is-blocked {
+  color: var(--warn);
+}
+
+.ops-result {
+  margin-top: 8px;
+}
+
+.ops-result-trial {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--line);
+}
+
+.ops-conclusion {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.65;
+  color: var(--ink-1);
+}
+
+.ops-list {
+  margin: 6px 0 0;
+  padding-left: 16px;
+  font-size: 11.5px;
+  line-height: 1.7;
+  color: var(--ink-2);
+}
+
+.ops-suggest {
+  margin: 6px 0 0;
+  font-size: 11.5px;
+  line-height: 1.65;
+  color: var(--brand);
+}
+
+.ops-tokens {
+  margin: 6px 0 0;
+  font-size: 10.5px;
+  color: var(--ink-3);
+}
+
+.ops-empty {
+  margin: 0;
+  font-size: 11.5px;
+  line-height: 1.7;
+  color: var(--ink-3);
+}
+
+@media (max-width: 1180px) {
+  .ops {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 .model-warn {

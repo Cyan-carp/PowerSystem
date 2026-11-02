@@ -28,6 +28,10 @@ type Config struct {
 	AIURL                   string
 	AIEnabled               bool
 	TrainerURL              string
+	QualityLLMBaseURL       string
+	QualityLLMModel         string
+	QualityLLMKeyFile       string
+	QualityLLMThinking      string
 	AIPollSeconds           int
 	WSAllowedOrigins        []string
 	BusinessNotifyEnabled   bool
@@ -62,6 +66,12 @@ func Load(service string) (Config, error) {
 	v.SetDefault("AGENT_CHAT_CONCURRENCY", 4)
 	v.SetDefault("AI_URL", "http://127.0.0.1:8090")
 	v.SetDefault("TRAINER_URL", "http://ai-trainer:8091")
+	// 质量解读复用解读通道的 DeepSeek 账号（同一把 Key、同一份余额），
+	// 但单独开 thinking——归因要读多个时段的数据，值得多花点 token。
+	v.SetDefault("QUALITY_LLM_BASE_URL", "https://api.deepseek.com")
+	v.SetDefault("QUALITY_LLM_MODEL", "deepseek-flash")
+	v.SetDefault("QUALITY_LLM_KEY_FILE", "/run/secrets/quality_llm_key")
+	v.SetDefault("QUALITY_LLM_THINKING", "enabled")
 	v.SetDefault("AI_ENABLED", false)
 	v.SetDefault("AI_POLL_SECONDS", 300)
 	v.SetDefault("MQTT_BROKER", "tcp://127.0.0.1:1883")
@@ -85,7 +95,7 @@ func Load(service string) (Config, error) {
 		RedisAddr: v.GetString("REDIS_ADDR"), RedisPassword: v.GetString("REDIS_PASSWORD"),
 		TDURL: v.GetString("TDENGINE_URL"), TDUser: v.GetString("TDENGINE_USER"),
 		TDPassword: v.GetString("TDENGINE_ROOT_PASSWORD"), TDDatabase: v.GetString("TDENGINE_DATABASE"),
-		JWTSecret: v.GetString("JWT_SECRET"), AIURL: v.GetString("AI_URL"), AIEnabled: v.GetBool("AI_ENABLED"), AIPollSeconds: v.GetInt("AI_POLL_SECONDS"), TrainerURL: v.GetString("TRAINER_URL"),
+		JWTSecret: v.GetString("JWT_SECRET"), AIURL: v.GetString("AI_URL"), AIEnabled: v.GetBool("AI_ENABLED"), AIPollSeconds: v.GetInt("AI_POLL_SECONDS"), TrainerURL: v.GetString("TRAINER_URL"), QualityLLMBaseURL: v.GetString("QUALITY_LLM_BASE_URL"), QualityLLMModel: v.GetString("QUALITY_LLM_MODEL"), QualityLLMKeyFile: v.GetString("QUALITY_LLM_KEY_FILE"), QualityLLMThinking: v.GetString("QUALITY_LLM_THINKING"),
 		BusinessNotifyEnabled: v.GetBool("FEISHU_BUSINESS_ENABLED"), BusinessNotifyURL: v.GetString("FEISHU_BUSINESS_URL"),
 		AgentEnabled: v.GetBool("AGENT_ENABLED"), AgentURL: v.GetString("AGENT_URL"),
 		AgentChatURL: v.GetString("AGENT_CHAT_URL"), AgentChatTimeoutSeconds: v.GetInt("AGENT_CHAT_TIMEOUT_SECONDS"),

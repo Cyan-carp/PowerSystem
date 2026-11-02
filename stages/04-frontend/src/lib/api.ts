@@ -524,6 +524,19 @@ export interface TrainEligibility {
   /** 未达标的项目，直接展示给用户，不要自己拼文案 */
   blockers: string[]
 }
+
+/** AI 解读结果：只读结论，不会触发任何写操作 */
+export interface QualityAnalysis {
+  id: number
+  kind: 'drift' | 'trial'
+  subject: string
+  conclusion: string
+  reasons: string[]
+  suggestions: string[]
+  prompt_tokens: number
+  completion_tokens: number
+  created_at: string
+}
 export interface DriftEvent {
   id: number
   detected_at: string
@@ -1091,6 +1104,11 @@ export const api = {
     ),
   predictionQualityDrift: (limit = 50, signal?: AbortSignal) =>
     get<{ items: DriftEvent[] }>(`/predictions/quality/drift${query({ limit })}`, signal),
+  /** AI 解读：kind=drift 解释最近退化，kind=trial 对比试用版本 */
+  predictionQualityAnalysis: (kind: 'drift' | 'trial') =>
+    post<QualityAnalysis>('/predictions/quality/analysis', { kind }),
+  predictionQualityAnalysisLatest: (kind: 'drift' | 'trial', signal?: AbortSignal) =>
+    get<{ items: QualityAnalysis[] }>(`/predictions/quality/analysis?kind=${kind}`, signal),
 
   /* 报表：JSON 与 CSV 同一路由，后端 availability()/alarmTimeliness() 命中 ?format=csv 时走
      report_export.go 的 writeReportCSV（含场站汇总行，Content-Type=text/csv），比前端拼当前页更全 */

@@ -141,6 +141,8 @@ func New(cfg config.Config, db *gorm.DB, redis *redis.Client, td *tdengine.Clien
 	a.POST("/predictions/quality/models/:version/confirm", requireAdmin, s.predictionQualityConfirm)
 	a.POST("/predictions/quality/models/:version/rollback", requireAdmin, s.predictionQualityRollback)
 	a.GET("/predictions/quality/drift", s.predictionQualityDrift)
+	a.POST("/predictions/quality/analysis", requireAdmin, s.predictionQualityAnalysis)
+	a.GET("/predictions/quality/analysis", s.predictionQualityAnalysisLatest)
 	a.GET("/alarm-rules", s.listRules)
 	a.POST("/alarm-rules", requireAdmin, s.createRule)
 	a.GET("/alarm-rules/:id", s.getRule)
