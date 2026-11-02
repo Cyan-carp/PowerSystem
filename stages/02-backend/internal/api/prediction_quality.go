@@ -1279,11 +1279,14 @@ func (s *Server) detectDistributionDrift(ctx context.Context) error {
 	}
 	var baseline struct {
 		ProbMean float64 `gorm:"column:prob_mean"`
+		HighMean float64 `gorm:"column:high_mean"`
 		Days     int64   `gorm:"column:days"`
 	}
-	if err := s.db.WithContext(ctx).Raw(`SELECT coalesce(avg(daily),0) AS prob_mean, count(*) AS days
+	if err := s.db.WithContext(ctx).Raw(`SELECT coalesce(avg(daily),0) AS prob_mean,
+		coalesce(avg(daily_high),0) AS high_mean, count(*) AS days
 		FROM (SELECT (to_timestamp(window_end_ms/1000.0) AT TIME ZONE 'Asia/Shanghai')::date AS day,
-			avg(probability) AS daily
+			avg(probability) AS daily,
+			avg(CASE WHEN predicted_high THEN 1.0 ELSE 0.0 END) AS daily_high
 			FROM prediction_outcomes WHERE window_end_ms >= ? AND window_end_ms < ?
 			GROUP BY 1) AS t`, baselineStart.UnixMilli(), recentStart.UnixMilli()).
 		Scan(&baseline).Error; err != nil {
@@ -1303,10 +1306,19 @@ func (s *Server) detectDistributionDrift(ctx context.Context) error {
 		}
 	}
 	if recent.HighRatio < driftL1HighRatioMin || recent.HighRatio > driftL1HighRatioMax {
+		// 基线优先用此前 7 天的日均高风险占比；新部署没有历史时退化到经验区间中点，
+		// 并在 detail 里标明来源，避免读的人把中点当成实测基线。
+		highBaseline := (driftL1HighRatioMin + driftL1HighRatioMax) / 2
+		baselineSource := "range_midpoint"
+		if baseline.Days > 0 && baseline.HighMean > 0 {
+			highBaseline = baseline.HighMean
+			baselineSource = "trailing_7d"
+		}
 		if err := s.recordDrift(ctx, model.PredictionDriftEvent{
 			Level: "L1", Signal: "high_ratio", Observed: &recent.HighRatio,
-			Threshold: ptrFloat(driftL1HighRatioMax), Action: "watch",
+			Baseline: &highBaseline, Threshold: ptrFloat(driftL1HighRatioMax), Action: "watch",
 			Detail: detailJSON(gin.H{"lower": driftL1HighRatioMin, "upper": driftL1HighRatioMax,
+				"baseline_source": baselineSource, "baseline_days": baseline.Days,
 				"samples": recent.Samples, "window_hours": int(driftL1ObserveWindow / time.Hour)}),
 		}); err != nil {
 			return err
