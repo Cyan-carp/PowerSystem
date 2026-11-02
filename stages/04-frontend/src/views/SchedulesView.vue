@@ -78,14 +78,14 @@ onMounted(load)
 const STATUS_CN: Record<string, string> = { active: '运行中', paused: '已暂停', cancelled: '已取消' }
 const statusTone = (status: string) => (status === 'active' ? 'ok' : status === 'paused' ? 'warn' : 'idle')
 
-const typeName = (config: ScheduleConfig) => (config.task_type === 'inspection' ? '定期巡检' : '定期日报')
+const typeName = (config: ScheduleConfig) => (config.task_type === 'inspection' ? '自动巡检' : '每日报告')
 const scopeName = (config: ScheduleConfig) => {
-  if (config.scope === 'all') return '全部场站'
-  if (config.scope === 'business') return '业务场站'
-  return `指定范围 · ${config.station_code || '未指定'}`
+  if (config.scope === 'all') return '所有设备'
+  if (config.scope === 'business') return '业务设备'
+  return `指定场站 · ${config.station_code || '未指定'}`
 }
 const triggerName = (config: ScheduleConfig) =>
-  config.mode === 'interval' ? `每 ${config.interval_minutes ?? '—'} 分钟` : `每日 ${config.daily_time || '—'}`
+  config.mode === 'interval' ? `每 ${config.interval_minutes ?? '—'} 分钟一次` : `每天 ${config.daily_time || '—'}`
 
 const strip = computed(() => {
   const active = list.value.filter((item) => item.status === 'active')
@@ -96,8 +96,8 @@ const strip = computed(() => {
     .filter((value): value is string => !!value)
     .sort()[0]
   return [
-    { key: 'active', label: '运行中', color: 'var(--ok)', value: `${active.length}`, note: '按配置自动执行' },
-    { key: 'paused', label: '已暂停', color: 'var(--warn)', value: `${paused.length}`, note: '授权到期或本人暂停' },
+    { key: 'active', label: '运行中', color: 'var(--ok)', value: `${active.length}`, note: '按设定时间自动执行' },
+    { key: 'paused', label: '已暂停', color: 'var(--warn)', value: `${paused.length}`, note: '到期或手动暂停' },
     { key: 'cancelled', label: '已取消', color: 'var(--ink-4)', value: `${cancelled.length}`, note: '保留历史，不再执行' },
     { key: 'next', label: '下次执行', color: 'var(--brand)', value: next ? clock(next) : '—', note: next ? across(next) : '暂无待执行任务' },
   ]
@@ -110,6 +110,21 @@ const openForm = (mode: 'create' | 'edit', item?: Schedule) => {
   formError.value = ''
   editing.value = item || null
   form.value = item ? { ...item.config } : blankConfig()
+  formOpen.value = true
+}
+
+/** 常用配置模板：非开发者不必从空表单开始，选一个最接近的再微调 */
+const useTemplate = (kind: 'daily-inspection' | 'interval-inspection' | 'daily-report') => {
+  const preset: Partial<ScheduleConfig> =
+    kind === 'daily-inspection'
+      ? { task_type: 'inspection', scope: 'all', mode: 'daily', daily_time: '09:00', interval_minutes: null }
+      : kind === 'interval-inspection'
+        ? { task_type: 'inspection', scope: 'business', mode: 'interval', interval_minutes: 30, daily_time: null }
+        : { task_type: 'daily_report', scope: 'all', mode: 'daily', daily_time: '18:00', interval_minutes: null }
+  formMode.value = 'create'
+  formError.value = ''
+  editing.value = null
+  form.value = { ...blankConfig(), ...preset }
   formOpen.value = true
 }
 
@@ -183,7 +198,7 @@ const openDetail = async (item: Schedule) => {
 /* ---------------- 最近的审查与预演 ---------------- */
 
 const CAP_CN: Record<string, string> = {
-  'schedule.propose': '配置审查',
+  'schedule.propose': '配置审批',
   'rule.preview': '规则预演',
   'assistant.answer': '对话回答',
 }
@@ -296,7 +311,7 @@ const bjInput = (ms: number) => {
   return `${at.getUTCFullYear()}-${pad(at.getUTCMonth() + 1)}-${pad(at.getUTCDate())}T${pad(at.getUTCHours())}:${pad(at.getUTCMinutes())}`
 }
 
-const previewOpen = ref(sessionStorage.getItem('sched-preview-open') !== '0')
+const previewOpen = ref(sessionStorage.getItem('sched-preview-open') === '1')
 const previewForm = ref({
   device_id: 0,
   metric: 'temperature' as RulePreviewInput['metric'],
@@ -496,6 +511,11 @@ onUnmounted(() => {
 </script>
 
 <template>
+  <div class="sc-intro">
+    <h1>定期任务</h1>
+    <p>到点自动巡检设备、生成报告，结果放在平台站内。新建或修改后，需要管理员批准才会开始执行。</p>
+  </div>
+
   <div class="page-head">
     <div class="page-actions">
       <button class="btn" :disabled="loading" @click="load">
@@ -564,7 +584,7 @@ onUnmounted(() => {
                 <span class="task-ver num">v{{ item.config_version }}</span>
               </div>
               <p class="task-meta">
-                {{ scopeName(item.config) }} · {{ triggerName(item.config) }} · 授权 {{ item.config.grant_days }} 天
+                {{ scopeName(item.config) }} · {{ triggerName(item.config) }} · 有效期 {{ item.config.grant_days }} 天
               </p>
               <p class="task-note">
                 <template v-if="item.status === 'active' && item.next_run_at">
@@ -603,15 +623,31 @@ onUnmounted(() => {
             </div>
           </article>
 
-          <div v-if="!list.length && !loading" class="empty">还没有定期任务，从右上角新建一个</div>
+          <div v-if="!list.length && !loading" class="empty-start">
+            <p class="empty-lead">还没有任务。选一个常用配置，改改时间和范围就能用：</p>
+            <div class="tpl-grid">
+              <button class="tpl" @click="useTemplate('daily-inspection')">
+                <b>每天巡检一次</b>
+                <span>每天 09:00 检查全部场站，生成巡检记录</span>
+              </button>
+              <button class="tpl" @click="useTemplate('interval-inspection')">
+                <b>每半小时巡检</b>
+                <span>每 30 分钟检查业务场站，适合盯重点设备</span>
+              </button>
+              <button class="tpl" @click="useTemplate('daily-report')">
+                <b>每天生成日报</b>
+                <span>每天 18:00 汇总当天运行情况</span>
+              </button>
+            </div>
+          </div>
         </div>
       </section>
 
       <!-- 方案预演：先试算再改规则 -->
       <section class="card preview-card">
         <div class="card-head">
-          <span class="card-title">方案预演</span>
-          <span class="card-sub">单设备 · 历史 24 小时内 · 只比较采样命中</span>
+          <span class="card-title">改报警线前，先试算</span>
+          <span class="card-sub">选一台设备，用过去 24 小时的数据看改完会多触发几次</span>
           <div class="card-tools">
             <button class="btn btn-sm" @click="togglePreview">
               <Icon name="chevronDown" :size="13" :style="{ transform: previewOpen ? 'none' : 'rotate(-90deg)' }" />
@@ -622,13 +658,12 @@ onUnmounted(() => {
 
         <div v-show="previewOpen" class="preview-body">
           <p class="preview-note">
-            先在这里试算候选阈值，再决定要不要动规则。预演只读历史快照、不改线上规则；
-            命中次数是采样比较，不等于真实收益或漏报率。
+            这里只是试算，不会改动线上报警规则。命中次数按采样点比较，不等于真实收益或漏报率。
           </p>
 
           <div class="pv-form">
             <label class="form-row span-2">
-              <span>设备</span>
+              <span>选一台设备</span>
               <select v-model.number="previewForm.device_id" class="field" :disabled="devicesLoading">
                 <option :value="0" disabled>{{ devicesLoading ? '读取设备…' : devices.length ? '请选择设备' : devicesError ? '设备列表加载失败' : '暂无设备' }}</option>
                 <option v-for="item in devices" :key="item.id" :value="item.id">
@@ -638,7 +673,7 @@ onUnmounted(() => {
             </label>
 
             <label class="form-row">
-              <span>指标</span>
+              <span>看哪个指标</span>
               <select v-model="previewForm.metric" class="field">
                 <option value="temperature">温度 ℃</option>
                 <option value="power">功率 kW</option>
@@ -648,22 +683,22 @@ onUnmounted(() => {
             </label>
 
             <label class="form-row">
-              <span>开始（北京时间，含）</span>
+              <span>试算开始（北京时间）</span>
               <input v-model="previewForm.start" type="datetime-local" class="field" />
             </label>
 
             <label class="form-row">
-              <span>结束（北京时间，不含）</span>
+              <span>试算结束（北京时间）</span>
               <input v-model="previewForm.end" type="datetime-local" class="field" />
             </label>
 
             <label class="form-row">
-              <span>假设采样间隔（秒）</span>
+              <span>设备多久上报一次（秒）</span>
               <input v-model.number="previewForm.expected_interval_seconds" type="number" min="1" max="86400" step="1" class="field" />
             </label>
 
             <label class="form-row">
-              <span>比较符</span>
+              <span>判断方式</span>
               <select v-model="previewForm.operator" class="field">
                 <option value="gt">大于 &gt;</option>
                 <option value="gte">大于等于 ≥</option>
@@ -673,12 +708,12 @@ onUnmounted(() => {
             </label>
 
             <label class="form-row">
-              <span>基准阈值</span>
+              <span>现在的报警线</span>
               <input v-model.number="previewForm.baseline_threshold" type="number" step="1" class="field" />
             </label>
 
             <label class="form-row">
-              <span>候选阈值</span>
+              <span>想改成</span>
               <input v-model.number="previewForm.threshold" type="number" step="1" class="field" />
             </label>
           </div>
@@ -690,11 +725,11 @@ onUnmounted(() => {
 
           <div class="preview-actions">
             <button class="btn btn-primary" :disabled="previewBusy || devicesLoading || !!devicesError || !devices.length" @click="submitPreview">
-              {{ previewBusy ? '预演中…' : '创建只读预演' }}
+              {{ previewBusy ? '试算中…' : '开始试算' }}
             </button>
             <button class="btn btn-sm" @click="previewWindow(24)">近 24 小时</button>
             <button class="btn btn-sm" @click="previewWindow(1)">近 1 小时</button>
-            <span class="preview-hint">采样间隔按实际上报周期填：填小了会把「没上报」算成缺测。</span>
+            <span class="preview-hint">按设备真实上报周期填：填小了会把「没上报」算成漏采。</span>
           </div>
 
           <p v-if="previewError" class="preview-error">{{ previewError }}</p>
@@ -704,7 +739,7 @@ onUnmounted(() => {
 
           <div v-if="previewResult" class="pv-result">
             <div class="pv-result-head">
-              <b>预演结果</b>
+              <b>试算结果</b>
               <StatusChip
                 :dot="false"
                 :tone="previewComplete ? 'ok' : 'warn'"
@@ -728,10 +763,10 @@ onUnmounted(() => {
                 </b>
               </div>
               <div class="pv-stat">
-                <span>基准命中</span><b class="num">{{ n(previewResult.metrics.baseline_hits) }}</b>
+                <span>现在会触发</span><b class="num">{{ n(previewResult.metrics.baseline_hits) }}</b>
               </div>
               <div class="pv-stat">
-                <span>候选命中</span><b class="num">{{ n(previewResult.metrics.candidate_hits) }}</b>
+                <span>改完会触发</span><b class="num">{{ n(previewResult.metrics.candidate_hits) }}</b>
               </div>
             </div>
 
@@ -761,18 +796,18 @@ onUnmounted(() => {
     <aside class="sc-side">
       <section class="card">
         <div class="card-head">
-          <span class="card-title">授权与边界</span>
+          <span class="card-title">使用说明</span>
         </div>
         <div class="note-body">
-          <p>任务只授予<b>只读</b>权限：读遥测、读告警、生成报表。不包含任何写设备、写规则的动作。</p>
-          <p>授权到期后任务自动暂停，不会静默续期；恢复需要重新审批。</p>
-          <p>交付位置固定为「平台站内」，暂不支持外部邮箱或其他系统。</p>
+          <p>任务只会<b>读取</b>数据并生成报告，不会改动设备，也不会修改报警规则。</p>
+          <p>有效期到了任务会自动暂停，不会默默续期；要继续用需要重新审批。</p>
+          <p>报告只放在平台站内，暂不支持发到邮箱或其它系统。</p>
         </div>
       </section>
 
       <section class="card">
         <div class="card-head">
-          <span class="card-title">最近的审查与预演</span>
+          <span class="card-title">最近的操作记录</span>
           <span class="card-sub">最新 {{ runs.length }} 条 · 只列本人提交</span>
         </div>
         <div class="review-list">
@@ -851,7 +886,7 @@ onUnmounted(() => {
   <!-- 新建 / 修改 -->
   <Drawer
     v-if="formOpen"
-    :title="formMode === 'edit' ? '修改任务配置' : '新建定期任务'"
+    :title="formMode === 'edit' ? '修改任务' : '新建任务'"
     sub="提交后生成待批运行，批准前不会执行"
     @close="formOpen = false"
   >
@@ -859,16 +894,16 @@ onUnmounted(() => {
       <label class="form-row">
         <span>任务类型</span>
         <select v-model="form.task_type" class="field">
-          <option value="daily_report">定期日报</option>
-          <option value="inspection">定期巡检</option>
+          <option value="daily_report">每日报告</option>
+          <option value="inspection">自动巡检</option>
         </select>
       </label>
 
       <label class="form-row">
         <span>范围</span>
         <select v-model="form.scope" class="field">
-          <option value="all">全部场站</option>
-          <option value="business">业务场站</option>
+          <option value="all">所有设备</option>
+          <option value="business">业务设备</option>
           <option value="baseline">指定场站</option>
         </select>
       </label>
@@ -886,48 +921,117 @@ onUnmounted(() => {
       <label class="form-row">
         <span>触发方式</span>
         <select v-model="form.mode" class="field">
-          <option value="daily">每日定时</option>
-          <option value="interval">按间隔</option>
+          <option value="daily">每天固定时间</option>
+          <option value="interval">每隔一段时间</option>
         </select>
       </label>
 
       <label v-if="form.mode === 'daily'" class="form-row">
-        <span>执行时刻</span>
+        <span>每天几点执行</span>
         <input v-model="form.daily_time" type="time" class="field" />
       </label>
 
       <label v-else class="form-row">
-        <span>间隔（分钟）</span>
+        <span>每隔多少分钟</span>
         <input v-model.number="form.interval_minutes" type="number" min="5" step="5" class="field" />
       </label>
 
       <label class="form-row">
-        <span>授权有效期（天）</span>
+        <span>有效期（天）</span>
         <input v-model.number="form.grant_days" type="number" min="1" max="90" class="field" />
       </label>
 
       <div class="form-row is-static">
-        <span>交付位置</span>
+        <span>报告送到哪里</span>
         <b>平台站内</b>
       </div>
 
       <div v-if="formError" class="form-error">{{ formError }}</div>
 
       <div class="form-note">
-        任务只申请只读授权；到期自动暂停。修改配置会生成新版本并重新走审批。
+        任务只会读取数据，不会改动设备。提交后需要管理员批准才会开始执行。
       </div>
     </div>
 
     <template #footer>
       <button class="btn" @click="formOpen = false">取消</button>
       <button class="btn btn-primary" :disabled="submitting" @click="submitForm">
-        {{ submitting ? '提交中…' : '提交审批' }}
+        {{ submitting ? '提交中…' : '提交给管理员批准' }}
       </button>
     </template>
   </Drawer>
 </template>
 
 <style scoped>
+.sc-intro {
+  margin-bottom: 10px;
+}
+
+.sc-intro h1 {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--ink-1);
+}
+
+.sc-intro p {
+  margin: 5px 0 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--ink-3);
+}
+
+.empty-start {
+  padding: 24px 18px 20px;
+}
+
+.empty-lead {
+  margin: 0 0 12px;
+  font-size: 12.5px;
+  color: var(--ink-3);
+}
+
+.tpl-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.tpl {
+  display: block;
+  text-align: left;
+  padding: 13px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--card);
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.tpl:hover {
+  border-color: var(--brand);
+  background: var(--brand-soft);
+}
+
+.tpl b {
+  display: block;
+  font-size: 12.5px;
+  color: var(--ink-1);
+}
+
+.tpl span {
+  display: block;
+  margin-top: 5px;
+  font-size: 11.5px;
+  line-height: 1.55;
+  color: var(--ink-3);
+}
+
+@media (max-width: 760px) {
+  .tpl-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
 .strip {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
