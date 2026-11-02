@@ -3,6 +3,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import Icon from './Icon.vue'
 import StatusChip from './StatusChip.vue'
 import CalibrationChart from './CalibrationChart.vue'
+import ConfusionMatrix from './ConfusionMatrix.vue'
 import QualityTrend from './QualityTrend.vue'
 import { api } from '../lib/api'
 import type {
@@ -118,8 +119,6 @@ const kpis = computed(() => {
     { key: 'accuracy', label: '准确率', color: 'var(--ink-4)', value: value ? ratioOf(value.accuracy) : '—', note: '(TP + TN) ÷ 全部样本' },
   ]
 })
-
-const cellText = (key: 'tp' | 'fp' | 'fn' | 'tn') => (summary.value ? n(summary.value[key]) : '—')
 
 /* ---------------- 模型版本 ---------------- */
 
@@ -242,53 +241,14 @@ const isTriggered = (item: DriftEvent) => item.action === 'triggered' || item.le
           <span class="card-sub">按阈值判定的预测结果</span>
         </div>
         <div class="cm-wrap">
-          <table class="cm">
-            <thead>
-              <tr>
-                <th class="cm-corner"></th>
-                <th>预测故障</th>
-                <th>预测正常</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr>
-                <th>实际故障</th>
-                <td>
-                  <div class="cm-cell is-hit">
-                    <b class="num">{{ cellText('tp') }}</b>
-                    <span>命中</span>
-                    <em>预测故障且实际故障</em>
-                  </div>
-                </td>
-                <td>
-                  <div class="cm-cell is-miss">
-                    <b class="num">{{ cellText('fn') }}</b>
-                    <span>漏报</span>
-                    <em>实际故障但未预测出</em>
-                  </div>
-                </td>
-              </tr>
-              <tr>
-                <th>实际正常</th>
-                <td>
-                  <div class="cm-cell is-false">
-                    <b class="num">{{ cellText('fp') }}</b>
-                    <span>误报</span>
-                    <em>预测故障但实际正常</em>
-                  </div>
-                </td>
-                <td>
-                  <div class="cm-cell is-safe">
-                    <b class="num">{{ cellText('tn') }}</b>
-                    <span>正确拒绝</span>
-                    <em>预测正常且实际正常</em>
-                  </div>
-                </td>
-              </tr>
-            </tbody>
-          </table>
+          <ConfusionMatrix
+            :tp="summary?.tp ?? 0"
+            :fp="summary?.fp ?? 0"
+            :fn="summary?.fn ?? 0"
+            :tn="summary?.tn ?? 0"
+          />
           <p class="cm-note">
-            命中率与漏报率此消彼长：降低阈值可减少漏报，代价是误报增加。需结合四格共同判断，单看命中率会失真。
+            颜色深浅按对数刻度映射样本量。命中率与漏报率此消彼长：降低阈值可减少漏报，代价是误报增加。
           </p>
         </div>
       </section>
@@ -549,77 +509,8 @@ const isTriggered = (item: DriftEvent) => item.action === 'triggered' || item.le
   flex: 1;
   display: flex;
   flex-direction: column;
-  justify-content: center;
-  padding: 0 18px 16px;
-}
-
-.cm {
-  width: 100%;
-  border-collapse: separate;
-  border-spacing: 6px;
-}
-
-.cm th {
-  font-size: 11px;
-  font-weight: 500;
-  color: var(--ink-3);
-  text-align: center;
-  padding: 2px 0;
-  white-space: nowrap;
-}
-
-.cm tbody th {
-  text-align: left;
-  padding-right: 2px;
-}
-
-.cm-corner {
-  width: 44px;
-}
-
-.cm-cell {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-  align-items: center;
-  padding: 11px 6px 9px;
-  border-radius: var(--r-md);
-  border: 1px solid var(--line-soft);
-}
-
-.cm-cell b {
-  font-size: 19px;
-  font-weight: 700;
-  line-height: 1.2;
-  color: var(--ink);
-}
-
-.cm-cell span {
-  font-size: 11.5px;
-  color: var(--ink-2);
-}
-
-.cm-cell em {
-  font-style: normal;
-  font-size: 10.5px;
-  color: var(--ink-3);
-}
-
-/* 命中是「模型做对了」，用品牌色淡底；其余三格沿用语义浅底，不加重色块 */
-.cm-cell.is-hit {
-  background: var(--brand-soft);
-}
-
-.cm-cell.is-miss {
-  background: var(--bad-soft);
-}
-
-.cm-cell.is-false {
-  background: var(--warn-soft);
-}
-
-.cm-cell.is-safe {
-  background: var(--ok-soft);
+  min-height: 0;
+  padding: 0 18px 14px;
 }
 
 .cm-note {
