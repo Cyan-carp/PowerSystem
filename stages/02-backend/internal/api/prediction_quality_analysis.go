@@ -265,9 +265,21 @@ func (s *Server) predictionQualityAnalysis(c *gin.Context) {
 	}
 	trimmed := strings.TrimSpace(content)
 	trimmed = strings.TrimPrefix(trimmed, "```json")
+	trimmed = strings.TrimPrefix(trimmed, "```")
 	trimmed = strings.TrimSuffix(trimmed, "```")
-	if err := json.Unmarshal([]byte(strings.TrimSpace(trimmed)), &parsed); err != nil {
-		fail(c, 502, 50202, "AI 输出无法解析，请重试")
+	trimmed = strings.TrimSpace(trimmed)
+	// 开 thinking 时模型偶尔会在 JSON 前后加一句说明，截出最外层大括号再解析。
+	if start := strings.Index(trimmed, "{"); start >= 0 {
+		if end := strings.LastIndex(trimmed, "}"); end > start {
+			trimmed = trimmed[start : end+1]
+		}
+	}
+	if err := json.Unmarshal([]byte(trimmed), &parsed); err != nil {
+		preview := trimmed
+		if len(preview) > 180 {
+			preview = preview[:180] + "…"
+		}
+		fail(c, 502, 50202, "AI 输出无法解析："+preview)
 		return
 	}
 	reasonsJSON, _ := json.Marshal(parsed.Reasons)
