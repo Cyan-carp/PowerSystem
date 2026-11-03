@@ -184,7 +184,7 @@ def main() -> int:
         errors.append("workspace link manifest is missing")
     else:
         entries = json.loads(MANIFEST.read_text(encoding="utf-8"))
-        proxies = VAULT / "06-代码工作区导航与链接映射"
+        proxies = VAULT / "05-代码工作区导航与链接映射"
         for entry in entries:
             workspace_path = entry["workspace_path"]
             target = ROOT / workspace_path

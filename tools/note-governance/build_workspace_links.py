@@ -16,7 +16,7 @@ from urllib.parse import quote
 
 ROOT = Path(__file__).resolve().parents[2]
 MANIFEST = ROOT / "tools/note-governance/workspace-links.json"
-PROXY_DIR = ROOT / "notes/06-代码工作区导航与链接映射"
+PROXY_DIR = ROOT / "notes/05-代码工作区导航与链接映射"
 REPOSITORY_BASE = "https://github.com/Cyan-carp/PowerSystem"
 # 本机 node/python 的 TZ 可能是 America/Los_Angeles，date.today() 会比
 # 北京时间晚一天，写进 updated 就成了错误的“过时”日期。统一按北京时间取日。
@@ -203,7 +203,7 @@ def proxy_source(entry: dict[str, object]) -> str:
             "",
             "## 返回",
             "",
-            "- [[06-代码工作区导航与链接映射/00-索引·代码工作区导航]]",
+            "- [[05-代码工作区导航与链接映射/00-索引·代码工作区导航]]",
             "",
         ]
     )
@@ -291,7 +291,7 @@ def main() -> None:
             index_lines.extend([f"> {note}", ""])
         for entry in items:
             stem = Path(str(entry["proxy"])).stem
-            index_lines.append(f"- [[06-代码工作区导航与链接映射/{stem}|{entry['workspace_path']}]]")
+            index_lines.append(f"- [[05-代码工作区导航与链接映射/{stem}|{entry['workspace_path']}]]")
         index_lines.append("")
     write_atomic(PROXY_DIR / "00-索引·代码工作区导航.md", "\n".join(index_lines))
     write_atomic(MANIFEST, json.dumps(entries, ensure_ascii=False, indent=2) + "\n")

@@ -19,7 +19,7 @@ updated: 2026-10-30
 
 ## 修订与唯一入口
 
-具体命令统一到[[06-代码工作区导航与链接映射/stages-02-backend-deploy-home-dev-README|远程连接手册]]；正文已迁入stages/02-backend/deploy/home-dev/README.md，桌面PowerSystem-Docker远程连接手册.md改为入口指针。
+具体命令统一到[[05-代码工作区导航与链接映射/stages-02-backend-deploy-home-dev-README|远程连接手册]]；正文已迁入stages/02-backend/deploy/home-dev/README.md，桌面PowerSystem-Docker远程连接手册.md改为入口指针。
 
 补齐两种开发方式、MQTT偏移转发和RAG端口、7卷清单、隧道失败/断线检测、原生API重启边界；修正Compose/context与TTY绝对限制、Windows cmd单引号SQL、prune及免认证表述。旧preflight默认Compose up及回归停Broker均标明不适用日常home-dev；原本地隔离启动步骤仍保留适用范围。同步根/阶段README、运维手册及架构篇、唯一状态、长期记忆与两级日志索引。历史迁机与故障记录保持原事实，不全库替换历史“本地Docker”。
 

@@ -142,7 +142,7 @@ SAS云防火墙和主机防火墙都会限制连接，仅维护其中一层会�
 
 > 所有者一次性操作。此前的ECS角色模板已被SAS规则模板替换，不要授予FullAccess或使用主账号AccessKey。
 
-创建专用程序用户，建议名`powersystem-frp-source`，不给控制台登录权限；本次所有者实际使用`powersystem`（显示名称“FRP动态出口白名单”），后续维护使用该现有身份，不重复建号。使用[[06-代码工作区导航与链接映射/deploy-edge-server-独立云服务器部署-config-source-refresh-ram-policy.example.json|RAM策略模板]]替换账号ID和刚查到的目标RuleId。写权限仅为`swas-open:ModifyFirewallRule`，资源是该地域该账号的`firewallrule/目标RuleId`；只读List权限为同地域`firewallrule/*`。
+创建专用程序用户，建议名`powersystem-frp-source`，不给控制台登录权限；本次所有者实际使用`powersystem`（显示名称“FRP动态出口白名单”），后续维护使用该现有身份，不重复建号。使用[[05-代码工作区导航与链接映射/deploy-edge-server-独立云服务器部署-config-source-refresh-ram-policy.example.json|RAM策略模板]]替换账号ID和刚查到的目标RuleId。写权限仅为`swas-open:ModifyFirewallRule`，资源是该地域该账号的`firewallrule/目标RuleId`；只读List权限为同地域`firewallrule/*`。
 
 用户和策略可由所有者明确授权的操作者一次性配置；提交遇到安全验证时交回本人完成，不绕过或反复提交。为该专用用户创建AccessKey，由所有者自行通过SSH安全写入新云固定credentials文件，不发给聊天、不进命令历史。根凭据文件格式及权限见脚本README。自动更新程序不会创建RAM身份、AccessKey或扩大权限。
 
