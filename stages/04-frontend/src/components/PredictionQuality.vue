@@ -821,9 +821,9 @@ const isTriggered = (item: DriftEvent) => item.action === 'triggered' || item.le
 .qq-grid {
   display: grid;
   /* 左列固定宽：混淆矩阵是 2x2 方阵，跟着右列等比拉宽会变成扁长条 */
-  grid-template-columns: 360px minmax(0, 1fr);
+  /* 1:1 等分：混淆矩阵压缩后不再需要固定宽度，两张卡片等高更整齐 */
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: 16px;
-  /* 顶部对齐：右列图比左列矩阵高时，不把矩阵跟着拉长 */
   align-items: start;
 }
 

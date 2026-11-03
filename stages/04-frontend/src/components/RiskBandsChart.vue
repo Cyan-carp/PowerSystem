@@ -121,6 +121,9 @@ const ticks = [0, 25, 50, 75, 100]
   display: flex;
   flex-direction: column;
   gap: 8px;
+  /* 卡片本身没有 padding，左右两边由各自容器给：这里与左列 cm-wrap 的 18px 对齐，
+     否则读数和图例会顶住卡片左边框，和旁边的矩阵说明对不齐 */
+  padding: 0 18px 14px;
 }
 
 .gain-head {
