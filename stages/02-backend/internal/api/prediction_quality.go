@@ -28,6 +28,13 @@ const (
 	// qualityEpochMS 是质量统计起点（毫秒）：早于此刻结束的预测不再回填。
 	// 2026-11-02T07:20:00Z 切换模拟器故障形态，用它切断新旧数据混算；0 表示不限制。
 	qualityEpochMS = int64(1_793_604_000_000)
+	// precursorToleranceMS 是「提前预警」的容差。
+	//
+	// 模拟器把故障特征提前 --precursor-minutes 注入，模型在窗口开始前就已经报警，
+	// 但原口径只认 (window_end, window_end+1h] 内的故障，前兆期的正确预警全被判成误报。
+	// 把判定右端放宽一个前兆时长，让「提前 60 分钟报准」也能算命中。
+	// 只放宽右端：早于 window_end 的预测仍然不算，避免给「永远报警」留后门。
+	precursorToleranceMS = int64(60 * 60 * 1000)
 	// qualityRefreshDays 是每轮重算日指标的天数，覆盖 3 天近期指标与 7 天漂移基线。
 	qualityRefreshDays = 10
 	// qualityBatchSize 是单批写入的行数，避免长事务。
@@ -243,7 +250,8 @@ func (c *stationDeviceCache) selectedDevice(station string, day time.Time) (stri
 // windowFault 判定预测窗口 (window_end, window_end + 1h] 内该设备是否被注入越线。
 // 规则与训练标签一致：只在槽位起始时刻落点，窗口左开右闭。
 func (c *stationDeviceCache) windowFault(row pendingPrediction) (bool, *int64, error) {
-	winEnd := row.WindowEndMS + predictionWindowMS
+	// 右端 = 预测窗口 + 1 小时 + 前兆容差，让「故障前一小时报准」也能落进判定范围。
+	winEnd := row.WindowEndMS + predictionWindowMS + precursorToleranceMS
 	day := service.SimulationDay(time.UnixMilli(row.WindowEndMS))
 	last := service.SimulationDay(time.UnixMilli(winEnd))
 	for !day.After(last) {
