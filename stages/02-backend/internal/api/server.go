@@ -479,6 +479,13 @@ const telemetryDependencyBudget = time.Second
 const restoreBudget = 30 * time.Second
 const shutdownBudget = 5 * time.Second
 
+// inboxHeadProbeSQL 在事务内复核「刚锁住的这条还是不是该设备的队头」。
+// 方向必须与 inboxHeads 的取法一致：那边取每设备最新一条（id DESC），这里也必须
+// 取最新，否则每条都会被判成「已不是队头」而走 errInboxDeferred——那是个静默
+// 分支（不打日志、不写 business_state），表面现象是调度器照常选行、游标照常推进，
+// 但成功数长期为 0。2026-11-03 取任务方向改成最新优先后漏改这里，入库停摆 40 分钟。
+const inboxHeadProbeSQL = `SELECT id FROM telemetry_inbox WHERE device_id=? AND processed_at IS NULL ORDER BY id DESC LIMIT 1`
+
 func (s *Server) processInboxItem(parent context.Context, item model.Inbox) {
 	measured := time.Now()
 	defer func() { s.telemetry.elapsed("history", time.Since(measured)) }()
@@ -506,7 +513,7 @@ func (s *Server) processInboxItem(parent context.Context, item model.Inbox) {
 			return errInboxDeferred
 		}
 		var head struct{ ID int64 }
-		if err := tx.Raw("SELECT id FROM telemetry_inbox WHERE device_id=? AND processed_at IS NULL ORDER BY id LIMIT 1", item.DeviceID).Scan(&head).Error; err != nil {
+		if err := tx.Raw(inboxHeadProbeSQL, item.DeviceID).Scan(&head).Error; err != nil {
 			return err
 		}
 		if head.ID != item.ID {
