@@ -79,6 +79,11 @@ const pctText = (value: number) => (total.value ? `${((value / total.value) * 10
 <style scoped>
 .cm-figure {
   display: grid;
+  /* 限宽而不是限高：格子是正方形，宽定下来高度自然定下来。
+     410px 对应单格约 168px，整张矩阵高度与右侧折线图（含读数与图例）基本齐平，
+     两列卡片底部就不会一边高一边空。 */
+  max-width: 410px;
+  margin: 0 auto;
   grid-template-columns: 58px minmax(0, 1fr) minmax(0, 1fr);
   /* 行高交给格子自己的 aspect-ratio：宽度定下来高度就跟着定，2x2 恒为方阵 */
   grid-template-rows: auto auto auto;
