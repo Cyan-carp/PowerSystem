@@ -424,7 +424,10 @@ const isTriggered = (item: DriftEvent) => item.action === 'triggered' || item.le
       <section class="card">
         <div class="card-head">
           <span class="card-title">高风险组命中率</span>
-          <span class="card-sub">按预测概率取前 N%，看段内真实故障占比 · 平均预测概率 {{ ratioOf(summary?.prob_mean) }}</span>
+          <span class="card-sub">
+            共 {{ riskBands?.samples ?? 0 }} 条 · 真实故障 {{ riskBands?.faults ?? 0 }} 次 ·
+            平均预测概率 {{ ratioOf(summary?.prob_mean) }}
+          </span>
         </div>
         <p v-if="riskBandsRequest.pending.value && !riskBands" class="bands-loading">正在统计…</p>
         <RiskBandsChart
@@ -817,7 +820,8 @@ const isTriggered = (item: DriftEvent) => item.action === 'triggered' || item.le
 
 .qq-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  /* 左列固定宽：混淆矩阵是 2x2 方阵，跟着右列等比拉宽会变成扁长条 */
+  grid-template-columns: 360px minmax(0, 1fr);
   gap: 16px;
   align-items: stretch;
 }
