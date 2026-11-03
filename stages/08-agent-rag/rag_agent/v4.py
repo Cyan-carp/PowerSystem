@@ -108,7 +108,7 @@ def prompt(schemas):
     if 'business_report' in names:
         base=base.replace('平台页面已有报表导出，不代表助手能生成附件。当前助手尚无产物/定期任务/业务修改工具，不能声称已导出、已安排或已修复。',
             '已登记business_report可直接调用普通业务查询和真实CSV/XLSX交付，本人文件无需审批。报表/发电量/告警调查使用此工具；旧可用率和时效scope=all，station_code/device_id交集筛选。不把附件正文发送给模型。只有返回真实artifacts才可说生成。未登记调度/业务修改，不能声称已安排或已修复。')
-        base=base.replace('七天发电量必须使用对应设备和日期窗口的energy_daily聚合；', '报表日期按当前时间和用户明确范围确定；今天为北京时间当天00:00至当前时间，近7天为北京时间最近7个已结束自然日，不含今天。发电量使用business_report(kind=energy)，指定start_date/end_date、group_by，不自行重算。七天发电量必须使用对应设备和日期窗口的energy_daily聚合；')
+        base=base.replace('七天发电量必须使用对应设备和日期窗口的energy_daily聚合；', '报表日期按当前时间和用户明确范围确定；今天为北京时间当天00:00至当前时间，近7天为北京时间最近7个已结束自然日，不含今天。发电量使用business_report(kind=energy)，指定start_date/end_date、group_by，不自行重算。energy_daily 只覆盖已结束的自然日：用户问「今天发电量/今天出力」时不要查当天窗口，直接说明当天尚未结算，并建议改看最近7个已结束自然日或实时功率曲线。七天发电量必须使用对应设备和日期窗口的energy_daily聚合；')
         base=base.replace('不得用状态查询代替电量，不声称生成文件。','不得用状态查询代替电量；文件交付以business_report实际返回为准。')
     if 'business_action' in names:
         base=base.replace('未登记调度/业务修改，不能声称已安排或已修复。','已登记business_action支持单条告警确认、单台设备备注修改及受审查备注读取。R1提议后等待用户本人批准，不调用任何批准工具，不表示故障修复。调度和运维写未登记。')
@@ -116,6 +116,93 @@ def prompt(schemas):
     if 'ops_action' in names:
         base+='\n本轮另登记ops_assets与ops_action：只允许登记本机隔离非关键服务诊断、过滤日志、证据包和单服务重启。先读ops_assets定位精确asset_id，多目标澄清。日志/证据仅站内展示，模型无原文访问权。用户明确要求时才能提议service.restart，管理员本人一次批准后才执行，不能自行批准、换参重试、批量或定时；不控制实体设备。诊断不代表已重启，健康失败或未知结果不能称成功，已发出动作取消不保证撤销；依据卡片实际状态和恢复边界。'
     return base
+
+
+def _kwh(value):
+    """千分位格式化；返回 None 表示这条没有有效值。"""
+    v = number(value)
+    if v is None:
+        return None
+    return '{:,}'.format(int(v)) if v == v.to_integral_value() else '{:,.1f}'.format(float(v))
+
+
+def _query_window(query):
+    start, end = query.get('start_date'), query.get('end_date')
+    if start and end:
+        return '北京时间 ' + str(start) + ' 00:00（含）至 ' + str(end) + ' 00:00（不含）'
+    return ''
+
+
+def _scope_text(query):
+    parts = []
+    scope = query.get('scope')
+    parts.append('全部场站' if scope in (None, '', 'all') else '范围 ' + str(scope))
+    if query.get('station_code'):
+        parts.append('场站 ' + str(query['station_code']))
+    if query.get('device_id'):
+        parts.append('设备 ' + str(query['device_id']))
+    group = query.get('group_by')
+    if group == 'station':
+        parts.append('按场站分组')
+    elif group == 'device':
+        parts.append('按设备分组')
+    return ' · '.join(parts)
+
+
+def _energy_body(report):
+    """发电量报表的人话版本：有数据出表格，没数据说清原因。
+
+    旧实现把 energy_summary 用 json.dumps 贴进正文，用户看到的是原始数组和 null。
+    这里改成：全部缺失时直接给结论和替代方案；有数据时按场站出表，不吐 JSON。
+    """
+    summary = report.get('energy_summary') or {}
+    groups = summary.get('groups') or []
+    stations = [g for g in groups if g.get('record_type') == 'group_total']
+    total = next((g for g in groups if g.get('record_type') == 'total'), None)
+    missing = summary.get('missing_device_days')
+    window = _query_window(report.get('query') or {})
+    valued = [g for g in stations if _kwh(g.get('kwh')) is not None]
+
+    if not valued:
+        head = '**本轮没有取得任何有效发电量**，无法比较各场站出力。'
+        if isinstance(missing, int) and missing > 0:
+            head += '后端报告 ' + str(missing) + ' 个设备日缺失。'
+        tail = []
+        if window:
+            tail.append('查询窗口：' + window + '。')
+        tail.append('日聚合只覆盖**已结束**的自然日，当天尚未结算，查当天窗口必然为空。'
+                    '要比较场站出力，请改查最近 7 个已结束自然日，或看总览页的实时功率曲线。')
+        return '\n\n'.join([head] + tail)
+
+    lines = ['| 场站 | 发电量 kWh | 完整 |', '| --- | --- | --- |']
+    for g in stations:
+        value = _kwh(g.get('kwh'))
+        complete = str(g.get('complete')).lower() in ('true', '1')
+        lines.append('| ' + str(g.get('station_code') or '—') + ' | '
+                     + (value if value is not None else '缺失') + ' | '
+                     + ('是' if complete else '否') + ' |')
+    if total is not None and _kwh(total.get('kwh')) is not None:
+        lines += ['', '合计 **' + _kwh(total.get('kwh')) + ' kWh**。']
+    if isinstance(missing, int) and missing > 0:
+        lines.append('仍有 ' + str(missing) + ' 个设备日缺失，对应场站标为「否」。')
+    if summary.get('summary_truncated'):
+        lines.append('分组超过 100 个，表格已截断，完整数据见本轮 CSV。')
+    return '\n'.join(lines)
+
+
+def _report_body(report):
+    if report.get('energy_summary'):
+        return _energy_body(report)
+    query = report.get('query') or {}
+    lines = []
+    scope = _scope_text(query)
+    if scope:
+        lines.append(scope)
+    window = _query_window(query)
+    if window:
+        lines.append('窗口：' + window)
+    lines.append('数据行数：' + str(report.get('rows', 0)))
+    return '\n\n'.join(lines)
 
 
 def finish(question, result, previous):
@@ -132,15 +219,22 @@ def finish(question, result, previous):
             status='degraded',objective_quality=dict(kind='business_report',complete=False))
         return True
     if result.get('reports'):
-        lines=[]
+        blocks = []
+        complete = True
         for report in result['reports']:
-            lines += ['已读取权威业务结果。来源：`'+report['source']+'`。',
-                '查询条件：`'+json.dumps(report['query'],ensure_ascii=False)+'`。',
-                '时区：'+report['timezone']+'；数据行数：'+str(report['rows'])+'；计算时间：'+str(report.get('computed_at') or '源接口未提供')+'。',report.get('note','')]
-            if report.get('energy_summary'): lines.append('后端发电量汇总（空值表示缺失）：`'+json.dumps(report['energy_summary'],ensure_ascii=False)+'`。')
-        artifacts=result.get('artifacts',[])
-        lines.append('已生成 '+str(len(artifacts))+' 份文件，请在本轮产物区登录下载；默认7天到期。' if artifacts else '本轮仅查询，未生成文件。')
-        result.update(answer_markdown='\n\n'.join(lines),status='answered',objective_quality=dict(kind='business_report',complete=True))
+            blocks.append('数据来源：`' + text(report.get('source')) + '`。\n\n' + _report_body(report))
+            if report.get('note'):
+                blocks.append(report['note'])
+            if report.get('energy_summary'):
+                valued = any(_kwh(g.get('kwh')) is not None
+                             for g in report['energy_summary'].get('groups') or []
+                             if g.get('record_type') == 'group_total')
+                complete = complete and valued
+        artifacts = result.get('artifacts', [])
+        blocks.append('已生成 ' + str(len(artifacts)) + ' 份文件，请在本轮产物区登录下载；默认7天到期。'
+                      if artifacts else '本轮仅查询，未生成文件。')
+        result.update(answer_markdown='\n\n'.join([b for b in blocks if b]), status='answered',
+                      objective_quality=dict(kind='business_report', complete=complete))
         return True
     cards = result.get('task_cards', [])
     actual = any(tool_name(c) in BUSINESS for c in result.get('tool_calls', [])) or bool(cards)
