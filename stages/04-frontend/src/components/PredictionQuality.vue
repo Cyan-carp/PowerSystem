@@ -823,7 +823,8 @@ const isTriggered = (item: DriftEvent) => item.action === 'triggered' || item.le
   /* 左列固定宽：混淆矩阵是 2x2 方阵，跟着右列等比拉宽会变成扁长条 */
   grid-template-columns: 360px minmax(0, 1fr);
   gap: 16px;
-  align-items: stretch;
+  /* 顶部对齐：右列图比左列矩阵高时，不把矩阵跟着拉长 */
+  align-items: start;
 }
 
 /* 两张卡等高；内容在卡内垂直居中，避免底部留出大片空白 */

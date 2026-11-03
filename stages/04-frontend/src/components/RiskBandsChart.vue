@@ -144,6 +144,8 @@ const ticks = [0, 25, 50, 75, 100]
 .gain-svg {
   width: 100%;
   height: auto;
+  /* 图表不需要占满整张卡片：高度封顶后，读数和图例还在首屏内 */
+  max-height: 250px;
   display: block;
 }
 

@@ -80,7 +80,8 @@ const pctText = (value: number) => (total.value ? `${((value / total.value) * 10
 .cm-figure {
   display: grid;
   grid-template-columns: 58px minmax(0, 1fr) minmax(0, 1fr);
-  grid-template-rows: auto minmax(88px, 1fr) minmax(88px, 1fr);
+  /* 格子限高：用 1fr 会跟着卡片被邻列拉高，2x2 变成四根竖条 */
+  grid-template-rows: auto minmax(84px, 116px) minmax(84px, 116px);
   gap: 6px;
   flex: 1;
   min-height: 0;
