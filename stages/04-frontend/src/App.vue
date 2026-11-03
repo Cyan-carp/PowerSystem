@@ -317,12 +317,12 @@ onBeforeUnmount(() => {
           </span>
           <span class="tb-clock num">{{ clockText }}</span>
 
-          <!-- 模型额度：只在管理员侧出现，数字是解读通道的供应商余额 -->
+          <!-- 模型额度：只在管理员侧出现，数字是告警解读通道的供应商余额 -->
           <button
             v-if="isAdmin"
             class="tb-usage"
             :class="`is-${topbarTone}`"
-            title="模型额度：点击查看两条通道的模型、地址与余额"
+            title="模型额度：点击逐个查看各功能的模型、地址与余额"
             @click="modelOpen = true"
           >
             <Icon name="cpu" :size="15" />
