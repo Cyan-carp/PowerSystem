@@ -17,8 +17,8 @@ const props = defineProps<{
  * 抽查 10% 的设备，能抓到九成的故障。
  */
 
-const PAD = { left: 48, right: 16, top: 14, bottom: 36 }
-const BOX = { w: 520, h: 300 }
+const PAD = { left: 56, right: 18, top: 16, bottom: 42 }
+const BOX = { w: 520, h: 360 }
 const PLOT = {
   w: BOX.w - PAD.left - PAD.right,
   h: BOX.h - PAD.top - PAD.bottom,
@@ -148,7 +148,7 @@ const ticks = [0, 25, 50, 75, 100]
   width: 100%;
   height: auto;
   /* 图表不需要占满整张卡片：高度封顶后，读数和图例还在首屏内 */
-  max-height: 250px;
+  max-height: 360px;
   display: block;
 }
 
@@ -163,13 +163,13 @@ const ticks = [0, 25, 50, 75, 100]
 }
 
 .tick {
-  font-size: 9.5px;
-  fill: var(--ink-4);
+  font-size: 11.5px;
+  fill: var(--ink-3);
 }
 
 .axis-label {
-  font-size: 10px;
-  fill: var(--ink-3);
+  font-size: 12px;
+  fill: var(--ink-2);
 }
 
 .diagonal {

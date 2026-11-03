@@ -821,10 +821,11 @@ const isTriggered = (item: DriftEvent) => item.action === 'triggered' || item.le
 .qq-grid {
   display: grid;
   /* 左列固定宽：混淆矩阵是 2x2 方阵，跟着右列等比拉宽会变成扁长条 */
-  /* 1:1 等分：混淆矩阵压缩后不再需要固定宽度，两张卡片等高更整齐 */
+  /* 1:1 等分且等高：矩阵格子已限高，stretch 不会再把它拉成竖条，
+     两卡底部对齐后整行看起来才是一块 */
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: 16px;
-  align-items: start;
+  align-items: stretch;
 }
 
 /* 两张卡等高；内容在卡内垂直居中，避免底部留出大片空白 */
