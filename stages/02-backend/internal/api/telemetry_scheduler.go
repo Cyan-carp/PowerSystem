@@ -75,6 +75,11 @@ func retryDelay(attempt int64, base, cap time.Duration) time.Duration {
 
 // Heads are selected before applying retry deadlines. Never let a later row
 // bypass an unready head, even across run_id/seq resets.
+//
+// 每设备取**最新**一条（id DESC）而不是最旧一条。旧写法在积压时会饿死实时数据：
+// 2026-11-03 队列积压 891 万条，每个设备的队头都是 10-30 的消息，11-03 的新样本
+// 永远排不到，入库成功率归零、发电量日聚合成空。取最新后未处理的旧消息自然沉淀，
+// 不再阻塞实时链路。告警评估本身会按 Freshness 抑制历史样本，先新后旧不会造成误报。
 func (s *Server) inboxHeads(ctx context.Context, after, through int64, limit int) ([]model.Inbox, error) {
 	var rows []model.Inbox
 	q := `WITH RECURSIVE heads AS ((SELECT * FROM telemetry_inbox WHERE processed_at IS NULL AND device_id>?`
@@ -83,12 +88,12 @@ func (s *Server) inboxHeads(ctx context.Context, after, through int64, limit int
 		q += ` AND device_id<=?`
 		args = append(args, through)
 	}
-	q += ` ORDER BY device_id,id LIMIT 1) UNION ALL SELECT i.* FROM heads h CROSS JOIN LATERAL (SELECT * FROM telemetry_inbox WHERE processed_at IS NULL AND device_id>h.device_id`
+	q += ` ORDER BY device_id,id DESC LIMIT 1) UNION ALL SELECT i.* FROM heads h CROSS JOIN LATERAL (SELECT * FROM telemetry_inbox WHERE processed_at IS NULL AND device_id>h.device_id`
 	if through > 0 {
 		q += ` AND device_id<=?`
 		args = append(args, through)
 	}
-	q += ` ORDER BY device_id,id LIMIT 1) i) SELECT * FROM heads LIMIT ?`
+	q += ` ORDER BY device_id,id DESC LIMIT 1) i) SELECT * FROM heads LIMIT ?`
 	args = append(args, limit)
 	err := s.db.WithContext(ctx).Raw(q, args...).Scan(&rows).Error
 	return rows, err
