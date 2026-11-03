@@ -67,10 +67,14 @@ class WindowScenario:
 
 
 WINDOW_SCENARIOS = (
-    WindowScenario(9, "PV-01", "temperature", 55.0, 65.0),
+    # target 是窗口内施加的最低温度。原先 9:00 与 15:00 只到 65℃，而同期正常
+    # 设备日照升温也能到 50℃ 上下，温差只有十来度——模型分不清「设备过热」
+    # 和「今天太阳大」。真实逆变器 IGBT 过热保护阈值在 85–90℃，严重过热
+    # 本来就该比正常高二十度以上，65℃ 反而低于物理常识。
+    WindowScenario(9, "PV-01", "temperature", 55.0, 80.0),
     WindowScenario(11, "PV-02", "voltage", 430.0, 445.0),
     WindowScenario(13, "PV-03", "temperature", 80.0, 82.0),
-    WindowScenario(15, "PV-04", "temperature", 55.0, 65.0),
+    WindowScenario(15, "PV-04", "temperature", 55.0, 80.0),
     WindowScenario(17, "ST-01", "temperature", 80.0, 82.0),
 )
 WINDOW_SCENARIO_BY_STATION: Mapping[str, WindowScenario] = {

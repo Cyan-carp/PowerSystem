@@ -1249,6 +1249,91 @@ func (s *Server) predictionQualityDrift(c *gin.Context) {
 	ok(c, gin.H{"items": items})
 }
 
+// operationsQualityRow 是运维口径的聚合结果，一次查询把「台次」与「提前量」都取回来。
+type operationsQualityRow struct {
+	Devices     int64   `gorm:"column:devices"`
+	Samples     int64   `gorm:"column:samples"`
+	Faults      int64   `gorm:"column:faults"`
+	Captured    int64   `gorm:"column:captured"`
+	FalseAlarms int64   `gorm:"column:false_alarms"`
+	LeadSamples int64   `gorm:"column:lead_samples"`
+	LeadP50     float64 `gorm:"column:lead_p50"`
+	LeadP90     float64 `gorm:"column:lead_p90"`
+}
+
+// predictionQualityOperations 是值班视角的质量视图。
+//
+// 原有 summary 按预测记录算 precision/recall，值班人员拿到的是 0.43 这样的数字，
+// 既不知道该不该信、也不知道一天被打扰几次。这里换粒度：按设备数误报次数、
+// 按故障批次看提前多久被预警，两者都是同一批 prediction_outcomes 的投影，不引入新指标。
+func (s *Server) predictionQualityOperations(c *gin.Context) {
+	days, err := strconv.Atoi(c.DefaultQuery("days", "1"))
+	if err != nil || days < 1 || days > 30 {
+		fail(c, 400, 40001, "invalid days")
+		return
+	}
+	// 回看窗口右端不设上限：已结算的预测都在窗口内，未结算的还没有真值，自然不进统计。
+	start := time.Now().Add(-time.Duration(days) * 24 * time.Hour).UnixMilli()
+	if qualityEpochMS > start {
+		start = qualityEpochMS
+	}
+	var row operationsQualityRow
+	// 提前量取「每个故障批次之前最早的一条 high 预测」：更晚的预测不能算提前量，
+	// 多条同批预测只留一条，否则报得越勤看起来越提前。
+	err = s.db.WithContext(c.Request.Context()).Raw(`WITH base AS (
+			SELECT device_id, window_end_ms, predicted_high, actual_fault, fault_onset_ms
+			FROM prediction_outcomes WHERE window_end_ms >= ?
+		),
+		pairs AS (
+			SELECT DISTINCT device_id, fault_onset_ms FROM base WHERE fault_onset_ms IS NOT NULL
+		),
+		leads AS (
+			SELECT p.fault_onset_ms,
+				(SELECT min(b.window_end_ms) FROM base AS b
+				 WHERE b.device_id = p.device_id AND b.window_end_ms < p.fault_onset_ms
+					AND b.predicted_high) AS first_high_ms
+			FROM pairs AS p
+		),
+		totals AS (
+			SELECT count(DISTINCT device_id)::bigint AS devices,
+				count(*)::bigint AS samples,
+				count(*) FILTER (WHERE predicted_high AND NOT actual_fault)::bigint AS false_alarms
+			FROM base
+		),
+		faults AS (
+			SELECT count(*)::bigint AS faults,
+				count(*) FILTER (WHERE first_high_ms IS NOT NULL)::bigint AS captured
+			FROM leads
+		),
+		lead_stats AS (
+			SELECT count(*)::bigint AS lead_samples,
+				coalesce(percentile_cont(0.5) WITHIN GROUP (ORDER BY (fault_onset_ms - first_high_ms) / 60000.0), 0) AS lead_p50,
+				coalesce(percentile_cont(0.9) WITHIN GROUP (ORDER BY (fault_onset_ms - first_high_ms) / 60000.0), 0) AS lead_p90
+			FROM leads WHERE first_high_ms IS NOT NULL
+		)
+		SELECT totals.devices, totals.samples, totals.false_alarms,
+			faults.faults, faults.captured,
+			lead_stats.lead_samples, lead_stats.lead_p50, lead_stats.lead_p90
+		FROM totals, faults, lead_stats`, start).Scan(&row).Error
+	if err != nil {
+		fail(c, 503, 50000, "prediction quality query failed")
+		return
+	}
+	// 空窗口时 devices 为 0，除法会得到 NaN 并让 JSON 序列化失败，故先判零。
+	perDeviceDay := 0.0
+	if row.Devices > 0 {
+		perDeviceDay = math.Round(float64(row.FalseAlarms)/float64(row.Devices)/float64(days)*100) / 100
+	}
+	ok(c, gin.H{
+		"days": days, "devices": row.Devices, "samples": row.Samples,
+		"faults": row.Faults, "captured": row.Captured, "false_alarms": row.FalseAlarms,
+		"false_alarms_per_device_day": perDeviceDay,
+		"lead_minutes_p50":            int64(math.Round(row.LeadP50)),
+		"lead_minutes_p90":            int64(math.Round(row.LeadP90)),
+		"lead_samples":                row.LeadSamples,
+	})
+}
+
 // dateOnly 把上海日历日转成 UTC 零点的日期值。date 参数不携带时区，
 // 统一按 UTC 零点表示，避免驱动按本地时区把日期整体挪前一天。
 func dateOnly(t time.Time) time.Time {

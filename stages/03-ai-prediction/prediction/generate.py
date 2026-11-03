@@ -36,10 +36,12 @@ FAULT_MINUTES = 10
 # 与 stages/01-data-chain/simulator/simulator.py 的 WINDOW_SCENARIOS 保持一致：
 # 时刻、指标、注入目标值。顺序即槽位，用来按天轮换设备。
 WINDOW_SCENARIOS = (
-    (9, "temperature", 65.0),
+    # 与 simulator.py 的 WINDOW_SCENARIOS 必须逐项一致：训练数据的温度目标
+    # 只要和线上差一度，模型学到的东西就与线上形态对不上。
+    (9, "temperature", 80.0),
     (11, "voltage", 445.0),
     (13, "temperature", 82.0),
-    (15, "temperature", 65.0),
+    (15, "temperature", 80.0),
     (17, "temperature", 82.0),
 )
 WINDOW_MINUTES = 10
