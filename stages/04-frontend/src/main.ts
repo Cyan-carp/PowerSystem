@@ -21,6 +21,7 @@ const router = createRouter({
     { path: '/devices/:id', name: 'device-detail', component: () => import('./views/DeviceDetailView.vue'), meta: { label: '设备详情' } },
     { path: '/health', name: 'health', component: () => import('./views/HealthView.vue'), meta: { label: '健康排行' } },
     { path: '/predictions', name: 'predictions', component: () => import('./views/PredictionsView.vue'), meta: { label: '故障预测' } },
+    { path: '/model-quality', name: 'model-quality', component: () => import('./views/ModelQualityView.vue'), meta: { label: '模型质量' } },
     { path: '/reports', name: 'reports', component: () => import('./views/ReportsView.vue'), meta: { label: '统计报表' } },
     { path: '/schedules', name: 'schedules', component: () => import('./views/SchedulesView.vue'), meta: { label: '定期任务' } },
     { path: '/assistant', name: 'assistant', component: () => import('./views/AssistantView.vue'), meta: { label: '智能助手' } },

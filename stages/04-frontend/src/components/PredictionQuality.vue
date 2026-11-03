@@ -21,7 +21,7 @@ import { askConfirm, toast } from '../lib/toast'
 import { useLatestRequest } from '../lib/useLatestRequest'
 
 /**
- * 预测质量：只看「已经到期、有真实结果」的预测。
+ * 模型质量：只看「已经到期、有真实结果」的预测，与线上故障预测分开统计。
  * 五个区块各自独立请求：任何一块失败都不该让其余区块变成空白，
  * 所以错误只汇总成一行文案 + 重试，不逐块弹 toast。
  */
@@ -348,7 +348,7 @@ const isTriggered = (item: DriftEvent) => item.action === 'triggered' || item.le
     </div>
 
     <div v-if="failed" class="error-box qq-error" role="alert">
-      <span>预测质量数据未取到：{{ failed }}</span>
+      <span>模型质量数据未取到：{{ failed }}</span>
       <button class="btn btn-sm" @click="reload">重试</button>
     </div>
 

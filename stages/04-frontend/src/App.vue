@@ -36,6 +36,7 @@ const nav = [
   { path: '/devices', icon: 'server', label: '设备' },
   { path: '/health', icon: 'activity', label: '健康' },
   { path: '/predictions', icon: 'gauge', label: '预测' },
+  { path: '/model-quality', icon: 'cpu', label: '模型' },
   { path: '/reports', icon: 'layers', label: '报表' },
   { path: '/schedules', icon: 'clock', label: '任务' },
   { path: '/assistant', icon: 'assistant', label: '助手' },
