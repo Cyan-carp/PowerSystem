@@ -543,6 +543,20 @@ export interface TrainEligibility {
   blockers: string[]
 }
 
+/** 风险分段：按预测概率降序取前 N%，看段内真实故障占比 */
+export interface RiskBand {
+  pct: number
+  label: string
+  samples: number
+  faults: number
+  /** 段内实际故障率（百分数） */
+  hit_rate: number
+  /** 这一段的最低入场概率 */
+  min_prob: number
+  /** 相对全局故障率的倍数，1 表示与随机挑选无异 */
+  lift: number
+}
+
 /** AI 解读结果：只读结论，不会触发任何写操作 */
 export interface QualityAnalysis {
   id: number
@@ -1130,6 +1144,12 @@ export const api = {
     post<QualityAnalysis>('/predictions/quality/analysis', { kind }),
   predictionQualityAnalysisLatest: (kind: 'drift' | 'trial', signal?: AbortSignal) =>
     get<{ items: QualityAnalysis[] }>(`/predictions/quality/analysis?kind=${kind}`, signal),
+  /** 高风险组实际命中率：替代校准曲线，正样本稀疏时也能读出模型有没有把风险排前面 */
+  predictionQualityRiskBands: (days = 7, signal?: AbortSignal) =>
+    get<{ items: RiskBand[]; samples: number; faults: number; baseline_rate: number }>(
+      `/predictions/quality/risk-bands${query({ days })}`,
+      signal,
+    ),
 
   /* 报表：JSON 与 CSV 同一路由，后端 availability()/alarmTimeliness() 命中 ?format=csv 时走
      report_export.go 的 writeReportCSV（含场站汇总行，Content-Type=text/csv），比前端拼当前页更全 */

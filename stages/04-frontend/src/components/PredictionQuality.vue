@@ -2,16 +2,16 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import Icon from './Icon.vue'
 import StatusChip from './StatusChip.vue'
-import CalibrationChart from './CalibrationChart.vue'
+import RiskBandsChart from './RiskBandsChart.vue'
 import ConfusionMatrix from './ConfusionMatrix.vue'
 import QualityTrend from './QualityTrend.vue'
 import { api } from '../lib/api'
 import type {
   DriftEvent,
   PredictionModelVersion,
-  PredictionQualityCalibration,
   PredictionQualitySeries,
   PredictionQualitySummary,
+  RiskBand,
   QualityAnalysis,
   QualityOperations,
   TrainEligibility,
@@ -39,7 +39,7 @@ const days = ref<RangeKey>(30)
 
 const summaryRequest = useLatestRequest<PredictionQualitySummary>()
 const seriesRequest = useLatestRequest<PredictionQualitySeries>()
-const calibrationRequest = useLatestRequest<PredictionQualityCalibration>()
+const riskBandsRequest = useLatestRequest<{ items: RiskBand[]; samples: number; faults: number; baseline_rate: number }>()
 const modelsRequest = useLatestRequest<{ items: PredictionModelVersion[]; runtime_version: string }>()
 const eligibilityRequest = useLatestRequest<TrainEligibility>()
 const training = ref(false)
@@ -55,7 +55,7 @@ const operations = computed(() => operationsRequest.data.value)
 
 const summary = computed(() => summaryRequest.data.value)
 const points = computed(() => seriesRequest.data.value?.points ?? [])
-const calibration = computed(() => calibrationRequest.data.value)
+const riskBands = computed(() => riskBandsRequest.data.value)
 const models = computed(() => modelsRequest.data.value?.items ?? [])
 /** 推理服务实际加载的版本；与台账现役不一致时必须提示，否则会静默跑错模型 */
 const runtimeVersion = computed(() => modelsRequest.data.value?.runtime_version ?? '')
@@ -66,7 +66,7 @@ const versionMismatch = computed(
 const drift = computed(() => driftRequest.data.value ?? [])
 
 const loading = computed(
-  () => summaryRequest.pending.value || seriesRequest.pending.value || calibrationRequest.pending.value,
+  () => summaryRequest.pending.value || seriesRequest.pending.value || riskBandsRequest.pending.value,
 )
 
 /** 失败按区块列出来，全部拼成一行：错误最多一行，重试一次全拉 */
@@ -74,7 +74,7 @@ const failed = computed(() =>
   [
     { label: '质量汇总', error: summaryRequest.error.value },
     { label: '按天趋势', error: seriesRequest.error.value },
-    { label: '校准曲线', error: calibrationRequest.error.value },
+    { label: '校准曲线', error: riskBandsRequest.error.value },
     { label: '模型版本', error: modelsRequest.error.value },
     { label: '漂移事件', error: driftRequest.error.value },
   ]
@@ -94,7 +94,7 @@ const loadCore = () => {
   range.value = params
   void summaryRequest.run((signal) => api.predictionQualitySummary(params, signal))
   void seriesRequest.run((signal) => api.predictionQualitySeries(days.value, signal))
-  void calibrationRequest.run((signal) => api.predictionQualityCalibration(days.value, signal))
+  void riskBandsRequest.run((signal) => api.predictionQualityRiskBands(days.value, signal))
 }
 
 /** 版本与漂移不随窗口变化，进页面拉一次即可；重拉时保留旧行，避免整表先闪成空 */
@@ -423,13 +423,16 @@ const isTriggered = (item: DriftEvent) => item.action === 'triggered' || item.le
 
       <section class="card">
         <div class="card-head">
-          <span class="card-title">校准曲线</span>
-          <span class="card-sub">平均预测概率 {{ ratioOf(summary?.prob_mean) }} · 高风险占比 {{ ratioOf(summary?.high_ratio) }}</span>
+          <span class="card-title">高风险组命中率</span>
+          <span class="card-sub">按预测概率取前 N%，看段内真实故障占比 · 平均预测概率 {{ ratioOf(summary?.prob_mean) }}</span>
         </div>
-        <CalibrationChart
-          :buckets="calibration?.buckets ?? []"
-          :ece="calibration?.ece ?? null"
-          :pending="calibrationRequest.pending.value"
+        <p v-if="riskBandsRequest.pending.value && !riskBands" class="bands-loading">正在统计…</p>
+        <RiskBandsChart
+          v-else
+          :bands="riskBands?.items ?? []"
+          :samples="riskBands?.samples ?? 0"
+          :faults="riskBands?.faults ?? 0"
+          :baseline-rate="riskBands?.baseline_rate ?? 0"
         />
       </section>
     </div>
