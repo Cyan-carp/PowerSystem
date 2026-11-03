@@ -80,8 +80,8 @@ const pctText = (value: number) => (total.value ? `${((value / total.value) * 10
 .cm-figure {
   display: grid;
   grid-template-columns: 58px minmax(0, 1fr) minmax(0, 1fr);
-  /* 格子限高：用 1fr 会跟着卡片被邻列拉高，2x2 变成四根竖条 */
-  grid-template-rows: auto minmax(84px, 116px) minmax(84px, 116px);
+  /* 行高交给格子自己的 aspect-ratio：宽度定下来高度就跟着定，2x2 恒为方阵 */
+  grid-template-rows: auto auto auto;
   gap: 6px;
   flex: 1;
   min-height: 0;
@@ -119,6 +119,8 @@ const pctText = (value: number) => (total.value ? `${((value / total.value) * 10
   border: 1px solid var(--line-soft);
   text-align: center;
   transition: background 0.2s ease;
+  /* 正方形：宽决定高，避免 2x2 被容器拉成四条横带 */
+  aspect-ratio: 1;
 }
 
 .cm-cell b {

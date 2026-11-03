@@ -53,6 +53,10 @@ const atTen = computed(() => {
 })
 
 const ticks = [0, 25, 50, 75, 100]
+
+/** Y 轴标题逐字竖排：8 个字共 105px，垂直居中在绘图区 */
+const yLabelChars = '抓到故障比例'.split('')
+const yLabelStart = PAD.top + PLOT.h / 2 - (yLabelChars.length - 1) * 7.5 - 4
 </script>
 
 <template>
@@ -81,8 +85,9 @@ const ticks = [0, 25, 50, 75, 100]
 
       <!-- 轴标题 -->
       <text class="axis-label" :x="PAD.left + PLOT.w / 2" :y="BOX.h - 4" text-anchor="middle">抽查设备比例</text>
-      <text class="axis-label" :x="14" :y="PAD.top + PLOT.h / 2" text-anchor="middle"
-            :transform="`rotate(-90 14 ${PAD.top + PLOT.h / 2})`">抓到故障比例</text>
+      <!-- Y 轴标题竖排：逐字往下放，不旋转。旋转后的文字要歪头看，读起来费劲 -->
+      <text v-for="(ch, i) in yLabelChars" :key="`yl${i}`" class="axis-label"
+            :x="16" :y="yLabelStart + i * 15" text-anchor="middle">{{ ch }}</text>
 
       <!-- 随机挑选基准线 -->
       <line class="diagonal" :x1="sx(0)" :y1="sy(0)" :x2="sx(100)" :y2="sy(100)" />
