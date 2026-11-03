@@ -149,4 +149,9 @@ func TestRebuildSQLKeepsDaySliceIndexAndExistenceProbe(t *testing.T) {
 	if !strings.Contains(uncertainExistsSQL, "EXISTS(SELECT 1") || !strings.Contains(uncertainExistsSQL, "business_state IS DISTINCT FROM 'success'") {
 		t.Fatalf("uncertainty probe changed shape: %s", uncertainExistsSQL)
 	}
+	// 不带 processed_at 条件时 EXISTS 会扫到未处理的积压行（business_state 为 NULL
+	// 被判成不确定），部分索引 idx_inbox_energy 用不上，单轮 3 秒预算跑不完。
+	if !strings.Contains(uncertainExistsSQL, "processed_at IS NOT NULL") {
+		t.Fatalf("uncertainty probe lost the processed-only guard: %s", uncertainExistsSQL)
+	}
 }

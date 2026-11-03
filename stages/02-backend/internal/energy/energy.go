@@ -118,11 +118,18 @@ const sourceSamplesSQL = `SELECT ts_ms,(payload->>'power')::double precision AS 
 FROM telemetry_inbox WHERE device_id=? AND processed_at IS NOT NULL AND COALESCE(business_state,'success')='success'
 AND ts_ms>=? AND ts_ms<=? ORDER BY ts_ms,id`
 
-// uncertainExistsSQL only answers "is any sample not success". The previous
-// count(*) could not use any index for the state predicate and therefore
-// fetched every row of the device-day on each rebuild; EXISTS stops at the
-// first such row and returns the same verdict.
-const uncertainExistsSQL = `SELECT EXISTS(SELECT 1 FROM telemetry_inbox WHERE device_id=? AND ts_ms>=? AND ts_ms<=? AND business_state IS DISTINCT FROM 'success')`
+// uncertainExistsSQL only answers "is any *processed* sample not success".
+// The previous count(*) could not use any index for the state predicate and
+// therefore fetched every row of the device-day on each rebuild; EXISTS stops
+// at the first such row and returns the same verdict.
+//
+// processed_at IS NOT NULL 必须保留：未处理的积压行 business_state 为 NULL，
+// 会被 IS DISTINCT FROM 判成「不确定」。这既误判语义（当天数据还在队列里没有
+// 处理完，不该算当日质量），也让查询退化成扫该设备当天全部行——2026-11-03 单
+// 设备单日 10 万级 pending，部分索引 idx_inbox_energy 用不上，单轮 3 秒预算跑
+// 不完，energy worker 每 10 秒报一次 timeout。加上它之后按部分索引只扫已处理
+// 的行（当天通常几百条），IS DISTINCT FROM 保留原判据不变。
+const uncertainExistsSQL = `SELECT EXISTS(SELECT 1 FROM telemetry_inbox WHERE device_id=? AND ts_ms>=? AND ts_ms<=? AND processed_at IS NOT NULL AND business_state IS DISTINCT FROM 'success')`
 
 // RebuildPending refreshes a bounded number of dirty days. A concurrent new
 // sample keeps its dirty marker so the next pass corrects the daily total.
