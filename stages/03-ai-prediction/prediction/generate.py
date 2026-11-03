@@ -24,6 +24,12 @@ from pathlib import Path
 
 CHINA = timezone(timedelta(hours=8))
 DEVICES = ("INV-1001", "INV-1002", "INV-1003")
+# 生产里 143 台设备的效率与安装位置都不同，同一天同一时刻温度能差十几度。
+# 早期生成器让三台设备用同一套 sun/cloud，温度只差噪声——模型因此从没学过
+# 「功率高所以热是正常的」，上线后看到整站升温就给整站报警。
+# 下面两个系数把设备差异补回来：效率差影响功率，安装位置差影响温升。
+DEVICE_EFFICIENCY = {"INV-1001": 1.00, "INV-1002": 0.93, "INV-1003": 0.86}
+DEVICE_TEMP_OFFSET = {"INV-1001": 0.0, "INV-1002": 1.3, "INV-1003": -1.2}
 PRECURSOR_MINUTES = 60
 FAULT_MINUTES = 10
 
@@ -118,7 +124,8 @@ def generate(out: Path, days: int, start: date, seed: int, window_mode: bool = F
                     hour = minute / 60
                     sun = max(0.0, math.sin(math.pi * (hour - 6) / 12))
                     cloud = 0.95 + 0.04 * math.sin(minute / 31 + device_index) + rng.uniform(-0.02, 0.02)
-                    power = max(0.0, min(100.0, 100 * sun ** 1.6 * cloud))
+                    efficiency = DEVICE_EFFICIENCY.get(device, 1.0)
+                    power = max(0.0, min(100.0, 100 * sun ** 1.6 * cloud * efficiency))
                     voltage = 400 + 1.5 * math.sin(minute / 71 + device_index) + rng.uniform(-0.8, 0.8)
                     ramp = 0.0
                     fault = False
@@ -148,7 +155,8 @@ def generate(out: Path, days: int, start: date, seed: int, window_mode: bool = F
                             power *= 0.35
 
                     current = power * 1000 / (math.sqrt(3) * voltage * 0.99)
-                    temp = 25 + 0.25 * power + 3 * max(0.0, math.sin(math.pi * (hour - 7) / 12)) + ramp + rng.uniform(-0.7, 0.7)
+                    temp = (25 + 0.25 * power + 3 * max(0.0, math.sin(math.pi * (hour - 7) / 12))
+                            + DEVICE_TEMP_OFFSET.get(device, 0.0) + ramp + rng.uniform(-0.7, 0.7))
 
                     if window_mode and hit is not None and hit["metric"] == "temperature":
                         temp = shape_value(temp, float(hit["target"]), ratio)
