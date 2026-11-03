@@ -13,6 +13,7 @@ import type {
   PredictionQualitySeries,
   PredictionQualitySummary,
   QualityAnalysis,
+  QualityOperations,
   TrainEligibility,
 } from '../lib/api'
 import { isAdmin } from '../lib/auth'
@@ -44,6 +45,13 @@ const eligibilityRequest = useLatestRequest<TrainEligibility>()
 const training = ref(false)
 const eligibility = computed(() => eligibilityRequest.data.value)
 const driftRequest = useLatestRequest<DriftEvent[]>()
+
+/**
+ * 运维视角单独一路请求：它只是补充口径，失败了也不该把页面顶部的错误条拉出来，
+ * 更不能挡住主 KPI 的展示，所以不进 failed 汇总。
+ */
+const operationsRequest = useLatestRequest<QualityOperations>()
+const operations = computed(() => operationsRequest.data.value)
 
 const summary = computed(() => summaryRequest.data.value)
 const points = computed(() => seriesRequest.data.value?.points ?? [])
@@ -96,6 +104,10 @@ const loadDrift = () =>
   driftRequest.run(async (signal) => (await api.predictionQualityDrift(50, signal)).items, { keepData: true })
 const loadEligibility = () =>
   eligibilityRequest.run(async (signal) => await api.predictionQualityTrainEligibility(signal), { keepData: true })
+
+/** 只取最近 1 天：值班员看的是「今天每台设备大概报几次假警」，不是长窗口均值 */
+const loadOperations = () =>
+  operationsRequest.run(async (signal) => await api.predictionQualityOperations(1, signal), { keepData: true })
 
 const driftAnalysisRequest = useLatestRequest<QualityAnalysis[]>()
 const trialAnalysisRequest = useLatestRequest<QualityAnalysis[]>()
@@ -150,6 +162,7 @@ const reload = () => {
   void loadDrift()
   void loadEligibility()
   void loadAnalysis()
+  void loadOperations()
 }
 
 onMounted(reload)
@@ -357,6 +370,35 @@ const isTriggered = (item: DriftEvent) => item.action === 'triggered' || item.le
         <span class="strip-label"><i :style="{ background: item.color }"></i>{{ item.label }}</span>
         <span class="strip-value num">{{ item.value }}</span>
         <span class="strip-note">{{ item.note }}</span>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="card-head">
+        <span class="card-title">运维视角</span>
+        <span class="card-sub">同一批数据，按设备摊薄后的口径</span>
+      </div>
+      <div class="ov-grid">
+        <div class="ov-cell">
+          <span class="ov-label"><i :style="{ background: 'var(--brand)' }"></i>每台设备日均误报</span>
+          <span v-if="operations" class="ov-value num">
+            {{ operations.false_alarms_per_device_day.toFixed(1) }}<span class="ov-unit">次</span>
+          </span>
+          <span v-else class="ov-value num">—</span>
+          <span v-if="operations" class="ov-note">
+            {{ operations.false_alarms }} 次误报 ÷ {{ operations.devices }} 台设备 ÷ {{ operations.days }} 天
+          </span>
+        </div>
+        <div class="ov-cell">
+          <span class="ov-label"><i :style="{ background: 'var(--ok)' }"></i>平均预警提前量</span>
+          <span v-if="operations" class="ov-value num">
+            {{ operations.lead_minutes_p50 }}<span class="ov-unit">分钟</span>
+          </span>
+          <span v-else class="ov-value num">—</span>
+          <span v-if="operations" class="ov-note">
+            中位数 · 90 分位 {{ operations.lead_minutes_p90 }} 分钟 · {{ operations.captured }}/{{ operations.faults }} 次故障被提前发现
+          </span>
+        </div>
       </div>
     </section>
 
@@ -715,6 +757,61 @@ const isTriggered = (item: DriftEvent) => item.action === 'triggered' || item.le
   color: var(--ink-4);
 }
 
+/* 运维视角：两格并排，与 KPI 条同一套「左分隔线 + 大数字」的节奏，一眼能读 */
+.ov-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  padding: 2px 0 6px;
+}
+
+.ov-cell {
+  padding: 10px 20px 12px;
+  border-left: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.ov-cell:first-child {
+  border-left: 0;
+}
+
+.ov-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 11.5px;
+  color: var(--ink-3);
+}
+
+.ov-label i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+}
+
+.ov-value {
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.3;
+  color: var(--ink);
+}
+
+.ov-unit {
+  margin-left: 3px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink-3);
+}
+
+.ov-note {
+  font-size: 10.5px;
+  line-height: 1.6;
+  color: var(--ink-4);
+}
+
 .qq-grid {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
@@ -765,7 +862,7 @@ const isTriggered = (item: DriftEvent) => item.action === 'triggered' || item.le
   padding: 12px 14px;
   border: 1px solid var(--line);
   border-radius: var(--r-md);
-  background: var(--surface-2, var(--surface));
+  background: var(--card-soft, var(--card));
 }
 
 .ops-head {
@@ -779,7 +876,7 @@ const isTriggered = (item: DriftEvent) => item.action === 'triggered' || item.le
 .ops-title {
   font-size: 12px;
   font-weight: 600;
-  color: var(--ink-1);
+  color: var(--ink);
 }
 
 .ops-actions {
@@ -823,7 +920,7 @@ const isTriggered = (item: DriftEvent) => item.action === 'triggered' || item.le
   font-size: 12px;
   font-weight: 600;
   line-height: 1.65;
-  color: var(--ink-1);
+  color: var(--ink);
 }
 
 .ops-list {
@@ -868,7 +965,7 @@ const isTriggered = (item: DriftEvent) => item.action === 'triggered' || item.le
   background: var(--warn-soft);
   font-size: 11.5px;
   line-height: 1.6;
-  color: var(--ink-1);
+  color: var(--ink);
 }
 
 .model-warn b {
@@ -925,6 +1022,19 @@ const isTriggered = (item: DriftEvent) => item.action === 'triggered' || item.le
   }
 
   .strip-cell:nth-child(4) {
+    border-top: 1px solid var(--line-soft);
+  }
+
+  /* 窄屏两格改成上下排，分隔线从左侧换成上方 */
+  .ov-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .ov-cell {
+    border-left: 0;
+  }
+
+  .ov-cell + .ov-cell {
     border-top: 1px solid var(--line-soft);
   }
 

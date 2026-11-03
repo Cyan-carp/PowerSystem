@@ -472,6 +472,24 @@ export interface PredictionQualitySeries {
   points: PredictionQualityPoint[]
 }
 
+/**
+ * 运维视角：与按记录的 precision 是同一批数据的两种粒度。
+ * 值班员关心的是「这台设备今天报了几次假警」，而不是分母里有多少条预测记录，
+ * 所以误报要摊到设备与天数上；lead_minutes_* 是故障被提前发现的分钟数。
+ */
+export interface QualityOperations {
+  days: number
+  devices: number
+  samples: number
+  faults: number
+  captured: number
+  false_alarms: number
+  false_alarms_per_device_day: number
+  lead_minutes_p50: number
+  lead_minutes_p90: number
+  lead_samples: number
+}
+
 /** 校准分桶：lower/upper 是预测概率区间，actual_rate 是桶内真实故障占比 */
 export interface CalibrationBucket {
   lower: number
@@ -1069,6 +1087,9 @@ export const api = {
     get<PredictionQualitySummary>(`/predictions/quality/summary${query(params)}`, signal),
   predictionQualitySeries: (days = 30, signal?: AbortSignal) =>
     get<PredictionQualitySeries>(`/predictions/quality/series${query({ days })}`, signal),
+  /** 误报按「设备 × 天」摊薄；固定取最近 1 天，与页面上的统计窗口选择无关 */
+  predictionQualityOperations: (days = 1, signal?: AbortSignal) =>
+    get<QualityOperations>(`/predictions/quality/operations${query({ days })}`, signal),
   predictionQualityCalibration: (days = 30, signal?: AbortSignal) =>
     get<PredictionQualityCalibration>(`/predictions/quality/calibration${query({ days })}`, signal),
   predictionQualityModels: (signal?: AbortSignal) =>
