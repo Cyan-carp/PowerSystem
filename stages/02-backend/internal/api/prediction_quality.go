@@ -545,6 +545,36 @@ func (s *Server) calibrationQuery(ctx context.Context, where string, args []any)
 	return buckets, ptrFloat(ece), nil
 }
 
+// batchStat 是「按故障批次」的口径：同一台设备同一次故障起点算一批，
+// 只要起点之前任意一条预测窗口报过高，就算这批被提前叫出来。
+//
+// 为什么需要它：窗口级 precision/recall 的分母里包含大量「离故障还有一两个小时」
+// 的窗口，那些窗口本就该是低分，却被算成漏报，于是页面长期显示「命中率 3%」，
+// 与实际「有没有提前报警」不是一回事。运维关心的是后者。
+type batchStat struct {
+	Total   int64   `gorm:"column:total"`
+	Hit     int64   `gorm:"column:hit"`
+	AvgLead float64 `gorm:"column:avg_lead"`
+	P50Lead float64 `gorm:"column:p50_lead"`
+}
+
+func (s *Server) batchStats(ctx context.Context, where string, args []any) (batchStat, error) {
+	var row batchStat
+	err := s.db.WithContext(ctx).Raw(`SELECT count(*) AS total,
+		count(*) FILTER (WHERE hit) AS hit,
+		coalesce(avg(CASE WHEN hit THEN lead_minutes END), 0) AS avg_lead,
+		coalesce(percentile_cont(0.5) WITHIN GROUP (ORDER BY CASE WHEN hit THEN lead_minutes END), 0) AS p50_lead
+		FROM (
+			SELECT device_id, fault_onset_ms,
+				bool_or(predicted_high) AS hit,
+				(max(fault_onset_ms) - min(window_end_ms) FILTER (WHERE predicted_high)) / 60000.0 AS lead_minutes
+			FROM prediction_outcomes
+			WHERE `+where+` AND actual_fault AND fault_onset_ms IS NOT NULL
+			GROUP BY device_id, fault_onset_ms
+		) AS b`, args...).Scan(&row).Error
+	return row, err
+}
+
 // predictionQualitySummary 汇总区间内的混淆矩阵与校准指标。
 func (s *Server) predictionQualitySummary(c *gin.Context) {
 	start, end, valid := qualityWindow(c)
@@ -600,11 +630,22 @@ func (s *Server) predictionQualitySummary(c *gin.Context) {
 		probMean = ptrFloat(agg.ProbMean)
 		highRatio = ptrFloat(agg.HighRatio)
 	}
+	batch, err := s.batchStats(c.Request.Context(), where, args)
+	if err != nil {
+		fail(c, 503, 50000, "prediction quality query failed")
+		return
+	}
 	ok(c, gin.H{
 		"samples": agg.Samples, "tp": agg.TP, "fp": agg.FP, "fn": agg.FN, "tn": agg.TN,
 		"precision": ratio(agg.TP, agg.TP+agg.FP), "recall": ratio(agg.TP, agg.TP+agg.FN),
 		"f1": f1Score(agg.TP, agg.FP, agg.FN), "accuracy": ratio(agg.TP+agg.TN, agg.Samples),
 		"ece": ece, "prob_mean": probMean, "high_ratio": highRatio, "model_version": version,
+		"batch": gin.H{
+			"total": batch.Total, "hit": batch.Hit,
+			"rate":             ratio(batch.Hit, batch.Total),
+			"avg_lead_minutes": math.Round(batch.AvgLead),
+			"p50_lead_minutes": math.Round(batch.P50Lead),
+		},
 	})
 }
 
@@ -624,13 +665,45 @@ func (s *Server) predictionQualitySeries(c *gin.Context) {
 		fail(c, 503, 50000, "prediction quality query failed")
 		return
 	}
+	// 按故障批次（设备+起点）汇总到天。与窗口口径并行返回，前端优先画批次线：
+	// 一天没出故障时批次分母为 0，曲线断开，比画成 0% 更诚实。
+	var batchRows []struct {
+		Day   string `gorm:"column:day"`
+		Total int64  `gorm:"column:total"`
+		Hit   int64  `gorm:"column:hit"`
+	}
+	if err := s.db.WithContext(c.Request.Context()).Raw(`SELECT
+		to_char((to_timestamp(fault_onset_ms/1000.0) AT TIME ZONE 'Asia/Shanghai')::date, 'YYYY-MM-DD') AS day,
+		count(*) AS total,
+		count(*) FILTER (WHERE hit) AS hit
+		FROM (
+			SELECT device_id, fault_onset_ms, bool_or(predicted_high) AS hit
+			FROM prediction_outcomes
+			WHERE window_end_ms >= ? AND actual_fault AND fault_onset_ms IS NOT NULL
+			GROUP BY device_id, fault_onset_ms
+		) AS b
+		GROUP BY 1 ORDER BY 1`, start.UnixMilli()).Scan(&batchRows).Error; err != nil {
+		fail(c, 503, 50000, "prediction quality query failed")
+		return
+	}
+	batches := make(map[string][2]int64, len(batchRows))
+	for _, row := range batchRows {
+		batches[row.Day] = [2]int64{row.Total, row.Hit}
+	}
 	points := make([]gin.H, 0, len(rows))
 	for _, row := range rows {
+		day := row.Day.Format("2006-01-02")
+		var batchTotal, batchHit int64
+		if pair, found := batches[day]; found {
+			batchTotal, batchHit = pair[0], pair[1]
+		}
 		points = append(points, gin.H{
-			"day": row.Day.Format("2006-01-02"), "samples": row.Samples,
+			"day": day, "samples": row.Samples,
 			"precision": row.Precision, "recall": row.Recall,
 			"f1": row.F1, "accuracy": row.Accuracy,
 			"ece": row.ECE, "prob_mean": row.ProbMean,
+			"batch_total": batchTotal, "batch_hit": batchHit,
+			"batch_rate": ratio(batchHit, batchTotal),
 		})
 	}
 	ok(c, gin.H{"points": points})

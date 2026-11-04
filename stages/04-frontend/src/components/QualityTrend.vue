@@ -59,17 +59,28 @@ const segments = (values: (number | null)[]) => {
   return out
 }
 
-const hitPaths = computed(() => segments(props.points.map((point) => point.precision)))
-const missPaths = computed(() =>
-  segments(props.points.map((point) => (point.recall == null ? null : 1 - point.recall))),
-)
+/**
+ * 按天趋势：默认画**故障批次口径**——当天被提前叫出的批次 ÷ 当天故障批次。
+ * 窗口口径（precision / 1 − recall）留在接口里做参考，但不画：
+ * 分母含大量「离故障还早」的窗口，看着永远像 3%，不是运维关心的指标。
+ * 当天没有故障时批次分母为 0，线条断开，不画成 0%。
+ */
+const hitValue = (point: PredictionQualityPoint): number | null =>
+  point.batch_rate != null ? point.batch_rate : point.precision
+const missValue = (point: PredictionQualityPoint): number | null => {
+  if (point.batch_rate != null) return 1 - point.batch_rate
+  return point.recall == null ? null : 1 - point.recall
+}
+
+const hitPaths = computed(() => segments(props.points.map(hitValue)))
+const missPaths = computed(() => segments(props.points.map(missValue)))
 
 const dots = computed(() =>
   props.points
     .map((point, index) => ({
       index,
-      hit: point.precision,
-      miss: point.recall == null ? null : 1 - point.recall,
+      hit: hitValue(point),
+      miss: missValue(point),
     }))
     .filter((item) => item.hit != null || item.miss != null),
 )
@@ -93,8 +104,8 @@ const xTicks = computed(() => {
 <template>
   <div class="tr">
     <div class="tr-legend">
-      <span class="lg"><i class="dot-hit"></i>命中率</span>
-      <span class="lg"><i class="dot-miss"></i>漏报率</span>
+      <span class="lg"><i class="dot-hit"></i>批次命中率</span>
+      <span class="lg"><i class="dot-miss"></i>批次漏报率</span>
     </div>
 
     <!-- 量的是这块无内边距的容器：外层留白会把 clientWidth 撑大，SVG 按它排版会偏 -->
@@ -108,7 +119,7 @@ const xTicks = computed(() => {
         :height="height"
         :viewBox="`0 0 ${width} ${height}`"
         role="img"
-        aria-label="近段时间命中率与漏报率的按天趋势"
+        aria-label="近段时间按故障批次的命中率与漏报率趋势"
       >
         <g class="grid">
           <line

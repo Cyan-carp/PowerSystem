@@ -173,7 +173,7 @@ watch(days, loadCore)
 /** 比例一律转百分比；null 是「算不出来」，显示「—」*/
 const ratioOf = (value: number | null | undefined) => (value == null ? '—' : pct(value * 100, 1))
 
-/** 漏报率 = 1 − 召回率：模型没抓到的真实故障占比 */
+/** 窗口口径漏报率 = 1 − 召回率，只在卡片的备注里作参考 */
 const missRate = computed(() => {
   const recall = summary.value?.recall
   return recall == null ? null : 1 - recall
@@ -181,6 +181,8 @@ const missRate = computed(() => {
 
 const kpis = computed(() => {
   const value = summary.value
+  const batch = value?.batch ?? null
+  const hasBatch = !!batch && batch.total > 0
   return [
     {
       key: 'samples',
@@ -189,9 +191,31 @@ const kpis = computed(() => {
       value: value ? n(value.samples) : '—',
       note: '窗口已结算且有真值标注的预测',
     },
-    { key: 'precision', label: '命中率', color: 'var(--ok)', value: value ? ratioOf(value.precision) : '—', note: 'precision = TP ÷ (TP + FP)' },
-    { key: 'miss', label: '漏报率', color: 'var(--bad)', value: value ? ratioOf(missRate.value) : '—', note: '1 − recall = FN ÷ (TP + FN)' },
-    { key: 'accuracy', label: '准确率', color: 'var(--ink-4)', value: value ? ratioOf(value.accuracy) : '—', note: '(TP + TN) ÷ 全部样本' },
+    {
+      key: 'batch-hit',
+      label: '批次命中率',
+      color: 'var(--ok)',
+      value: hasBatch ? ratioOf(batch!.rate) : '—',
+      note: hasBatch
+        ? `提前叫出 ${batch!.hit}/${batch!.total} 次故障，中位提前 ${batch!.p50_lead_minutes ?? 0} 分钟`
+        : '区间内没有故障批次',
+    },
+    {
+      key: 'batch-miss',
+      label: '批次漏报率',
+      color: 'var(--bad)',
+      value: hasBatch ? ratioOf(1 - (batch!.rate ?? 0)) : '—',
+      note: hasBatch ? `漏掉 ${batch!.total - batch!.hit} 次故障` : '区间内没有故障批次',
+    },
+    {
+      key: 'window',
+      label: '窗口准确率',
+      color: 'var(--ink-4)',
+      value: value ? ratioOf(value.accuracy) : '—',
+      note: value
+        ? `(TP+TN)÷全部窗口；窗口命中 ${ratioOf(value.precision)}、漏报 ${ratioOf(missRate.value)}`
+        : '(TP + TN) ÷ 全部样本',
+    },
   ]
 })
 
@@ -406,7 +430,7 @@ const isTriggered = (item: DriftEvent) => item.action === 'triggered' || item.le
       <section class="card">
         <div class="card-head">
           <span class="card-title">混淆矩阵</span>
-          <span class="card-sub">按阈值判定的预测结果</span>
+          <span class="card-sub">按阈值判定 · 窗口口径（每 5 分钟一条，分母含提前量窗口）</span>
         </div>
         <div class="cm-wrap">
           <ConfusionMatrix
@@ -443,7 +467,7 @@ const isTriggered = (item: DriftEvent) => item.action === 'triggered' || item.le
     <section class="card">
       <div class="card-head">
         <span class="card-title">按日趋势</span>
-        <span class="card-sub">近 {{ days }} 天 · 命中率与漏报率</span>
+        <span class="card-sub">近 {{ days }} 天 · 按故障批次（该批是否被提前叫出）</span>
       </div>
       <QualityTrend :points="points" :pending="seriesRequest.pending.value" />
     </section>

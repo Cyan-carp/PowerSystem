@@ -454,6 +454,16 @@ export interface PredictionQualitySummary {
   prob_mean: number | null
   high_ratio: number | null
   model_version: string | null
+  /** 按故障批次的口径：同一台设备同一次故障算一批，只要起点前报过就算命中 */
+  batch?: PredictionQualityBatch | null
+}
+
+export interface PredictionQualityBatch {
+  total: number
+  hit: number
+  rate: number | null
+  avg_lead_minutes: number | null
+  p50_lead_minutes: number | null
 }
 
 /** GET /predictions/quality/series —— 按天一行，day 是 YYYY-MM-DD */
@@ -466,6 +476,9 @@ export interface PredictionQualityPoint {
   accuracy: number | null
   ece: number | null
   prob_mean: number | null
+  batch_total?: number
+  batch_hit?: number
+  batch_rate?: number | null
 }
 
 export interface PredictionQualitySeries {
