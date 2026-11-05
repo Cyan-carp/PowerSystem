@@ -4,11 +4,13 @@
 
 - 默认（``window_mode=False``）：渐进升温型，故障前 60 分钟有温度斜坡前兆；
 - ``window_mode=True``：复刻生产模拟器 ``simulator.py`` 的窗口注入——固定 5 个窗口，
-  每窗口 10 分钟，窗口内把某一指标直接抬到目标值（``max(当前值, target)``），
-  **窗口前无任何前兆**，与线上 ``apply_window_injection`` 的行为一致。
+  每窗口 10 分钟，窗口内把某一指标直接抬到目标值（``max(当前值, target)``）；
+  注入前 ``WINDOW_PRECURSOR_MINUTES=60`` 分钟有合成前兆（指标向目标缓升、标签仍为正常），
+  与线上 ``apply_window_injection`` 的行为一致。
 
-改造动机：线上注入是突变型，而历史训练集是渐进型，模型学的是「病前征兆」，
-对突变注入零命中（见部署日志 76）。用窗口模式重新造训练集，数据分布才与线上对齐。
+改造动机：线上注入在窗口内是突变型、且窗口前 60 分钟有合成前兆，而历史训练集
+（``window_mode=False``）是渐进升温型，模型学的是「病前征兆」的斜率，对突变注入零命中
+（见部署日志 76）。用窗口模式重新造训练集，数据分布才与线上对齐。
 """
 
 from __future__ import annotations
@@ -50,6 +52,50 @@ WINDOW_MINUTES = 10
 WINDOW_PRECURSOR_MINUTES = 60
 WINDOW_PRECURSOR_RATIO = 0.7
 
+# 正常电压波动多样化训练模式（2026-11-04 新增，可复现）：
+# 默认合成生成器的电压只做 ±0.8 均匀抖动，单窗 voltage_std 远小于真实场站的
+# 约 0.98–1.17（中位）/1.30（p90）。试用版 20a748 把正常水平的 voltage_std 误判为故障
+# （见模型质量第三批有界对照 n=20），根因是训练数据从未出现「正常但 voltage_std 偏高」的样本。
+# 该模式让无故障样本的电压抖动按设备/天取确定性 sigma∈[VOLTAGE_SIGMA_MIN, VOLTAGE_SIGMA_MAX]
+# （含 1.1–1.3），使模型学到「voltage_std 高到 1.5 仍可能是正常」。故障注入语义不变：
+# 电压故障仍把电压抬到 445，单窗 std 远超该区间，仍可区分。
+VOLTAGE_SIGMA_MIN = 0.8
+VOLTAGE_SIGMA_MAX = 1.5
+
+
+def _device_day_sigma(seed: int, day_index: int, device_index: int) -> float:
+    """每台设备每天的确定性电压抖动幅度，落在 [VOLTAGE_SIGMA_MIN, VOLTAGE_SIGMA_MAX]。
+
+    用与逐分钟 rng 独立的种子，保证 sigma 只由 (seed, 设备, 天) 决定、可复现，
+    且不受循环内其他随机调用顺序影响。
+    """
+    rng = random.Random(seed * 31 + device_index * 1009 + day_index * 7919)
+    return VOLTAGE_SIGMA_MIN + (VOLTAGE_SIGMA_MAX - VOLTAGE_SIGMA_MIN) * rng.random()
+
+
+def _base_voltage(
+    minute: int,
+    device_index: int,
+    rng: random.Random,
+    normal_voltage_diverse: bool,
+    seed: int,
+    day_index: int,
+) -> float:
+    """逐分钟电压基值。
+
+    normal_voltage_diverse=True 时做真实化抖动；否则保持旧公式（与旧生成模式逐字节一致、可复现）。
+    故障分钟的电压随后会被 shape_value 覆盖为注入目标，本函数只决定非故障电压。
+    """
+    if normal_voltage_diverse:
+        sigma = _device_day_sigma(seed, day_index, device_index)
+        # 每分钟独立零均值噪声：uniform(-a, a) 的总体 std = a/√3，取 a = sigma*√3 即总体 std≈sigma；
+        # 30 分钟窗口的样本 std 会围绕 sigma 小幅波动（约 ±0.13·sigma），足以覆盖 0.8–1.5 全区间。
+        # 再叠一个很小的慢漂移仅用于真实感，不改变窗口 std 的量级。
+        noise = sigma * math.sqrt(3) * rng.uniform(-1.0, 1.0)
+        drift = 0.2 * sigma * math.sin(minute / 71.0 + device_index)
+        return 400.0 + drift + noise
+    return 400 + 1.5 * math.sin(minute / 71 + device_index) + rng.uniform(-0.8, 0.8)
+
 
 def shape_value(base: float, target: float, ratio: float) -> float:
     """窗口内取 max(base, target)；前兆期按比例插值，且不超过目标值。"""
@@ -60,7 +106,14 @@ def shape_value(base: float, target: float, ratio: float) -> float:
     return min(target, base + (target - base) * ratio * WINDOW_PRECURSOR_RATIO)
 
 
-def generate(out: Path, days: int, start: date, seed: int, window_mode: bool = False) -> dict[str, object]:
+def generate(
+    out: Path,
+    days: int,
+    start: date,
+    seed: int,
+    window_mode: bool = False,
+    normal_voltage_diverse: bool = False,
+) -> dict[str, object]:
     if days < 10:
         raise ValueError("at least 10 days are needed for chronological train/validation/test")
     out.mkdir(parents=True, exist_ok=True)
@@ -128,7 +181,7 @@ def generate(out: Path, days: int, start: date, seed: int, window_mode: bool = F
                     cloud = 0.95 + 0.04 * math.sin(minute / 31 + device_index) + rng.uniform(-0.02, 0.02)
                     efficiency = DEVICE_EFFICIENCY.get(device, 1.0)
                     power = max(0.0, min(100.0, 100 * sun ** 1.6 * cloud * efficiency))
-                    voltage = 400 + 1.5 * math.sin(minute / 71 + device_index) + rng.uniform(-0.8, 0.8)
+                    voltage = _base_voltage(minute, device_index, rng, normal_voltage_diverse, seed, day_index)
                     ramp = 0.0
                     fault = False
 
@@ -186,6 +239,8 @@ def generate(out: Path, days: int, start: date, seed: int, window_mode: bool = F
         "fault_mode": "window_injection" if window_mode else "precursor_ramp",
         "precursor_minutes": WINDOW_PRECURSOR_MINUTES if window_mode else PRECURSOR_MINUTES,
         "fault_minutes": WINDOW_MINUTES if window_mode else FAULT_MINUTES,
+        "normal_voltage_diverse": normal_voltage_diverse,
+        "voltage_sigma_range": [VOLTAGE_SIGMA_MIN, VOLTAGE_SIGMA_MAX] if normal_voltage_diverse else None,
         "window_scenarios": (
             [{"hour": h, "metric": m, "target": t} for h, m, t in WINDOW_SCENARIOS] if window_mode else []
         ),
@@ -202,10 +257,22 @@ def main() -> None:
     parser.add_argument("--days", type=int, default=21)
     parser.add_argument("--start", type=date.fromisoformat, default=date(2026, 1, 1))
     parser.add_argument("--seed", type=int, default=2026)
-    parser.add_argument("--window-mode", action="store_true", help="按生产窗口注入生成突变型故障")
+    parser.add_argument("--window-mode", action="store_true", help="按生产窗口注入生成突变型故障（注入前 60 分钟合成前兆，前兆期标签仍正常）")
+    parser.add_argument(
+        "--normal-voltage-diverse",
+        action="store_true",
+        help="正常样本按设备/天取确定性 voltage_std∈[0.8,1.5]（含1.1-1.3），修复正常波动被误判为故障的训练偏差；故障注入语义不变",
+    )
     args = parser.parse_args()
     print(json.dumps(
-        generate(args.out, args.days, args.start, args.seed, window_mode=args.window_mode),
+        generate(
+            args.out,
+            args.days,
+            args.start,
+            args.seed,
+            window_mode=args.window_mode,
+            normal_voltage_diverse=args.normal_voltage_diverse,
+        ),
         ensure_ascii=False,
     ))
 

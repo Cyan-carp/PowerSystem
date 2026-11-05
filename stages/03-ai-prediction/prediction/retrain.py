@@ -111,6 +111,7 @@ def build_model(args: argparse.Namespace) -> tuple[Path, Path | None]:
         manifest = generate_module.generate(
             temp_root / "synthetic", args.days, SYNTHETIC_START, args.seed,
             window_mode=args.window_mode,
+            normal_voltage_diverse=args.normal_voltage_diverse,
         )
         log({"step": "generate", "days": args.days, "seed": args.seed, "rows": manifest["rows"],
              "fault_events": manifest["fault_events"]})
@@ -143,6 +144,22 @@ def retrain(args: argparse.Namespace) -> dict[str, object]:
     staging: Path | None = None
     try:
         data_dir, temp_root = build_model(args)
+        # 合成数据的生成参数随临时目录一起被清理，这里先把关键生成参数写进报告留存。
+        generation = None
+        if args.synthetic:
+            gen_manifest = json.loads((data_dir / "manifest.json").read_text(encoding="utf-8"))
+            generation = {
+                "synthetic": True,
+                "days": gen_manifest.get("days"),
+                "start_date": gen_manifest.get("start_date"),
+                "seed": gen_manifest.get("seed"),
+                "fault_mode": gen_manifest.get("fault_mode"),
+                "normal_voltage_diverse": gen_manifest.get("normal_voltage_diverse"),
+                "voltage_sigma_range": gen_manifest.get("voltage_sigma_range"),
+                "sampling_seconds": gen_manifest.get("sampling_seconds"),
+                "rows": gen_manifest.get("rows"),
+                "fault_events": gen_manifest.get("fault_events"),
+            }
         # 训练先落到临时目录：model_version 要训练后才知道，不能直接写最终路径。
         staging = Path(tempfile.mkdtemp(prefix="stage3-model-"))
         log({"step": "train", "data_dir": str(data_dir), "synthetic": bool(args.synthetic)})
@@ -173,6 +190,7 @@ def retrain(args: argparse.Namespace) -> dict[str, object]:
             "metrics": metrics,
             # 现役版本的指标需要现役模型在同一测试集上复算，本轮不读取生产模型，因此留空。
             "baseline_metrics": None,
+            "generation": generation,
             "eligible": eligible,
             "rejection_reason": reason,
             # 以下两个字段说明上两个数字的取值方式，供审计核对。
@@ -195,7 +213,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--seed", type=int, default=2026, help="合成数据种子，默认 2026")
     parser.add_argument(
         "--window-mode", action="store_true",
-        help="按生产窗口注入生成突变型故障（无前兆），与 simulator.py 的 WINDOW_SCENARIOS 对齐",
+        help="按生产窗口注入生成突变型故障（注入前 60 分钟合成前兆，前兆期标签仍正常），与 simulator.py 的 WINDOW_SCENARIOS 对齐",
+    )
+    parser.add_argument(
+        "--normal-voltage-diverse", action="store_true",
+        help="正常样本按设备/天取确定性 voltage_std∈[0.8,1.5]（含1.1-1.3），修复正常波动被误判为故障的训练偏差；故障注入语义不变",
     )
     parser.add_argument("--baseline-version", default=None, help="现役版本号，仅写进报告，不参与训练")
     parser.add_argument("--report", type=Path, default=None, help="报告输出路径，默认 <out-dir>/retrain-report.json")
