@@ -454,7 +454,7 @@ export interface PredictionQualitySummary {
   prob_mean: number | null
   high_ratio: number | null
   model_version: string | null
-  /** 按故障批次的口径：同一台设备同一次故障算一批，只要起点前报过就算命中 */
+  /** 按故障批次的口径：同一台设备同一次故障算一批，只认 1 小时内、已修正的标签 */
   batch?: PredictionQualityBatch | null
 }
 
@@ -483,6 +483,8 @@ export interface PredictionQualityPoint {
 
 export interface PredictionQualitySeries {
   points: PredictionQualityPoint[]
+  /** 批次线实际采用的模型版本；null 表示区间内没有可用样本 */
+  model_version?: string | null
 }
 
 /**
@@ -501,6 +503,14 @@ export interface QualityOperations {
   lead_minutes_p50: number
   lead_minutes_p90: number
   lead_samples: number
+  /** 误报事件口径：合并相邻高分窗口后的事件数（按设备+模型版本，间隔<=10分钟合并） */
+  false_alarm_events: number
+  false_alarm_events_per_device_day: number
+  /** 所有高分窗口数（事件合并前的原始窗口数，供对照） */
+  false_alarm_event_windows: number
+  /** 含真实故障成员的事件数 / 合并后事件总数 */
+  false_alarm_events_with_fault: number
+  false_alarm_event_total: number
 }
 
 /** 校准分桶：lower/upper 是预测概率区间，actual_rate 是桶内真实故障占比 */
@@ -1112,8 +1122,11 @@ export const api = {
   /* 预测质量：只读离线评估结果，promote 之外没有写操作 */
   predictionQualitySummary: (params: PredictionQualityParams = {}, signal?: AbortSignal) =>
     get<PredictionQualitySummary>(`/predictions/quality/summary${query(params)}`, signal),
-  predictionQualitySeries: (days = 30, signal?: AbortSignal) =>
-    get<PredictionQualitySeries>(`/predictions/quality/series${query({ days })}`, signal),
+  predictionQualitySeries: (days = 30, signal?: AbortSignal, modelVersion?: string) =>
+    get<PredictionQualitySeries>(
+      `/predictions/quality/series${query({ days, model_version: modelVersion || undefined })}`,
+      signal,
+    ),
   /** 误报按「设备 × 天」摊薄；固定取最近 1 天，与页面上的统计窗口选择无关 */
   predictionQualityOperations: (days = 1, signal?: AbortSignal) =>
     get<QualityOperations>(`/predictions/quality/operations${query({ days })}`, signal),
@@ -1129,11 +1142,6 @@ export const api = {
     post<{ eligible: boolean; run_id?: string; model_version?: string; rejection_reason?: string }>(
       '/predictions/quality/models/train',
       {},
-    ),
-  /** 只切平台登记的现役版本，不搬模型文件；返回后端实际落下的状态 */
-  promoteModel: (version: string) =>
-    post<{ model_version: string; status: ModelVersionStatus }>(
-      `/predictions/quality/models/${encodeURIComponent(version)}/promote`,
     ),
   /** 试用：切到该版本并开始 24 小时观察；失败时模型文件与台账都不动 */
   trialModel: (version: string) =>
@@ -1158,9 +1166,9 @@ export const api = {
   predictionQualityAnalysisLatest: (kind: 'drift' | 'trial', signal?: AbortSignal) =>
     get<{ items: QualityAnalysis[] }>(`/predictions/quality/analysis?kind=${kind}`, signal),
   /** 高风险组实际命中率：替代校准曲线，正样本稀疏时也能读出模型有没有把风险排前面 */
-  predictionQualityRiskBands: (days = 7, signal?: AbortSignal) =>
+  predictionQualityRiskBands: (days = 7, signal?: AbortSignal, modelVersion?: string) =>
     get<{ items: RiskBand[]; samples: number; faults: number; baseline_rate: number }>(
-      `/predictions/quality/risk-bands${query({ days })}`,
+      `/predictions/quality/risk-bands${query({ days, model_version: modelVersion || undefined })}`,
       signal,
     ),
 

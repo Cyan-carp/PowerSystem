@@ -279,30 +279,60 @@ onBeforeUnmount(() => {
           />
         </label>
 
-        <!-- 快捷入口：五个常用深链，数字即当前口径（参考稿的顶栏用法） -->
+        <!-- 快捷入口：五个常用深链，数字即当前口径；结构统一为「状态点 + 标签 + 数值」 -->
         <nav class="tb-quick" aria-label="常用入口">
-          <RouterLink class="q-chip" :to="{ path: '/alarms', query: { status: 'unhandled' } }">
-            <span>待处理告警</span><b class="num" :class="{ 'is-zero': !pendingCount }">{{ pendingCount }}</b>
+          <RouterLink
+            class="q-chip"
+            :title="`待处理告警 ${pendingCount} 条`"
+            :to="{ path: '/alarms', query: { status: 'unhandled' } }"
+          >
+            <i class="q-dot" :class="{ 'is-live': pendingCount > 0 }" aria-hidden="true"></i>
+            <span class="q-label">待处理告警</span>
+            <b class="q-num num" :class="{ 'is-zero': !pendingCount }">{{ pendingCount }}</b>
           </RouterLink>
           <RouterLink
             class="q-chip"
-            :class="{ 'is-hot': urgentCount > 0 }"
+            :class="{ 'is-urgent': urgentCount > 0 }"
+            :title="`紧急未处理 ${urgentCount} 条`"
             :to="{ path: '/alarms', query: { status: 'unhandled', level: 'urgent' } }"
           >
-            <span>紧急未处理</span><b class="num" :class="{ 'is-zero': !urgentCount }">{{ urgentCount }}</b>
+            <i class="q-dot" :class="{ 'is-urgent': urgentCount > 0 }" aria-hidden="true"></i>
+            <span class="q-label">紧急未处理</span>
+            <b class="q-num num" :class="{ 'is-zero': !urgentCount }">{{ urgentCount }}</b>
           </RouterLink>
-          <RouterLink class="q-chip" :to="{ path: '/devices', query: { state: 'offline' } }">
-            <span>离线设备</span><b class="num" :class="{ 'is-zero': !offlineCount }">{{ offlineCount }}</b>
+          <RouterLink
+            class="q-chip"
+            :title="`离线设备 ${offlineCount} 台`"
+            :to="{ path: '/devices', query: { state: 'offline' } }"
+          >
+            <i class="q-dot" :class="{ 'is-offline': offlineCount > 0 }" aria-hidden="true"></i>
+            <span class="q-label">离线设备</span>
+            <b class="q-num num" :class="{ 'is-zero': !offlineCount }">{{ offlineCount }}</b>
           </RouterLink>
-          <RouterLink class="q-chip" :to="{ path: '/health', query: { state: 'unknown' } }">
-            <span>健康未知</span><b class="num" :class="{ 'is-zero': !unknownCount }">{{ unknownCount }}</b>
+          <RouterLink
+            class="q-chip"
+            :title="`健康未知 ${unknownCount} 台`"
+            :to="{ path: '/health', query: { state: 'unknown' } }"
+          >
+            <i class="q-dot" :class="{ 'is-unknown': unknownCount > 0 }" aria-hidden="true"></i>
+            <span class="q-label">健康未知</span>
+            <b class="q-num num" :class="{ 'is-zero': !unknownCount }">{{ unknownCount }}</b>
           </RouterLink>
           <RouterLink
             class="q-chip is-latest"
             :class="{ 'is-zero': !latestAlarm }"
+            :title="latestAlarm ? '打开最新告警' : '暂无告警'"
             :to="latestAlarm ? { path: '/alarms', query: { id: String(latestAlarm.id) } } : { path: '/alarms' }"
           >
-            <span>最新告警</span><b>{{ latestAlarm ? (METRIC_CN[latestAlarm.metric] || latestAlarm.metric) : '—' }}</b>
+            <i
+              class="q-dot"
+              :class="latestAlarm ? `is-${latestAlarm.level}` : ''"
+              aria-hidden="true"
+            ></i>
+            <span class="q-label">最新告警</span>
+            <b class="q-num q-metric" :class="{ 'is-zero': !latestAlarm }">{{
+              latestAlarm ? METRIC_CN[latestAlarm.metric] || latestAlarm.metric : '—'
+            }}</b>
           </RouterLink>
         </nav>
 
@@ -585,45 +615,110 @@ onBeforeUnmount(() => {
   overflow: hidden;
 }
 
-/* 快捷入口：浅灰底小方标，标签在前、数字在后（参考稿的顶栏读法） */
+/*
+ * 快捷入口统一三件套：状态点 + 标签 + 数值。
+ * 底色一律白、边线一律 --line；只有真出现数字时状态点才上色，
+ * 全零时整排是安静的灰，顶栏不会变成一排彩色糖豆。
+ */
 .q-chip {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  height: 26px;
-  padding: 0 9px;
-  border-radius: var(--r-md);
-  background: #f2f4f8;
-  color: var(--ink-3);
+  gap: 5px;
+  height: 28px;
+  padding: 0 8px;
+  border-radius: var(--r-lg);
+  border: 1px solid var(--line);
+  background: var(--card);
+  color: var(--ink-4);
   font-size: 11.5px;
+  line-height: 1;
   white-space: nowrap;
-  transition: background 0.16s ease, color 0.16s ease;
+  transition: background 0.16s ease, border-color 0.16s ease, color 0.16s ease, box-shadow 0.16s ease;
 }
 
 .q-chip:hover {
-  background: #e8ecf4;
-  color: var(--ink);
-}
-
-.q-chip b {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--ink);
-}
-
-.q-chip.is-hot b {
-  color: var(--bad);
-}
-
-.q-chip b.is-zero,
-.q-chip.is-zero b {
-  color: #8d97a8;
-  font-weight: 500;
-}
-
-.q-chip.is-latest b {
-  font-weight: 500;
+  background: var(--card-soft);
+  border-color: var(--line-strong);
   color: var(--ink-2);
+}
+
+.q-chip:focus-visible {
+  outline: none;
+  border-color: var(--brand-line);
+  box-shadow: 0 0 0 3px var(--brand-soft);
+}
+
+.q-dot {
+  width: 5px;
+  height: 5px;
+  flex: 0 0 5px;
+  border-radius: 50%;
+  /* 无数据时的「哑点」：形状固定，颜色才是信息 */
+  background: #cfd7e3;
+  transition: background 0.16s ease, box-shadow 0.16s ease;
+}
+
+.q-dot.is-live {
+  background: var(--brand);
+}
+
+.q-dot.is-urgent {
+  background: var(--bad);
+  box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.12);
+}
+
+.q-dot.is-major {
+  background: var(--warn);
+}
+
+.q-dot.is-minor {
+  background: #94a3b8;
+}
+
+.q-dot.is-offline {
+  background: var(--warn);
+}
+
+.q-dot.is-unknown {
+  background: var(--violet);
+}
+
+.q-num {
+  /* 定宽右对齐：0 与 13 切换时整枚胶囊不横向抖动 */
+  min-width: 1.1em;
+  text-align: right;
+  font-size: 12.5px;
+  font-weight: 650;
+  color: var(--ink);
+}
+
+.q-num.is-zero {
+  color: #9aa4b4;
+  font-weight: 550;
+}
+
+.q-chip.is-latest .q-num {
+  max-width: 5.5em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 550;
+  color: var(--ink-3);
+}
+
+/* 紧急未处理有数字才整枚转红：全屏只允许这一个元素喊话 */
+.q-chip.is-urgent {
+  background: var(--bad-soft);
+  border-color: #f7cfcf;
+}
+
+.q-chip.is-urgent .q-label,
+.q-chip.is-urgent .q-num {
+  color: var(--bad-deep);
+}
+
+.q-chip.is-urgent:hover {
+  background: #fde8e8;
+  border-color: #f2bbbb;
 }
 
 /* 解读按钮上的未读点：不带数字，避免和铃铛的角标重复 */
@@ -661,25 +756,26 @@ onBeforeUnmount(() => {
   }
 }
 
-@media (max-width: 1460px) {
+/* 顶栏优先级：页名 > 搜索 > 账号；胶囊从右往左逐枚让位，宁可少一枚也不挤压换行 */
+@media (max-width: 1500px) {
   .tb-quick .q-chip:nth-child(5) {
     display: none;
   }
 }
 
-@media (max-width: 1300px) {
+@media (max-width: 1340px) {
   .tb-quick .q-chip:nth-child(4) {
     display: none;
   }
 }
 
-@media (max-width: 1180px) {
+@media (max-width: 1220px) {
   .tb-quick .q-chip:nth-child(3) {
     display: none;
   }
 }
 
-@media (max-width: 1080px) {
+@media (max-width: 1120px) {
   .tb-quick {
     display: none;
   }

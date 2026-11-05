@@ -55,11 +55,14 @@ const operations = computed(() => operationsRequest.data.value)
 
 const summary = computed(() => summaryRequest.data.value)
 const points = computed(() => seriesRequest.data.value?.points ?? [])
+const seriesVersion = computed(() => seriesRequest.data.value?.model_version ?? '')
 const riskBands = computed(() => riskBandsRequest.data.value)
 const models = computed(() => modelsRequest.data.value?.items ?? [])
 /** 推理服务实际加载的版本；与台账现役不一致时必须提示，否则会静默跑错模型 */
 const runtimeVersion = computed(() => modelsRequest.data.value?.runtime_version ?? '')
 const ledgerActive = computed(() => models.value.find((item) => item.status === 'active')?.model_version ?? '')
+/** 台账有现役但运行版本读不到：健康检查不可读或未返回版本，不能假装一致 */
+const versionUnknown = computed(() => Boolean(ledgerActive.value && !runtimeVersion.value))
 const versionMismatch = computed(
   () => Boolean(runtimeVersion.value && ledgerActive.value && runtimeVersion.value !== ledgerActive.value),
 )
@@ -87,14 +90,19 @@ const failed = computed(() =>
 const range = ref<{ from: string; to: string } | null>(null)
 const windowLabel = computed(() => (range.value ? `${stamp(range.value.from)} 至 ${stamp(range.value.to)}` : '—'))
 
-const loadCore = () => {
+const loadCore = async () => {
   const to = new Date()
   const from = new Date(to.getTime() - days.value * DAY)
   const params = { from: from.toISOString(), to: to.toISOString() }
   range.value = params
-  void summaryRequest.run((signal) => api.predictionQualitySummary(params, signal))
-  void seriesRequest.run((signal) => api.predictionQualitySeries(days.value, signal))
-  void riskBandsRequest.run((signal) => api.predictionQualityRiskBands(days.value, signal))
+  await summaryRequest.run((signal) => api.predictionQualitySummary(params, signal))
+  // 批次趋势跟随汇总实际采用的版本，避免 KPI 与曲线各自挑一个版本。
+  void seriesRequest.run((signal) =>
+    api.predictionQualitySeries(days.value, signal, summary.value?.model_version ?? undefined),
+  )
+  void riskBandsRequest.run((signal) =>
+    api.predictionQualityRiskBands(days.value, signal, summary.value?.model_version ?? undefined),
+  )
 }
 
 /** 版本与漂移不随窗口变化，进页面拉一次即可；重拉时保留旧行，避免整表先闪成空 */
@@ -189,7 +197,7 @@ const kpis = computed(() => {
       label: '样本量',
       color: 'var(--brand)',
       value: value ? n(value.samples) : '—',
-      note: '窗口已结算且有真值标注的预测',
+      note: '窗口结束后满 1 小时、按 1 小时真值规则标注的预测',
     },
     {
       key: 'batch-hit',
@@ -197,7 +205,7 @@ const kpis = computed(() => {
       color: 'var(--ok)',
       value: hasBatch ? ratioOf(batch!.rate) : '—',
       note: hasBatch
-        ? `提前叫出 ${batch!.hit}/${batch!.total} 次故障，中位提前 ${batch!.p50_lead_minutes ?? 0} 分钟`
+        ? `1 小时内提前叫出 ${batch!.hit}/${batch!.total} 次故障，中位提前 ${batch!.p50_lead_minutes ?? 0} 分钟`
         : '区间内没有故障批次',
     },
     {
@@ -246,26 +254,6 @@ const missOf = (item: PredictionModelVersion) => {
 }
 
 const promoting = ref('')
-
-const promote = async (item: PredictionModelVersion) => {
-  const target = item.model_version
-  const ok = await askConfirm({
-    title: `把 ${target} 提升为现役`,
-    body: '确认后仅变更登记的现役版本；模型文件由运维更新，历史预测不重算。',
-    confirmText: '提升为现役',
-  })
-  if (!ok) return
-  promoting.value = target
-  try {
-    const result = await api.promoteModel(target)
-    toast('ok', `${result.model_version} 已登记为${statusOf(result.status).label}`)
-    await loadModels()
-  } catch (error) {
-    toast('bad', `提升失败：${error instanceof Error ? error.message : String(error)}`)
-  } finally {
-    promoting.value = ''
-  }
-}
 
 /* ---------------- 试用与回退 ---------------- */
 
@@ -377,7 +365,7 @@ const isTriggered = (item: DriftEvent) => item.action === 'triggered' || item.le
       </div>
       <span class="qq-window">
         统计窗口 {{ windowLabel }}
-        <template v-if="summary?.model_version"> · 现役版本 <b class="num">{{ summary.model_version }}</b></template>
+        <template v-if="summary?.model_version"> · 统计版本 <b class="num">{{ summary.model_version }}</b></template>
       </span>
       <button class="btn btn-sm qq-refresh" :disabled="loading" @click="reload">
         <Icon name="refresh" :size="13" />刷新
@@ -410,7 +398,17 @@ const isTriggered = (item: DriftEvent) => item.action === 'triggered' || item.le
           </span>
           <span v-else class="ov-value num">—</span>
           <span v-if="operations" class="ov-note">
-            {{ operations.false_alarms }} 次误报 ÷ {{ operations.devices }} 台设备 ÷ {{ operations.days }} 天
+            {{ operations.false_alarms }} 次误报窗口 ÷ {{ operations.devices }} 台设备 ÷ {{ operations.days }} 天
+          </span>
+        </div>
+        <div class="ov-cell">
+          <span class="ov-label"><i :style="{ background: 'var(--warn)' }"></i>每台设备日均误报事件</span>
+          <span v-if="operations" class="ov-value num">
+            {{ operations.false_alarm_events_per_device_day.toFixed(1) }}<span class="ov-unit">起</span>
+          </span>
+          <span v-else class="ov-value num">—</span>
+          <span v-if="operations" class="ov-note">
+            合并相邻高分窗口（间隔≤10分钟记一起）：{{ operations.false_alarm_events }} 起误报事件，来自 {{ operations.false_alarm_event_windows }} 个高分窗口（含命中真实故障的窗口，非纯误报窗口）；另有 {{ operations.false_alarm_events_with_fault }} 起事件含真实故障、不计入误报（共 {{ operations.false_alarm_event_total }} 起）
           </span>
         </div>
         <div class="ov-cell">
@@ -420,7 +418,7 @@ const isTriggered = (item: DriftEvent) => item.action === 'triggered' || item.le
           </span>
           <span v-else class="ov-value num">—</span>
           <span v-if="operations" class="ov-note">
-            中位数 · 90 分位 {{ operations.lead_minutes_p90 }} 分钟 · {{ operations.captured }}/{{ operations.faults }} 次故障被提前发现
+            中位数 · 90 分位 {{ operations.lead_minutes_p90 }} 分钟 · 1 小时内提前发现 {{ operations.captured }}/{{ operations.faults }} 次故障
           </span>
         </div>
       </div>
@@ -430,7 +428,7 @@ const isTriggered = (item: DriftEvent) => item.action === 'triggered' || item.le
       <section class="card">
         <div class="card-head">
           <span class="card-title">混淆矩阵</span>
-          <span class="card-sub">按阈值判定 · 窗口口径（每 5 分钟一条，分母含提前量窗口）</span>
+          <span class="card-sub">按阈值判定 · 窗口口径（真值只看结束后 1 小时，分母含提前量窗口）</span>
         </div>
         <div class="cm-wrap">
           <ConfusionMatrix
@@ -467,7 +465,10 @@ const isTriggered = (item: DriftEvent) => item.action === 'triggered' || item.le
     <section class="card">
       <div class="card-head">
         <span class="card-title">按日趋势</span>
-        <span class="card-sub">近 {{ days }} 天 · 按故障批次（该批是否被提前叫出）</span>
+        <span class="card-sub">
+          近 {{ days }} 天 · 按故障批次（仅 1 小时内是否被提前叫出）
+          <template v-if="seriesVersion"> · 版本 <b class="num">{{ seriesVersion }}</b></template>
+        </span>
       </div>
       <QualityTrend :points="points" :pending="seriesRequest.pending.value" />
     </section>
@@ -539,7 +540,11 @@ const isTriggered = (item: DriftEvent) => item.action === 'triggered' || item.le
       </div>
       <p v-if="versionMismatch" class="model-warn" role="alert">
         台账现役为 <b class="num">{{ ledgerActive }}</b>，推理服务实际加载的是 <b class="num">{{ runtimeVersion }}</b>。
-        提升只改台账，需要运维替换模型文件并重启推理服务后才会一致。
+        两者不一致，请以推理服务实际运行版本为准，必要时检查 /health 是否反映最新加载。
+      </p>
+      <p v-else-if="versionUnknown" class="model-warn model-warn-soft" role="alert">
+        台账现役为 <b class="num">{{ ledgerActive }}</b>，但推理服务运行版本暂无法核对（健康检查不可读或未返回版本）。
+        请以推理服务实际加载为准，不要据此认为版本已一致。
       </p>
       <div class="table-wrap">
         <table class="table md-table">
@@ -560,8 +565,8 @@ const isTriggered = (item: DriftEvent) => item.action === 'triggered' || item.le
               <th>状态</th>
               <th>数据来源</th>
               <th>训练样本</th>
-              <th>命中率</th>
-              <th>漏报率</th>
+              <th>离线精确率</th>
+              <th>离线漏报率</th>
               <th>文件位置</th>
               <th>上线时间</th>
               <th>操作</th>
@@ -615,13 +620,6 @@ const isTriggered = (item: DriftEvent) => item.action === 'triggered' || item.le
                     >
                       {{ promoting === item.model_version ? '切换中…' : '试用' }}
                     </button>
-                    <button
-                      class="btn btn-sm btn-quiet"
-                      :disabled="promoting === item.model_version"
-                      @click="promote(item)"
-                    >
-                      直接提升
-                    </button>
                   </template>
                   <template v-else-if="item.status === 'trial' && isAdmin">
                     <button
@@ -649,8 +647,12 @@ const isTriggered = (item: DriftEvent) => item.action === 'triggered' || item.le
           </tbody>
         </table>
       </div>
+      <p class="md-note">
+        “离线精确率 / 离线漏报率”来自模型训练报告（多为合成数据），仅证明合成场景下的训练效果；
+        真实运行效果以页面顶部按 1 小时真值统计的线上故障批次命中率与误报事件为准，二者口径不同、不可混用，也不代表实盘已验证。
+      </p>
       <div class="pager">
-        <span>提升仅变更登记的现役版本，模型文件由运维更新；退役与被拒版本仅作留档，不支持回退。</span>
+        <span>候选只能先试用：试用会实际切换并核对推理服务运行版本，试用期满后确认转正；退役与被拒版本仅作留档，不支持回退。</span>
       </div>
     </section>
 
@@ -1003,6 +1005,26 @@ const isTriggered = (item: DriftEvent) => item.action === 'triggered' || item.le
 
 .model-warn b {
   font-weight: 700;
+}
+
+/* 运行版本读不到：提示核对，但不做强告警色，避免与真正的不一致混淆 */
+.model-warn-soft {
+  border-color: var(--ink-4);
+  background: var(--card-soft, var(--card));
+  color: var(--ink-2);
+}
+
+/* 离线指标口径说明：合成训练结果仅证明合成场景，不冒充实盘 */
+.md-note {
+  margin: 0 18px 10px;
+  font-size: 10.5px;
+  line-height: 1.6;
+  color: var(--ink-4);
+}
+
+.md-note b {
+  color: var(--ink-3);
+  font-weight: 600;
 }
 
 .cell-path {
