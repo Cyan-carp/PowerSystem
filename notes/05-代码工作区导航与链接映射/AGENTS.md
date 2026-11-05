@@ -4,7 +4,7 @@ tags:
   - 工作区导航
 status: 现行
 scope: 跨版本
-updated: 2026-10-29
+updated: 2026-10-31
 workspace_path: "AGENTS.md"
 relative_path: "../../AGENTS.md"
 repository_url: "https://github.com/Cyan-carp/PowerSystem/blob/main/AGENTS.md"
