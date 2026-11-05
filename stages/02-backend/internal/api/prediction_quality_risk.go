@@ -41,7 +41,16 @@ func (s *Server) predictionQualityRiskBands(c *gin.Context) {
 	if qualityEpochMS > start {
 		start = qualityEpochMS
 	}
+	closed := time.Now().Add(-time.Duration(predictionWindowMS) * time.Millisecond).UnixMilli()
 	ctx := c.Request.Context()
+	where, args := qualityStationFilter(c,
+		"window_end_ms >= ? AND window_end_ms <= ? AND label_rule = ?",
+		[]any{start, closed, qualityLabelRule})
+	where, version, args, err := s.qualityVersionFilter(ctx, c, where, args)
+	if err != nil {
+		fail(c, 503, 50000, "risk bands query failed")
+		return
+	}
 
 	var totals struct {
 		Samples int64
@@ -49,12 +58,12 @@ func (s *Server) predictionQualityRiskBands(c *gin.Context) {
 	}
 	if err := s.db.WithContext(ctx).Raw(`SELECT count(*)::bigint AS samples,
 		count(*) FILTER (WHERE actual_fault)::bigint AS faults
-		FROM prediction_outcomes WHERE window_end_ms >= ?`, start).Scan(&totals).Error; err != nil {
+		FROM prediction_outcomes WHERE `+where, args...).Scan(&totals).Error; err != nil {
 		fail(c, 503, 50000, "risk bands query failed")
 		return
 	}
 	if totals.Samples == 0 {
-		ok(c, gin.H{"items": []any{}, "samples": 0, "faults": 0, "baseline_rate": 0})
+		ok(c, gin.H{"items": []any{}, "samples": 0, "faults": 0, "baseline_rate": 0, "model_version": nil})
 		return
 	}
 	baseline := float64(totals.Faults) * 100 / float64(totals.Samples)
@@ -70,7 +79,8 @@ func (s *Server) predictionQualityRiskBands(c *gin.Context) {
 			SELECT probability, actual_fault,
 			       row_number() OVER (ORDER BY probability DESC) AS rn,
 			       count(*) OVER () AS total
-			FROM prediction_outcomes WHERE window_end_ms >= ?
+			FROM prediction_outcomes
+			WHERE `+where+`
 		), bands(pct) AS (
 			VALUES (?::float8),(?::float8),(?::float8),(?::float8),(?::float8),(?::float8)
 		)
@@ -81,8 +91,8 @@ func (s *Server) predictionQualityRiskBands(c *gin.Context) {
 		FROM bands AS b
 		LEFT JOIN ranked AS r ON r.rn <= ceil(r.total * b.pct)
 		GROUP BY b.pct ORDER BY b.pct`,
-		start, riskBandPcts[0], riskBandPcts[1], riskBandPcts[2],
-		riskBandPcts[3], riskBandPcts[4], riskBandPcts[5]).Scan(&rows).Error; err != nil {
+		append(args, riskBandPcts[0], riskBandPcts[1], riskBandPcts[2],
+			riskBandPcts[3], riskBandPcts[4], riskBandPcts[5])...).Scan(&rows).Error; err != nil {
 		fail(c, 503, 50000, "risk bands query failed")
 		return
 	}
@@ -102,7 +112,12 @@ func (s *Server) predictionQualityRiskBands(c *gin.Context) {
 			HitRate: mathRound(hit, 2), MinProb: mathRound(row.MinProb, 4), Lift: mathRound(lift, 1),
 		})
 	}
-	ok(c, gin.H{"items": items, "samples": totals.Samples, "faults": totals.Faults, "baseline_rate": mathRound(baseline, 3)})
+	var versionPtr *string
+	if version != "" {
+		versionPtr = &version
+	}
+	ok(c, gin.H{"items": items, "samples": totals.Samples, "faults": totals.Faults,
+		"baseline_rate": mathRound(baseline, 3), "model_version": versionPtr})
 }
 
 func pctLabel(pct float64) string {

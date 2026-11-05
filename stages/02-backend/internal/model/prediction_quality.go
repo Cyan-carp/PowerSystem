@@ -5,6 +5,13 @@ import (
 	"time"
 )
 
+// 预测真值口径常量：训练、回填、历史修正共用；service 层只做别名，避免多份数值。
+const (
+	PredictionHorizonMS      int64 = 3_600_000
+	PredictionLabelRule            = "window_1h"
+	PredictionQualityEpochMS int64 = 1_793_604_000_000
+)
+
 // PredictionOutcome 是一条预测的真值标注，prediction_id 与预测记录一一对应。
 type PredictionOutcome struct {
 	PredictionID    int64     `gorm:"column:prediction_id;primaryKey" json:"prediction_id"`
@@ -19,6 +26,7 @@ type PredictionOutcome struct {
 	ActualFault     bool      `json:"actual_fault"`
 	FaultOnsetMS    *int64    `gorm:"column:fault_onset_ms" json:"fault_onset_ms"`
 	LabelSource     string    `json:"label_source"`
+	LabelRule       string    `gorm:"column:label_rule" json:"label_rule"`
 	LabelConfidence string    `json:"label_confidence"`
 	LabeledAt       time.Time `json:"labeled_at"`
 	LabeledBy       *string   `json:"labeled_by"`
@@ -30,6 +38,7 @@ func (PredictionOutcome) TableName() string { return "prediction_outcomes" }
 // PredictionQualityDaily 是按上海日历日聚合的混淆矩阵与校准指标。
 type PredictionQualityDaily struct {
 	Day          time.Time `json:"day"`
+	LabelRule    string    `gorm:"column:label_rule" json:"label_rule"`
 	ModelVersion string    `json:"model_version"`
 	Samples      int       `json:"samples"`
 	TP           int       `json:"tp"`

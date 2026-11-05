@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -66,6 +67,23 @@ var MigrationPaths = []string{
 	"deploy/postgres/016_telemetry_realtime.sql",
 	"deploy/postgres/017_availability_rollups.sql",
 	"deploy/postgres/018_prediction_quality.sql",
+	"deploy/postgres/019_prediction_outcome_label_rule.sql",
+	"deploy/postgres/020_prediction_quality_daily_label_rule.sql",
+}
+
+// atomicMigrations 是必须在单个事务里整体生效的迁移。
+//
+// 这些文件里有多条互相依赖的语句（例如“删主键 + 建主键”），若按语句逐条自动提交，
+// 中途失败会让库停在半截状态，而且并发写入可能钻到无主键窗口里插入重复行。
+// Migrate 没有版本表、每次启动都重跑，所以这里只登记确实需要原子性的文件，
+// 其余保持逐条执行，避免把大表 ALTER 长时间锁在一个事务里。
+var atomicMigrations = map[string]bool{
+	"014_telemetry_reliability.sql":               true,
+	"015_telemetry_scheduler.sql":                 true,
+	"016_telemetry_realtime.sql":                  true,
+	"017_availability_rollups.sql":                true,
+	"019_prediction_outcome_label_rule.sql":       true,
+	"020_prediction_quality_daily_label_rule.sql": true,
 }
 
 func Migrate(db *gorm.DB, path string) error {
@@ -88,7 +106,7 @@ func Migrate(db *gorm.DB, path string) error {
 		}
 		return nil
 	}
-	if strings.HasSuffix(path, "014_telemetry_reliability.sql") || strings.HasSuffix(path, "015_telemetry_scheduler.sql") || strings.HasSuffix(path, "016_telemetry_realtime.sql") || strings.HasSuffix(path, "017_availability_rollups.sql") {
+	if atomicMigrations[filepath.Base(path)] {
 		return db.Transaction(apply)
 	}
 	return apply(db)

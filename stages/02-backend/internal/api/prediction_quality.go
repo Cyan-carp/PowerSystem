@@ -25,16 +25,12 @@ import (
 const (
 	// qualityBackfillDays 是每轮回填的预测时间回看天数。
 	qualityBackfillDays = 3
-	// qualityEpochMS 是质量统计起点（毫秒）：早于此刻结束的预测不再回填。
-	// 2026-11-02T07:20:00Z 切换模拟器故障形态，用它切断新旧数据混算；0 表示不限制。
-	qualityEpochMS = int64(1_793_604_000_000)
-	// precursorToleranceMS 是「提前预警」的容差。
-	//
-	// 模拟器把故障特征提前 --precursor-minutes 注入，模型在窗口开始前就已经报警，
-	// 但原口径只认 (window_end, window_end+1h] 内的故障，前兆期的正确预警全被判成误报。
-	// 把判定右端放宽一个前兆时长，让「提前 60 分钟报准」也能算命中。
-	// 只放宽右端：早于 window_end 的预测仍然不算，避免给「永远报警」留后门。
-	precursorToleranceMS = int64(60 * 60 * 1000)
+	// qualityEpochMS 是质量统计起点（毫秒）：早于此刻结束的预测不再回填，也不进入新口径统计。
+	// 2026-11-02T07:20:00Z 切换模拟器故障形态，用它切断新旧数据混算。
+	qualityEpochMS = model.PredictionQualityEpochMS
+	// qualityLabelRule 是当前真值规则的版本标记。旧 2 小时口径行保持 legacy，
+	// 只有显式修正或按新规则写入的行才带 window_1h，避免旧数据冒作新口径。
+	qualityLabelRule = model.PredictionLabelRule
 	// qualityRefreshDays 是每轮重算日指标的天数，覆盖 3 天近期指标与 7 天漂移基线。
 	qualityRefreshDays = 10
 	// qualityBatchSize 是单批写入的行数，避免长事务。
@@ -45,8 +41,9 @@ const (
 	qualityFirstDelay = 90 * time.Second
 	// qualityRoundBudget 是单轮回填与聚合的总预算。
 	qualityRoundBudget = 5 * time.Minute
-	// predictionWindowMS 是预测窗口长度：标签规则为 end < onset <= end + 1h。
-	predictionWindowMS = int64(3_600_000)
+	// predictionWindowMS 是预测窗口长度：标签规则为 window_end < onset <= window_end + 1h。
+	// 与训练和真值服务共用同一常量，不再接受前兆容差。
+	predictionWindowMS = service.PredictionHorizonMS
 	// calibrationBuckets 是概率校准的桶数，按 0.1 等宽划分。
 	calibrationBuckets = 10
 )
@@ -78,17 +75,20 @@ type pendingPrediction struct {
 }
 
 // dailyBucketRow 是某日某个概率桶的聚合行，日指标与 ECE 都由它推导。
+// 带上 model_version，日指标只取当日样本最多的版本，避免同日多版本混算后
+// 又用一个版本名标注。
 type dailyBucketRow struct {
-	Day       string  `gorm:"column:day"`
-	Bucket    int     `gorm:"column:bucket"`
-	Samples   int64   `gorm:"column:samples"`
-	TP        int64   `gorm:"column:tp"`
-	FP        int64   `gorm:"column:fp"`
-	FN        int64   `gorm:"column:fn"`
-	TN        int64   `gorm:"column:tn"`
-	ProbSum   float64 `gorm:"column:prob_sum"`
-	HighCount int64   `gorm:"column:high_count"`
-	Positives int64   `gorm:"column:positives"`
+	Day          string  `gorm:"column:day"`
+	ModelVersion string  `gorm:"column:model_version"`
+	Bucket       int     `gorm:"column:bucket"`
+	Samples      int64   `gorm:"column:samples"`
+	TP           int64   `gorm:"column:tp"`
+	FP           int64   `gorm:"column:fp"`
+	FN           int64   `gorm:"column:fn"`
+	TN           int64   `gorm:"column:tn"`
+	ProbSum      float64 `gorm:"column:prob_sum"`
+	HighCount    int64   `gorm:"column:high_count"`
+	Positives    int64   `gorm:"column:positives"`
 }
 
 // calibrationBucket 是校准曲线的单个概率桶。空桶的比例用 null，
@@ -162,13 +162,13 @@ func (s *Server) backfillOutcomes(ctx context.Context, days int) error {
 		return nil
 	}
 	labeledAt := time.Now().UTC()
-	stations := newStationDeviceCache(s, ctx)
+	stations := service.NewStationDeviceCache(s.db, ctx)
 	outcomes := make([]model.PredictionOutcome, 0, qualityBatchSize)
 	for _, row := range rows {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		fault, onset, err := stations.windowFault(row)
+		fault, onset, err := stations.WindowFault(row.DeviceCode, row.StationCode, row.WindowEndMS)
 		if err != nil {
 			return err
 		}
@@ -185,6 +185,7 @@ func (s *Server) backfillOutcomes(ctx context.Context, days int) error {
 			ActualFault:     fault,
 			FaultOnsetMS:    onset,
 			LabelSource:     "window_rule",
+			LabelRule:       qualityLabelRule,
 			LabelConfidence: "confirmed",
 			LabeledAt:       labeledAt,
 		})
@@ -208,84 +209,22 @@ func (s *Server) insertOutcomes(ctx context.Context, rows []model.PredictionOutc
 		CreateInBatches(&rows, qualityBatchSize).Error
 }
 
-// stationDeviceCache 缓存"某站某天被注入的设备编码"。
-// 设备列表与模拟器保持一致：按 device_code 升序取当日生效的受控设备，
-// 这样 SimulationDeviceIndex 选中的正是实际被注入的那一台。
-type stationDeviceCache struct {
-	srv      *Server
-	ctx      context.Context
-	devices  map[string][]string
-	selected map[string]string
-}
-
-func newStationDeviceCache(s *Server, ctx context.Context) *stationDeviceCache {
-	return &stationDeviceCache{srv: s, ctx: ctx, devices: map[string][]string{}, selected: map[string]string{}}
-}
-
-// selectedDevice 返回某站某日槽位选中的设备编码，空串表示该站没有可注入设备。
-func (c *stationDeviceCache) selectedDevice(station string, day time.Time) (string, error) {
-	key := station + "|" + day.Format("2006-01-02")
-	if code, ok := c.selected[key]; ok {
-		return code, nil
-	}
-	codes, ok := c.devices[station]
-	if !ok {
-		codes = make([]string, 0, 32)
-		if err := c.srv.db.WithContext(c.ctx).Table("simulation_alarm_policy_devices").
-			Where("station_code = ? AND active = ?", station, true).
-			Order("device_code ASC").
-			Pluck("device_code", &codes).Error; err != nil {
-			return "", err
-		}
-		c.devices[station] = codes
-	}
-	code := ""
-	if len(codes) > 0 {
-		code = codes[service.SimulationDeviceIndex(day, len(codes))]
-	}
-	c.selected[key] = code
-	return code, nil
-}
-
-// windowFault 判定预测窗口 (window_end, window_end + 1h] 内该设备是否被注入越线。
-// 规则与训练标签一致：只在槽位起始时刻落点，窗口左开右闭。
-func (c *stationDeviceCache) windowFault(row pendingPrediction) (bool, *int64, error) {
-	// 右端 = 预测窗口 + 1 小时 + 前兆容差，让「故障前一小时报准」也能落进判定范围。
-	winEnd := row.WindowEndMS + predictionWindowMS + precursorToleranceMS
-	day := service.SimulationDay(time.UnixMilli(row.WindowEndMS))
-	last := service.SimulationDay(time.UnixMilli(winEnd))
-	for !day.After(last) {
-		for _, plan := range service.SimulationSchedule(day) {
-			if plan.StationCode != row.StationCode {
-				continue
-			}
-			start := service.SimulationScheduledAt(plan.Day, plan.Hour).UnixMilli()
-			if start <= row.WindowEndMS || start > winEnd {
-				continue
-			}
-			code, err := c.selectedDevice(plan.StationCode, plan.Day)
-			if err != nil {
-				return false, nil, err
-			}
-			if code == row.DeviceCode {
-				onset := start
-				return true, &onset, nil
-			}
-		}
-		day = day.AddDate(0, 0, 1)
-	}
-	return false, nil, nil
-}
-
 // refreshDailyMetrics 按上海日历日重算混淆矩阵、校准误差与均值，并按 day upsert。
+// 只统计 1 小时口径且已成熟的标签；日聚合在修正后由下一轮 worker 覆盖。
 func (s *Server) refreshDailyMetrics(ctx context.Context, days int) error {
 	if days < 1 {
 		days = qualityRefreshDays
 	}
-	start := service.SimulationDay(time.Now()).AddDate(0, 0, -(days - 1))
+	now := time.Now()
+	start := service.SimulationDay(now).AddDate(0, 0, -(days - 1))
 	startMS := start.UnixMilli()
+	if startMS < qualityEpochMS {
+		startMS = qualityEpochMS
+	}
+	closed := now.Add(-time.Duration(predictionWindowMS) * time.Millisecond).UnixMilli()
 	var buckets []dailyBucketRow
 	if err := s.db.WithContext(ctx).Raw(`SELECT to_char((to_timestamp(window_end_ms/1000.0) AT TIME ZONE 'Asia/Shanghai')::date, 'YYYY-MM-DD') AS day,
+		model_version,
 		LEAST(floor(probability*10),9)::int AS bucket,
 		count(*) AS samples,
 		count(*) FILTER (WHERE predicted_high AND actual_fault) AS tp,
@@ -296,17 +235,29 @@ func (s *Server) refreshDailyMetrics(ctx context.Context, days int) error {
 		count(*) FILTER (WHERE predicted_high) AS high_count,
 		count(*) FILTER (WHERE actual_fault) AS positives
 		FROM prediction_outcomes
-		WHERE window_end_ms >= ?
-		GROUP BY 1, 2
-		ORDER BY 1, 2`, startMS).Scan(&buckets).Error; err != nil {
+		WHERE window_end_ms >= ? AND window_end_ms <= ? AND label_rule = ?
+		GROUP BY 1, 2, 3
+		ORDER BY 1, 2, 3`, startMS, closed, qualityLabelRule).Scan(&buckets).Error; err != nil {
 		return err
 	}
 	if len(buckets) == 0 {
 		return nil
 	}
-	versions, err := s.dailyModelVersions(ctx, startMS)
-	if err != nil {
-		return err
+	// 先按日+版本算样本量，选出当日主导版本；后面只累计该版本，避免
+	// “数值是 A+B 混算、版本名却写 A”的旧问题。
+	type dayVersion struct{ day, version string }
+	counts := make(map[dayVersion]int64)
+	for _, row := range buckets {
+		counts[dayVersion{row.Day, row.ModelVersion}] += row.Samples
+	}
+	dominant := make(map[string]string)
+	best := make(map[string]int64)
+	for key, count := range counts {
+		if best[key.day] == 0 || count > best[key.day] ||
+			(count == best[key.day] && key.version < dominant[key.day]) {
+			best[key.day] = count
+			dominant[key.day] = key.version
+		}
 	}
 	type dailyAggregate struct {
 		samples   int64
@@ -319,9 +270,12 @@ func (s *Server) refreshDailyMetrics(ctx context.Context, days int) error {
 		positives int64
 		ece       float64
 	}
-	aggregates := make(map[string]*dailyAggregate, len(versions))
-	order := make([]string, 0, len(versions))
+	aggregates := make(map[string]*dailyAggregate, len(dominant))
+	order := make([]string, 0, len(dominant))
 	for _, row := range buckets {
+		if row.ModelVersion != dominant[row.Day] {
+			continue
+		}
 		agg, ok := aggregates[row.Day]
 		if !ok {
 			agg = &dailyAggregate{}
@@ -339,6 +293,9 @@ func (s *Server) refreshDailyMetrics(ctx context.Context, days int) error {
 	}
 	// ECE 需要当日总量，故在第二轮按桶累加。
 	for _, row := range buckets {
+		if row.ModelVersion != dominant[row.Day] {
+			continue
+		}
 		agg := aggregates[row.Day]
 		if agg.samples == 0 || row.Samples == 0 {
 			continue
@@ -362,7 +319,8 @@ func (s *Server) refreshDailyMetrics(ctx context.Context, days int) error {
 		ece := agg.ece
 		dailies = append(dailies, model.PredictionQualityDaily{
 			Day:          day.UTC(),
-			ModelVersion: versions[key],
+			LabelRule:    qualityLabelRule,
+			ModelVersion: dominant[key],
 			Samples:      int(agg.samples),
 			TP:           int(agg.tp),
 			FP:           int(agg.fp),
@@ -382,36 +340,10 @@ func (s *Server) refreshDailyMetrics(ctx context.Context, days int) error {
 		return nil
 	}
 	return s.db.WithContext(ctx).Clauses(clause.OnConflict{
-		Columns: []clause.Column{{Name: "day"}},
+		Columns: []clause.Column{{Name: "day"}, {Name: "label_rule"}},
 		DoUpdates: clause.AssignmentColumns([]string{"model_version", "samples", "tp", "fp", "fn", "tn",
 			"precision", "recall", "f1", "accuracy", "ece", "prob_mean", "high_ratio", "updated_at"}),
 	}).Create(&dailies).Error
-}
-
-// dailyModelVersions 取每日出现次数最多的模型版本，次数相同时取字典序最小者以保证稳定。
-func (s *Server) dailyModelVersions(ctx context.Context, startMS int64) (map[string]string, error) {
-	var rows []struct {
-		Day          string `gorm:"column:day"`
-		ModelVersion string `gorm:"column:model_version"`
-		Count        int64  `gorm:"column:count"`
-	}
-	if err := s.db.WithContext(ctx).Raw(`SELECT to_char((to_timestamp(window_end_ms/1000.0) AT TIME ZONE 'Asia/Shanghai')::date, 'YYYY-MM-DD') AS day,
-		model_version, count(*) AS count
-		FROM prediction_outcomes
-		WHERE window_end_ms >= ?
-		GROUP BY 1, 2`, startMS).Scan(&rows).Error; err != nil {
-		return nil, err
-	}
-	versions := make(map[string]string, len(rows))
-	counts := make(map[string]int64, len(rows))
-	for _, row := range rows {
-		best, ok := versions[row.Day]
-		if !ok || row.Count > counts[row.Day] || (row.Count == counts[row.Day] && row.ModelVersion < best) {
-			versions[row.Day] = row.ModelVersion
-			counts[row.Day] = row.Count
-		}
-	}
-	return versions, nil
 }
 
 func ratio(numerator, denominator int64) *float64 {
@@ -479,17 +411,35 @@ func parseQualityDay(value string) (time.Time, error) {
 	return service.SimulationDay(instant), nil
 }
 
-// qualityFilter 把场站与模型版本过滤条件拼进 where，返回条件与参数。
-func qualityFilter(c *gin.Context, where string, args []any) (string, []any) {
+// qualityStationFilter 只拼场站过滤。模型版本由调用方显式指定，
+// 或按统计区间内的主导版本收窄，避免“显示 A 版本、指标混算 B 版本”。
+func qualityStationFilter(c *gin.Context, where string, args []any) (string, []any) {
 	if station := c.Query("station_code"); station != "" {
 		where += " AND station_code = ?"
 		args = append(args, station)
 	}
-	if version := c.Query("model_version"); version != "" {
-		where += " AND model_version = ?"
-		args = append(args, version)
-	}
 	return where, args
+}
+
+// qualityVersionFilter 解析显式模型版本；未指定时用区间内样本最多的版本。
+// 返回空串表示区间内没有可用样本，此时不追加版本条件（结果也会是 0 样本）。
+func (s *Server) qualityVersionFilter(ctx context.Context, c *gin.Context, where string, args []any) (string, string, []any, error) {
+	version := c.Query("model_version")
+	if version != "" {
+		return where + " AND model_version = ?", version, append(args, version), nil
+	}
+	var row struct {
+		ModelVersion string `gorm:"column:model_version"`
+	}
+	if err := s.db.WithContext(ctx).Raw(`SELECT model_version FROM prediction_outcomes
+		WHERE `+where+` GROUP BY model_version ORDER BY count(*) DESC, model_version ASC LIMIT 1`, args...).
+		Scan(&row).Error; err != nil {
+		return "", "", nil, err
+	}
+	if row.ModelVersion == "" {
+		return where, "", args, nil
+	}
+	return where + " AND model_version = ?", row.ModelVersion, append(args, row.ModelVersion), nil
 }
 
 // qualityDays 解析 days 参数，默认 30 天，上限 365 天。
@@ -576,12 +526,24 @@ func (s *Server) batchStats(ctx context.Context, where string, args []any) (batc
 }
 
 // predictionQualitySummary 汇总区间内的混淆矩阵与校准指标。
+// 只统计已修正/新写入的 1 小时标签，且只统计已成熟的窗口；默认收窄到区间内主导模型版本。
 func (s *Server) predictionQualitySummary(c *gin.Context) {
 	start, end, valid := qualityWindow(c)
 	if !valid {
 		return
 	}
-	where, args := qualityFilter(c, "window_end_ms >= ? AND window_end_ms < ?", []any{start, end})
+	if start < qualityEpochMS {
+		start = qualityEpochMS
+	}
+	closed := time.Now().Add(-time.Duration(predictionWindowMS) * time.Millisecond).UnixMilli()
+	where, args := qualityStationFilter(c,
+		"window_end_ms >= ? AND window_end_ms < ? AND window_end_ms <= ? AND label_rule = ?",
+		[]any{start, end, closed, qualityLabelRule})
+	where, version, args, err := s.qualityVersionFilter(c.Request.Context(), c, where, args)
+	if err != nil {
+		fail(c, 503, 50000, "prediction quality query failed")
+		return
+	}
 	var agg struct {
 		Samples   int64   `gorm:"column:samples"`
 		TP        int64   `gorm:"column:tp"`
@@ -591,7 +553,7 @@ func (s *Server) predictionQualitySummary(c *gin.Context) {
 		ProbMean  float64 `gorm:"column:prob_mean"`
 		HighRatio float64 `gorm:"column:high_ratio"`
 	}
-	err := s.db.WithContext(c.Request.Context()).Raw(`SELECT count(*) AS samples,
+	err = s.db.WithContext(c.Request.Context()).Raw(`SELECT count(*) AS samples,
 		count(*) FILTER (WHERE predicted_high AND actual_fault) AS tp,
 		count(*) FILTER (WHERE predicted_high AND NOT actual_fault) AS fp,
 		count(*) FILTER (WHERE NOT predicted_high AND actual_fault) AS fn,
@@ -608,38 +570,32 @@ func (s *Server) predictionQualitySummary(c *gin.Context) {
 		fail(c, 503, 50000, "prediction quality query failed")
 		return
 	}
-	var version *string
-	if v := c.Query("model_version"); v != "" {
-		version = &v
-	} else if agg.Samples > 0 {
-		var row struct {
-			ModelVersion string `gorm:"column:model_version"`
-		}
-		err := s.db.WithContext(c.Request.Context()).Raw(`SELECT model_version FROM prediction_outcomes
-			WHERE `+where+` GROUP BY model_version ORDER BY count(*) DESC, model_version ASC LIMIT 1`, args...).Scan(&row).Error
-		if err != nil {
-			fail(c, 503, 50000, "prediction quality query failed")
-			return
-		}
-		if row.ModelVersion != "" {
-			version = &row.ModelVersion
-		}
-	}
 	var probMean, highRatio *float64
 	if agg.Samples > 0 {
 		probMean = ptrFloat(agg.ProbMean)
 		highRatio = ptrFloat(agg.HighRatio)
 	}
-	batch, err := s.batchStats(c.Request.Context(), where, args)
+	batchWhere, batchArgs := qualityStationFilter(c,
+		"fault_onset_ms >= ? AND fault_onset_ms < ? AND label_rule = ?",
+		[]any{start, end, qualityLabelRule})
+	if version != "" {
+		batchWhere += " AND model_version = ?"
+		batchArgs = append(batchArgs, version)
+	}
+	batch, err := s.batchStats(c.Request.Context(), batchWhere, batchArgs)
 	if err != nil {
 		fail(c, 503, 50000, "prediction quality query failed")
 		return
+	}
+	var versionPtr *string
+	if version != "" {
+		versionPtr = &version
 	}
 	ok(c, gin.H{
 		"samples": agg.Samples, "tp": agg.TP, "fp": agg.FP, "fn": agg.FN, "tn": agg.TN,
 		"precision": ratio(agg.TP, agg.TP+agg.FP), "recall": ratio(agg.TP, agg.TP+agg.FN),
 		"f1": f1Score(agg.TP, agg.FP, agg.FN), "accuracy": ratio(agg.TP+agg.TN, agg.Samples),
-		"ece": ece, "prob_mean": probMean, "high_ratio": highRatio, "model_version": version,
+		"ece": ece, "prob_mean": probMean, "high_ratio": highRatio, "model_version": versionPtr,
 		"batch": gin.H{
 			"total": batch.Total, "hit": batch.Hit,
 			"rate":             ratio(batch.Hit, batch.Total),
@@ -650,27 +606,54 @@ func (s *Server) predictionQualitySummary(c *gin.Context) {
 }
 
 // predictionQualitySeries 返回按日的质量曲线。
+// 批次命中只取修正后的 1 小时标签，且只取已成熟窗口；默认收窄到区间内的主导模型版本。
 func (s *Server) predictionQualitySeries(c *gin.Context) {
 	days, valid := qualityDays(c)
 	if !valid {
 		return
 	}
-	end := service.SimulationDay(time.Now()).AddDate(0, 0, 1)
+	now := time.Now()
+	end := service.SimulationDay(now).AddDate(0, 0, 1)
 	start := end.AddDate(0, 0, -days)
-	var rows []model.PredictionQualityDaily
-	err := s.db.WithContext(c.Request.Context()).
-		Where("day >= ? AND day < ?", dateOnly(start), dateOnly(end)).
-		Order("day ASC").Find(&rows).Error
+	if start.UnixMilli() < qualityEpochMS {
+		start = service.SimulationDay(time.UnixMilli(qualityEpochMS))
+	}
+	startMS := start.UnixMilli()
+	if startMS < qualityEpochMS {
+		startMS = qualityEpochMS
+	}
+	closed := now.Add(-time.Duration(predictionWindowMS) * time.Millisecond).UnixMilli()
+	where, args := qualityStationFilter(c,
+		"window_end_ms >= ? AND window_end_ms <= ? AND label_rule = ?",
+		[]any{startMS, closed, qualityLabelRule})
+	where, version, args, err := s.qualityVersionFilter(c.Request.Context(), c, where, args)
 	if err != nil {
 		fail(c, 503, 50000, "prediction quality query failed")
 		return
 	}
-	// 按故障批次（设备+起点）汇总到天。与窗口口径并行返回，前端优先画批次线：
-	// 一天没出故障时批次分母为 0，曲线断开，比画成 0% 更诚实。
+	daily := s.db.WithContext(c.Request.Context()).
+		Where("day >= ? AND day < ? AND label_rule = ?", dateOnly(start), dateOnly(end), qualityLabelRule)
+	if version != "" {
+		daily = daily.Where("model_version = ?", version)
+	}
+	var rows []model.PredictionQualityDaily
+	if err := daily.Order("day ASC").Find(&rows).Error; err != nil {
+		fail(c, 503, 50000, "prediction quality query failed")
+		return
+	}
+	// 按故障批次（设备+起点）汇总到天。批次按“故障起点落在区间内”归属，
+	// 而不是按预测窗口终点归属，避免跨日边界把首日清晨的批次切掉。
 	var batchRows []struct {
 		Day   string `gorm:"column:day"`
 		Total int64  `gorm:"column:total"`
 		Hit   int64  `gorm:"column:hit"`
+	}
+	batchWhere, batchArgs := qualityStationFilter(c,
+		"fault_onset_ms >= ? AND fault_onset_ms < ? AND label_rule = ?",
+		[]any{startMS, end.UnixMilli(), qualityLabelRule})
+	if version != "" {
+		batchWhere += " AND model_version = ?"
+		batchArgs = append(batchArgs, version)
 	}
 	if err := s.db.WithContext(c.Request.Context()).Raw(`SELECT
 		to_char((to_timestamp(fault_onset_ms/1000.0) AT TIME ZONE 'Asia/Shanghai')::date, 'YYYY-MM-DD') AS day,
@@ -679,10 +662,10 @@ func (s *Server) predictionQualitySeries(c *gin.Context) {
 		FROM (
 			SELECT device_id, fault_onset_ms, bool_or(predicted_high) AS hit
 			FROM prediction_outcomes
-			WHERE window_end_ms >= ? AND actual_fault AND fault_onset_ms IS NOT NULL
+			WHERE `+batchWhere+` AND actual_fault AND fault_onset_ms IS NOT NULL
 			GROUP BY device_id, fault_onset_ms
 		) AS b
-		GROUP BY 1 ORDER BY 1`, start.UnixMilli()).Scan(&batchRows).Error; err != nil {
+		GROUP BY 1 ORDER BY 1`, batchArgs...).Scan(&batchRows).Error; err != nil {
 		fail(c, 503, 50000, "prediction quality query failed")
 		return
 	}
@@ -706,7 +689,11 @@ func (s *Server) predictionQualitySeries(c *gin.Context) {
 			"batch_rate": ratio(batchHit, batchTotal),
 		})
 	}
-	ok(c, gin.H{"points": points})
+	var versionPtr *string
+	if version != "" {
+		versionPtr = &version
+	}
+	ok(c, gin.H{"points": points, "model_version": versionPtr})
 }
 
 // predictionQualityCalibration 返回最近 days 天的可靠性曲线。
@@ -716,13 +703,29 @@ func (s *Server) predictionQualityCalibration(c *gin.Context) {
 		return
 	}
 	start := service.SimulationDay(time.Now()).AddDate(0, 0, -(days - 1))
-	buckets, ece, err := s.calibrationQuery(c.Request.Context(),
-		"window_end_ms >= ?", []any{start.UnixMilli()})
+	startMS := start.UnixMilli()
+	if startMS < qualityEpochMS {
+		startMS = qualityEpochMS
+	}
+	closed := time.Now().Add(-time.Duration(predictionWindowMS) * time.Millisecond).UnixMilli()
+	where, args := qualityStationFilter(c,
+		"window_end_ms >= ? AND window_end_ms <= ? AND label_rule = ?",
+		[]any{startMS, closed, qualityLabelRule})
+	where, version, args, err := s.qualityVersionFilter(c.Request.Context(), c, where, args)
 	if err != nil {
 		fail(c, 503, 50000, "prediction quality query failed")
 		return
 	}
-	ok(c, gin.H{"buckets": buckets, "ece": ece})
+	buckets, ece, err := s.calibrationQuery(c.Request.Context(), where, args)
+	if err != nil {
+		fail(c, 503, 50000, "prediction quality query failed")
+		return
+	}
+	var versionPtr *string
+	if version != "" {
+		versionPtr = &version
+	}
+	ok(c, gin.H{"buckets": buckets, "ece": ece, "model_version": versionPtr})
 }
 
 // qualityModelItem 是模型台账的对外字段，避免把内部列暴露给前端。
@@ -837,8 +840,9 @@ type qualityTrainEligibility struct {
 }
 
 // qualityEligibility 统计新形态（qualityEpochMS 之后）的可用样本。
-// 只算已结算且有标签的行，未到期的预测不能进训练集。
+// 只算已成熟、且按 1 小时规则标注的行；旧口径行不能把重训门槛“垫”过去。
 func (s *Server) qualityEligibility(ctx context.Context) (qualityTrainEligibility, error) {
+	closed := time.Now().Add(-time.Duration(predictionWindowMS) * time.Millisecond).UnixMilli()
 	var row struct {
 		Days      int64
 		Samples   int64
@@ -849,7 +853,8 @@ func (s *Server) qualityEligibility(ctx context.Context) (qualityTrainEligibilit
 		       count(*) AS samples,
 		       COALESCE(sum(CASE WHEN actual_fault THEN 1 ELSE 0 END), 0) AS positives
 		FROM prediction_outcomes
-		WHERE window_end_ms >= ?`, qualityEpochMS).Scan(&row).Error
+		WHERE window_end_ms >= ? AND window_end_ms <= ? AND label_rule = ?`,
+		qualityEpochMS, closed, qualityLabelRule).Scan(&row).Error
 	if err != nil {
 		return qualityTrainEligibility{}, err
 	}
@@ -1008,11 +1013,16 @@ func (s *Server) predictionQualityImportModel(c *gin.Context) {
 	}
 	ctx := c.Request.Context()
 
+	// 准入未过（eligible=false）的模型只能登记为 rejected，不能被 body.Status 覆盖成
+	// active/candidate；否则会绕过准入把不合格模型当成候选甚至现役。
 	status := "candidate"
 	if !body.Eligible {
+		if body.Status != "" && body.Status != "rejected" {
+			fail(c, 400, 40001, "ineligible model can only be registered as rejected")
+			return
+		}
 		status = "rejected"
-	}
-	if body.Status != "" {
+	} else if body.Status != "" {
 		if body.Status != "candidate" && body.Status != "active" {
 			fail(c, 400, 40001, "invalid model status")
 			return
@@ -1052,25 +1062,66 @@ func (s *Server) predictionQualityImportModel(c *gin.Context) {
 
 	var existing model.ModelRegistry
 	err := s.db.WithContext(ctx).Where("model_version = ?", body.ModelVersion).First(&existing).Error
+	recordExists := false
 	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 		fail(c, 503, 50000, "model import failed")
 		return
 	}
 	if err == nil {
+		recordExists = true
 		if existing.Status == "active" {
 			fail(c, 409, 40901, "active model cannot be overwritten")
 			return
 		}
+	}
+
+	// 登记为现役：必须同时满足两条，否则前端/调用方会误以为已经切到该模型：
+	//   1) 台账里没有其它现役版本（自身若是已存在记录则排除）；
+	//   2) 推理服务实际加载的正是这个版本（verifyRuntimeModel 严格校验 /health）。
+	// 任何一条不满足都拒绝登记，不写台账。
+	if record.Status == "active" {
+		var otherActive int64
+		if err := s.db.WithContext(ctx).Model(&model.ModelRegistry{}).
+			Where("status = ? AND model_version <> ?", "active", body.ModelVersion).
+			Count(&otherActive).Error; err != nil {
+			fail(c, 503, 50000, "model import failed")
+			return
+		}
+		if otherActive > 0 {
+			fail(c, 409, 40901, "an active model already exists, promote instead")
+			return
+		}
+		if err := s.verifyRuntimeModel(ctx, body.ModelVersion); err != nil {
+			fail(c, 502, 50201, "运行模型实际不是该版本，未登记为现役："+err.Error())
+			return
+		}
+		now := time.Now().UTC()
+		record.PromotedAt = &now
+		var actor struct {
+			Username string `gorm:"column:username"`
+		}
+		_ = s.db.WithContext(ctx).Table("users").Select("username").
+			Where("id = ?", c.GetInt64("user_id")).Scan(&actor).Error
+		record.PromotedBy = &actor.Username
+	}
+
+	if recordExists {
 		record.ID = existing.ID
+		updates := map[string]any{
+			"algorithm": record.Algorithm, "status": record.Status, "threshold": record.Threshold,
+			"calibration": record.Calibration, "metrics": record.Metrics,
+			"baseline_metrics": record.BaselineMetrics, "data_source": record.DataSource,
+			"train_samples": record.TrainSamples, "positive_samples": record.PositiveSamples,
+			"artifact_path": record.ArtifactPath, "trained_at": record.TrainedAt,
+			"rejected_reason": record.RejectedReason,
+		}
+		// 已存在记录转现役时，把现役时间一并保存；非现役更新不触碰这两列，避免误清现役时间。
+		if record.Status == "active" {
+			updates["promoted_at"] = record.PromotedAt
+			updates["promoted_by"] = record.PromotedBy
+		}
 		if err := s.db.WithContext(ctx).Model(&model.ModelRegistry{}).Where("id = ?", existing.ID).
-			Updates(map[string]any{
-				"algorithm": record.Algorithm, "status": record.Status, "threshold": record.Threshold,
-				"calibration": record.Calibration, "metrics": record.Metrics,
-				"baseline_metrics": record.BaselineMetrics, "data_source": record.DataSource,
-				"train_samples": record.TrainSamples, "positive_samples": record.PositiveSamples,
-				"artifact_path": record.ArtifactPath, "trained_at": record.TrainedAt,
-				"rejected_reason": record.RejectedReason,
-			}).Error; err != nil {
+			Updates(updates).Error; err != nil {
 			fail(c, 503, 50000, "model import failed")
 			return
 		}
@@ -1078,20 +1129,6 @@ func (s *Server) predictionQualityImportModel(c *gin.Context) {
 		return
 	}
 
-	if record.Status == "active" {
-		var activeCount int64
-		if err := s.db.WithContext(ctx).Model(&model.ModelRegistry{}).
-			Where("status = ?", "active").Count(&activeCount).Error; err != nil {
-			fail(c, 503, 50000, "model import failed")
-			return
-		}
-		if activeCount > 0 {
-			fail(c, 409, 40901, "an active model already exists, promote instead")
-			return
-		}
-		now := time.Now().UTC()
-		record.PromotedAt = &now
-	}
 	if err := s.db.WithContext(ctx).Create(&record).Error; err != nil {
 		fail(c, 503, 50000, "model import failed")
 		return
@@ -1107,58 +1144,25 @@ func nullableString(value string) *string {
 	return &value
 }
 
-// predictionQualityPromote 只做数据库状态流转。真实模型切换（容器、镜像、模型文件）
-// 由运维按发布流程执行，本接口不触碰运行中的推理服务。
+// predictionQualityPromote 旧入口已停用：它只改台账、不加载模型，会造成
+// 「台账写 A、推理跑 B」。保留路由是为了让旧页面收到明确错误；
+// 所有切换统一走 trial（实际加载并核对）→ confirm（再核对后转正）。
 func (s *Server) predictionQualityPromote(c *gin.Context) {
-	version := c.Param("version")
-	if version == "" || len(version) > 64 {
-		fail(c, 400, 40001, "invalid model version")
-		return
-	}
-	ctx := c.Request.Context()
-	var actor struct {
-		Username string `gorm:"column:username"`
-	}
-	if err := s.db.WithContext(ctx).Table("users").Select("username").
-		Where("id = ?", c.GetInt64("user_id")).Scan(&actor).Error; err != nil {
-		fail(c, 503, 50000, "model promote failed")
-		return
-	}
-	username := actor.Username
-	conflict := errors.New("model version is not a candidate")
-	now := time.Now().UTC()
-	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var target model.ModelRegistry
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
-			Where("model_version = ?", version).First(&target).Error; err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return conflict
-			}
-			return err
-		}
-		if target.Status != "candidate" {
-			return conflict
-		}
-		if err := tx.Model(&model.ModelRegistry{}).Where("status = ?", "active").
-			Update("status", "retired").Error; err != nil {
-			return err
-		}
-		return tx.Model(&model.ModelRegistry{}).Where("id = ?", target.ID).
-			Updates(map[string]any{"status": "active", "promoted_at": now, "promoted_by": username}).Error
-	})
-	if errors.Is(err, conflict) {
-		fail(c, 409, 40901, "model version is not a candidate")
-		return
-	}
-	if err != nil {
-		fail(c, 503, 50000, "model promote failed")
-		return
-	}
-	ok(c, gin.H{"model_version": version, "status": "active", "promoted_at": now, "promoted_by": username})
+	fail(c, 409, 40901, "直接提升已停用，请先试用（会实际切换并核对运行模型），试用期满后再确认转正")
 }
 
 // trialHours 是试用观察期。期满前不允许确认，避免刚切过去就下结论。
 const trialHours = 24
+
+// lockModelSwitch 用进程内小锁串行化模型切换。并发请求直接收到 409，
+// 不排队等待，避免两个切换互相覆盖。跨副本并发仍依赖单实例部署。
+func (s *Server) lockModelSwitch(c *gin.Context) bool {
+	if s.modelSwitch.TryLock() {
+		return true
+	}
+	fail(c, 409, 40901, "另一个模型切换正在进行，请稍后重试")
+	return false
+}
 
 // reloadModel 让推理服务加载指定版本。接口内部会切 current 软链，
 // 顺序是「先加载成功、再切软链」，失败时软链与内存都停在旧版本。
@@ -1182,14 +1186,78 @@ func (s *Server) reloadModel(ctx context.Context, version string) error {
 	return nil
 }
 
-// predictionQualityTrial 把候选切到试用：先 reload，成功后才改台账。
-// reload 失败时台账不动，页面会显示「切换失败，已保留原模型」。
+// readRuntimeModel 读取推理服务实际加载的模型版本；查询失败视为错误，
+// 不能像列表页的辅助信息那样静默降级成空串。
+func (s *Server) readRuntimeModel(ctx context.Context) (string, error) {
+	if s.cfg.AIURL == "" {
+		return "", errors.New("未配置推理服务地址")
+	}
+	reqCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet,
+		strings.TrimRight(s.cfg.AIURL, "/")+"/health", nil)
+	if err != nil {
+		return "", err
+	}
+	resp, err := (&http.Client{Timeout: 3 * time.Second}).Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("健康检查返回 %d", resp.StatusCode)
+	}
+	var payload struct {
+		ModelVersion string `json:"model_version"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 4096)).Decode(&payload); err != nil {
+		return "", err
+	}
+	if payload.ModelVersion == "" {
+		return "", errors.New("健康检查未返回运行模型版本")
+	}
+	return payload.ModelVersion, nil
+}
+
+// verifyRuntimeModel 核对推理服务实际加载的版本是否为目标版本。
+func (s *Server) verifyRuntimeModel(ctx context.Context, expected string) error {
+	running, err := s.readRuntimeModel(ctx)
+	if err != nil {
+		return err
+	}
+	if running != expected {
+		return fmt.Errorf("运行模型为 %s，目标是 %s", running, expected)
+	}
+	return nil
+}
+
+// restoreRuntimeModel 在台账写入失败后，尽力把运行模型恢复到台账仍记录的状态。
+// 只补偿一次，不重放失败的数据库写入；无法恢复时明确标为未知状态交人工核对。
+func (s *Server) restoreRuntimeModel(ctx context.Context, version string) string {
+	if version == "" {
+		return "没有可恢复的旧版本，运行状态未知，请人工核对"
+	}
+	if err := s.reloadModel(ctx, version); err != nil {
+		return "恢复运行模型 " + version + " 失败（" + err.Error() + "），运行状态未知，请人工核对"
+	}
+	if err := s.verifyRuntimeModel(ctx, version); err != nil {
+		return "恢复运行模型 " + version + " 后核对失败（" + err.Error() + "），运行状态未知，请人工核对"
+	}
+	return "已恢复运行模型 " + version
+}
+
+// predictionQualityTrial 把候选切到试用：先核对当前运行模型与台账现役一致，
+// 再 reload 并核对目标版本，全部通过后才改台账。DB 写失败时只补偿一次运行时。
 func (s *Server) predictionQualityTrial(c *gin.Context) {
 	version := c.Param("version")
 	if version == "" || len(version) > 64 {
 		fail(c, 400, 40001, "invalid model version")
 		return
 	}
+	if !s.lockModelSwitch(c) {
+		return
+	}
+	defer s.modelSwitch.Unlock()
 	ctx := c.Request.Context()
 	var target model.ModelRegistry
 	if err := s.db.WithContext(ctx).Where("model_version = ?", version).First(&target).Error; err != nil {
@@ -1204,9 +1272,32 @@ func (s *Server) predictionQualityTrial(c *gin.Context) {
 	var active model.ModelRegistry
 	if err := s.db.WithContext(ctx).Where("status = ?", "active").First(&active).Error; err == nil {
 		previous = active.ModelVersion
+	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+		// 台账查询失败不能吞掉后继续 reload：否则会在不知道当前现役的情况下切走，
+		// 后续 verify/补偿都失去基准。
+		fail(c, 503, 50000, "台账查询失败，未做切换："+err.Error())
+		return
+	}
+	running, err := s.readRuntimeModel(ctx)
+	if err != nil {
+		fail(c, 502, 50201, "无法核对当前运行模型，未做切换："+err.Error())
+		return
+	}
+	if previous != "" && running != previous {
+		fail(c, 409, 40901, fmt.Sprintf("台账现役为 %s，推理服务实际运行 %s；请先人工核对，未做切换", previous, running))
+		return
 	}
 	if err := s.reloadModel(ctx, version); err != nil {
 		fail(c, 502, 50201, "切换失败，已保留原模型："+err.Error())
+		return
+	}
+	if err := s.verifyRuntimeModel(ctx, version); err != nil {
+		fallback := previous
+		if fallback == "" {
+			fallback = running
+		}
+		note := s.restoreRuntimeModel(ctx, fallback)
+		fail(c, 502, 50201, "切换后核对运行模型失败，台账未改动；"+note+"："+err.Error())
 		return
 	}
 	now := time.Now().UTC()
@@ -1214,7 +1305,12 @@ func (s *Server) predictionQualityTrial(c *gin.Context) {
 		Updates(map[string]any{
 			"status": "trial", "trial_started_at": now, "previous_version": nullableString(previous),
 		}).Error; err != nil {
-		fail(c, 503, 50000, "model trial failed")
+		fallback := previous
+		if fallback == "" {
+			fallback = running
+		}
+		note := s.restoreRuntimeModel(ctx, fallback)
+		fail(c, 503, 50000, "运行模型已切到 "+version+"，但台账写入失败；"+note+"。系统不会自动重试，请核对后再操作")
 		return
 	}
 	ok(c, gin.H{
@@ -1223,9 +1319,14 @@ func (s *Server) predictionQualityTrial(c *gin.Context) {
 	})
 }
 
-// predictionQualityConfirm 试用期满后转正；未满 24 小时直接拒绝并给出剩余时间。
+// predictionQualityConfirm 试用期满后转正；转正前必须核对运行版本仍是试用版本，
+// 避免把台账转正到实际没在跑的模型。未满 24 小时直接拒绝并给出剩余时间。
 func (s *Server) predictionQualityConfirm(c *gin.Context) {
 	version := c.Param("version")
+	if !s.lockModelSwitch(c) {
+		return
+	}
+	defer s.modelSwitch.Unlock()
 	ctx := c.Request.Context()
 	var target model.ModelRegistry
 	if err := s.db.WithContext(ctx).Where("model_version = ?", version).First(&target).Error; err != nil {
@@ -1239,6 +1340,10 @@ func (s *Server) predictionQualityConfirm(c *gin.Context) {
 	elapsed := time.Since(*target.TrialStartedAt)
 	if elapsed < trialHours*time.Hour {
 		fail(c, 409, 40902, fmt.Sprintf("试用未满 %d 小时，还需 %.1f 小时", trialHours, (trialHours*time.Hour-elapsed).Hours()))
+		return
+	}
+	if err := s.verifyRuntimeModel(ctx, version); err != nil {
+		fail(c, 409, 40901, "运行模型与试用版本不一致，未转正："+err.Error())
 		return
 	}
 	var actor struct {
@@ -1256,15 +1361,20 @@ func (s *Server) predictionQualityConfirm(c *gin.Context) {
 			Updates(map[string]any{"status": "active", "promoted_at": now, "promoted_by": actor.Username}).Error
 	})
 	if err != nil {
-		fail(c, 503, 50000, "model confirm failed")
+		fail(c, 503, 50000, "台账写入失败，版本仍为试用中；运行模型未改动，请核对后再操作")
 		return
 	}
 	ok(c, gin.H{"model_version": version, "status": "active", "promoted_at": now})
 }
 
-// predictionQualityRollback 把试用版本退回上一版：reload 回 previous 成功后才改台账。
+// predictionQualityRollback 把试用版本退回上一版：先核对运行模型确实是该试用版本，
+// 再 reload 回 previous 并核对，成功后才改台账。DB 写失败时只补偿一次运行时。
 func (s *Server) predictionQualityRollback(c *gin.Context) {
 	version := c.Param("version")
+	if !s.lockModelSwitch(c) {
+		return
+	}
+	defer s.modelSwitch.Unlock()
 	ctx := c.Request.Context()
 	var target model.ModelRegistry
 	if err := s.db.WithContext(ctx).Where("model_version = ?", version).First(&target).Error; err != nil {
@@ -1279,9 +1389,18 @@ func (s *Server) predictionQualityRollback(c *gin.Context) {
 		fail(c, 409, 40901, "没有可回退的版本")
 		return
 	}
+	if err := s.verifyRuntimeModel(ctx, version); err != nil {
+		fail(c, 409, 40901, "运行模型不是试用版本，未回退："+err.Error())
+		return
+	}
 	previous := *target.PreviousVersion
 	if err := s.reloadModel(ctx, previous); err != nil {
 		fail(c, 502, 50201, "回退失败，当前模型未改动："+err.Error())
+		return
+	}
+	if err := s.verifyRuntimeModel(ctx, previous); err != nil {
+		note := s.restoreRuntimeModel(ctx, version)
+		fail(c, 502, 50201, "回退后核对运行模型失败，台账未改动；"+note+"："+err.Error())
 		return
 	}
 	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
@@ -1292,7 +1411,8 @@ func (s *Server) predictionQualityRollback(c *gin.Context) {
 		return tx.Model(&model.ModelRegistry{}).Where("id = ?", target.ID).
 			Updates(map[string]any{"status": "candidate", "trial_started_at": nil}).Error
 	}); err != nil {
-		fail(c, 503, 50000, "model rollback failed")
+		note := s.restoreRuntimeModel(ctx, version)
+		fail(c, 503, 50000, "运行模型已回退到 "+previous+"，但台账写入失败；"+note+"。系统不会自动重试，请核对后再操作")
 		return
 	}
 	ok(c, gin.H{"model_version": version, "status": "candidate", "rolled_back_to": previous})
@@ -1334,6 +1454,16 @@ type operationsQualityRow struct {
 	LeadP90     float64 `gorm:"column:lead_p90"`
 }
 
+// operationsFalseAlarmEventRow 是“误报事件”口径：把相邻高分窗口合并成事件后的统计。
+// false_alarm_events 是“不含任何真实故障成员的合并事件”数；event_windows 是所有高分窗口数；
+// events_with_fault 是含故障成员的事件数；events 是合并后事件总数。
+type operationsFalseAlarmEventRow struct {
+	Events             int64 `gorm:"column:events"`
+	EventWindows       int64 `gorm:"column:event_windows"`
+	EventsWithFault    int64 `gorm:"column:events_with_fault"`
+	FalseAlarmEvents   int64 `gorm:"column:false_alarm_events"`
+}
+
 // predictionQualityOperations 是值班视角的质量视图。
 //
 // 原有 summary 按预测记录算 precision/recall，值班人员拿到的是 0.43 这样的数字，
@@ -1345,25 +1475,38 @@ func (s *Server) predictionQualityOperations(c *gin.Context) {
 		fail(c, 400, 40001, "invalid days")
 		return
 	}
-	// 回看窗口右端不设上限：已结算的预测都在窗口内，未结算的还没有真值，自然不进统计。
-	start := time.Now().Add(-time.Duration(days) * 24 * time.Hour).UnixMilli()
+	// 右端固定为「已成熟」的窗口，避免把还没走完 1 小时的标签算进来。
+	now := time.Now()
+	start := now.Add(-time.Duration(days) * 24 * time.Hour).UnixMilli()
 	if qualityEpochMS > start {
 		start = qualityEpochMS
 	}
+	closed := now.Add(-time.Duration(predictionWindowMS) * time.Millisecond).UnixMilli()
+	where, args := qualityStationFilter(c,
+		"window_end_ms >= ? AND window_end_ms <= ? AND label_rule = ?",
+		[]any{start, closed, qualityLabelRule})
+	where, version, args, err := s.qualityVersionFilter(c.Request.Context(), c, where, args)
+	if err != nil {
+		fail(c, 503, 50000, "prediction quality query failed")
+		return
+	}
 	var row operationsQualityRow
-	// 提前量取「每个故障批次之前最早的一条 high 预测」：更晚的预测不能算提前量，
-	// 多条同批预测只留一条，否则报得越勤看起来越提前。
+	// 提前量只看「同一故障批次的 1 小时标签」：更晚的预测不能算提前量，
+	// 更早的 60–120 分钟报警不属于本目标，不能被算成“提前发现”。
 	err = s.db.WithContext(c.Request.Context()).Raw(`WITH base AS (
 			SELECT device_id, window_end_ms, predicted_high, actual_fault, fault_onset_ms
-			FROM prediction_outcomes WHERE window_end_ms >= ?
+			FROM prediction_outcomes WHERE `+where+`
 		),
 		pairs AS (
-			SELECT DISTINCT device_id, fault_onset_ms FROM base WHERE fault_onset_ms IS NOT NULL
+			SELECT DISTINCT device_id, fault_onset_ms FROM base
+			WHERE actual_fault AND fault_onset_ms IS NOT NULL
 		),
 		leads AS (
 			SELECT p.fault_onset_ms,
 				(SELECT min(b.window_end_ms) FROM base AS b
-				 WHERE b.device_id = p.device_id AND b.window_end_ms < p.fault_onset_ms
+				 WHERE b.device_id = p.device_id AND b.actual_fault
+					AND b.fault_onset_ms = p.fault_onset_ms
+					AND b.window_end_ms < p.fault_onset_ms
 					AND b.predicted_high) AS first_high_ms
 			FROM pairs AS p
 		),
@@ -1387,7 +1530,7 @@ func (s *Server) predictionQualityOperations(c *gin.Context) {
 		SELECT totals.devices, totals.samples, totals.false_alarms,
 			faults.faults, faults.captured,
 			lead_stats.lead_samples, lead_stats.lead_p50, lead_stats.lead_p90
-		FROM totals, faults, lead_stats`, start).Scan(&row).Error
+		FROM totals, faults, lead_stats`, args...).Scan(&row).Error
 	if err != nil {
 		fail(c, 503, 50000, "prediction quality query failed")
 		return
@@ -1397,6 +1540,55 @@ func (s *Server) predictionQualityOperations(c *gin.Context) {
 	if row.Devices > 0 {
 		perDeviceDay = math.Round(float64(row.FalseAlarms)/float64(row.Devices)/float64(days)*100) / 100
 	}
+	var versionPtr *string
+	if version != "" {
+		versionPtr = &version
+	}
+	// 误报事件：按设备+模型版本，相邻高分窗口若 window_end_ms 间隔 <=10 分钟则合并为一个事件；
+	// 单个高分窗口也算一次事件。事件中只要有任一 window_1h 且已成熟的成员窗口对应真实故障，
+	// 就不算误报，否则计为一次误报事件。只统计高分窗口（predicted_high），
+	// 底层 where 已按 window_end_ms 区间+站点+版本限定，走设备时间索引，不做全表扫。
+	// 注意：这是“事件”口径，不是窗口口径；窗口误报数见 false_alarms，二者不可混称。
+	var ev operationsFalseAlarmEventRow
+	err = s.db.WithContext(c.Request.Context()).Raw(`WITH high AS (
+			SELECT device_id, model_version, window_end_ms, actual_fault
+			FROM prediction_outcomes WHERE predicted_high AND `+where+`
+		),
+		numbered AS (
+			SELECT device_id, model_version, window_end_ms, actual_fault,
+				CASE WHEN window_end_ms - lag(window_end_ms)
+					OVER (PARTITION BY device_id, model_version ORDER BY window_end_ms) > 600000
+					THEN 1 ELSE 0 END AS new_event
+			FROM high
+		),
+		events AS (
+			SELECT device_id, model_version,
+				sum(new_event) OVER (PARTITION BY device_id, model_version ORDER BY window_end_ms) AS grp,
+				actual_fault
+			FROM numbered
+		),
+		event_stats AS (
+			SELECT device_id, model_version, grp,
+				bool_or(actual_fault) AS has_fault,
+				count(*)::bigint AS window_count
+			FROM events GROUP BY device_id, model_version, grp
+		)
+		SELECT count(*)::bigint AS events,
+			coalesce(sum(window_count), 0)::bigint AS event_windows,
+			count(*) FILTER (WHERE has_fault)::bigint AS events_with_fault,
+			count(*) FILTER (WHERE NOT has_fault)::bigint AS false_alarm_events
+		FROM event_stats`, args...).Scan(&ev).Error
+	if err != nil {
+		fail(c, 503, 50000, "prediction quality query failed")
+		return
+	}
+
+	// 误报事件按设备日摊薄（与窗口口径的 false_alarms_per_device_day 并列，不可混用）。
+	falseAlarmEventsPerDeviceDay := 0.0
+	if row.Devices > 0 {
+		falseAlarmEventsPerDeviceDay = math.Round(float64(ev.FalseAlarmEvents)/float64(row.Devices)/float64(days)*100) / 100
+	}
+
 	ok(c, gin.H{
 		"days": days, "devices": row.Devices, "samples": row.Samples,
 		"faults": row.Faults, "captured": row.Captured, "false_alarms": row.FalseAlarms,
@@ -1404,6 +1596,12 @@ func (s *Server) predictionQualityOperations(c *gin.Context) {
 		"lead_minutes_p50":            int64(math.Round(row.LeadP50)),
 		"lead_minutes_p90":            int64(math.Round(row.LeadP90)),
 		"lead_samples":                row.LeadSamples,
+		"model_version":               versionPtr,
+		"false_alarm_events":          ev.FalseAlarmEvents,
+		"false_alarm_events_per_device_day": falseAlarmEventsPerDeviceDay,
+		"false_alarm_event_windows":   ev.EventWindows,
+		"false_alarm_events_with_fault": ev.EventsWithFault,
+		"false_alarm_event_total":     ev.Events,
 	})
 }
 
@@ -1428,6 +1626,7 @@ func (s *Server) detectDistributionDrift(ctx context.Context) error {
 	now := time.Now()
 	recentStart := now.Add(-driftL1ObserveWindow)
 	baselineStart := recentStart.AddDate(0, 0, -driftL1BaselineDays)
+	closed := now.Add(-time.Duration(predictionWindowMS) * time.Millisecond).UnixMilli()
 	var recent struct {
 		ProbMean  float64 `gorm:"column:prob_mean"`
 		HighRatio float64 `gorm:"column:high_ratio"`
@@ -1436,7 +1635,8 @@ func (s *Server) detectDistributionDrift(ctx context.Context) error {
 	if err := s.db.WithContext(ctx).Raw(`SELECT coalesce(avg(probability),0) AS prob_mean,
 		coalesce(avg(CASE WHEN predicted_high THEN 1.0 ELSE 0.0 END),0) AS high_ratio,
 		count(*) AS samples
-		FROM prediction_outcomes WHERE window_end_ms >= ?`, recentStart.UnixMilli()).
+		FROM prediction_outcomes WHERE window_end_ms >= ? AND window_end_ms <= ? AND label_rule = ?`,
+		recentStart.UnixMilli(), closed, qualityLabelRule).
 		Scan(&recent).Error; err != nil {
 		return err
 	}
@@ -1453,8 +1653,8 @@ func (s *Server) detectDistributionDrift(ctx context.Context) error {
 		FROM (SELECT (to_timestamp(window_end_ms/1000.0) AT TIME ZONE 'Asia/Shanghai')::date AS day,
 			avg(probability) AS daily,
 			avg(CASE WHEN predicted_high THEN 1.0 ELSE 0.0 END) AS daily_high
-			FROM prediction_outcomes WHERE window_end_ms >= ? AND window_end_ms < ?
-			GROUP BY 1) AS t`, baselineStart.UnixMilli(), recentStart.UnixMilli()).
+			FROM prediction_outcomes WHERE window_end_ms >= ? AND window_end_ms < ? AND label_rule = ?
+			GROUP BY 1) AS t`, baselineStart.UnixMilli(), recentStart.UnixMilli(), qualityLabelRule).
 		Scan(&baseline).Error; err != nil {
 		return err
 	}
@@ -1505,7 +1705,8 @@ func (s *Server) detectMetricDrift(ctx context.Context) error {
 		ECE       *float64 `gorm:"column:ece"`
 	}
 	if err := s.db.WithContext(ctx).Raw(`SELECT samples, precision, ece FROM prediction_quality_daily
-		WHERE day >= ? AND day < ? ORDER BY day ASC`, dateOnly(recentStart), dateOnly(today.AddDate(0, 0, 1))).
+		WHERE day >= ? AND day < ? AND label_rule = ? ORDER BY day ASC`,
+		dateOnly(recentStart), dateOnly(today.AddDate(0, 0, 1)), qualityLabelRule).
 		Scan(&recent).Error; err != nil {
 		return err
 	}
@@ -1519,7 +1720,8 @@ func (s *Server) detectMetricDrift(ctx context.Context) error {
 	}
 	if err := s.db.WithContext(ctx).Raw(`SELECT coalesce(avg(precision),0) AS precision,
 		coalesce(avg(ece),0) AS ece, count(*) AS days
-		FROM prediction_quality_daily WHERE day >= ? AND day < ?`, dateOnly(baselineStart), dateOnly(baselineEnd)).
+		FROM prediction_quality_daily WHERE day >= ? AND day < ? AND label_rule = ?`,
+		dateOnly(baselineStart), dateOnly(baselineEnd), qualityLabelRule).
 		Scan(&baseline).Error; err != nil {
 		return err
 	}

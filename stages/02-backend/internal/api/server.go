@@ -61,6 +61,7 @@ type Server struct {
 	telemetry         telemetryMonitor
 	scheduler         inboxScheduler
 	snapshotMu        sync.Mutex
+	modelSwitch       sync.Mutex
 	tdCircuit         dependencyCircuit
 	snapshotTDCircuit dependencyCircuit
 	redisCircuit      dependencyCircuit

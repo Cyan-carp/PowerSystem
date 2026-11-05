@@ -65,13 +65,14 @@ type analysisResult struct {
 
 // qualityAnalysisFacts 汇总喂给模型的只读事实，字段名与前端表格一致，便于人工核对。
 type qualityAnalysisFacts struct {
-	Kind     string           `json:"kind"`
-	Subject  string           `json:"subject"`
-	EpochMS  int64            `json:"epoch_ms"`
-	Hours    []hourStat       `json:"hours,omitempty"`
-	Drift    []map[string]any `json:"drift,omitempty"`
-	Trial    *trialFacts      `json:"trial,omitempty"`
-	Baseline map[string]any   `json:"baseline,omitempty"`
+	Kind         string           `json:"kind"`
+	Subject      string           `json:"subject"`
+	ModelVersion string           `json:"model_version,omitempty"`
+	EpochMS      int64            `json:"epoch_ms"`
+	Hours        []hourStat       `json:"hours,omitempty"`
+	Drift        []map[string]any `json:"drift,omitempty"`
+	Trial        *trialFacts      `json:"trial,omitempty"`
+	Baseline     map[string]any   `json:"baseline,omitempty"`
 }
 
 type hourStat struct {
@@ -92,11 +93,28 @@ type trialFacts struct {
 	ElapsedHours  string `json:"elapsed_hours"`
 }
 
-// collectAnalysisFacts 取事实。只统计 qualityEpochMS 之后、已结算的样本。
+// collectAnalysisFacts 取事实。只统计 qualityEpochMS 之后、已成熟且按 1 小时规则标注的样本。
 func (s *Server) collectAnalysisFacts(ctx context.Context, kind string) (qualityAnalysisFacts, error) {
 	facts := qualityAnalysisFacts{Kind: kind, EpochMS: qualityEpochMS}
+	closed := time.Now().Add(-time.Duration(predictionWindowMS) * time.Millisecond).UnixMilli()
 	switch kind {
 	case "drift":
+		where := "window_end_ms >= ? AND window_end_ms <= ? AND label_rule = ?"
+		args := []any{qualityEpochMS, closed, qualityLabelRule}
+		// 与页面 KPI 一致：默认只解释区间内主导版本，避免多版本混算。
+		var version struct {
+			ModelVersion string `gorm:"column:model_version"`
+		}
+		if err := s.db.WithContext(ctx).Raw(`SELECT model_version FROM prediction_outcomes
+			WHERE `+where+` GROUP BY model_version ORDER BY count(*) DESC, model_version ASC LIMIT 1`, args...).
+			Scan(&version).Error; err != nil {
+			return facts, err
+		}
+		if version.ModelVersion != "" {
+			where += " AND model_version = ?"
+			args = append(args, version.ModelVersion)
+			facts.ModelVersion = version.ModelVersion
+		}
 		var rows []struct {
 			Hour    string
 			TP      int64
@@ -111,8 +129,8 @@ func (s *Server) collectAnalysisFacts(ctx context.Context, kind string) (quality
 			       sum(CASE WHEN NOT predicted_high AND actual_fault THEN 1 ELSE 0 END) AS fn,
 			       count(*) AS samples
 			FROM prediction_outcomes
-			WHERE window_end_ms >= ?
-			GROUP BY 1 ORDER BY 1`, qualityEpochMS).Scan(&rows).Error
+			WHERE `+where+`
+			GROUP BY 1 ORDER BY 1`, args...).Scan(&rows).Error
 		if err != nil {
 			return facts, err
 		}
