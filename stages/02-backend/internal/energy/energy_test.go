@@ -155,3 +155,30 @@ func TestRebuildSQLKeepsDaySliceIndexAndExistenceProbe(t *testing.T) {
 		t.Fatalf("uncertainty probe lost the processed-only guard: %s", uncertainExistsSQL)
 	}
 }
+
+// 排队键改成「上一次成功重建的时间」，并把历史日压到一个槽位。两条都是
+// 改回去就会重新长出长尾的形状（2026-11-05 生产实测 39 台落后 11–42 分钟）。
+func TestDirtySelectionOrdersByLastRebuildAndHoldsHistoryToOneSlot(t *testing.T) {
+	for _, query := range []string{dirtyRecentSQL, dirtyHistorySQL} {
+		if !strings.Contains(query, "ORDER BY COALESCE(d.updated_at,'-infinity'::timestamptz),e.changed_at") {
+			t.Fatalf("selection lost the last-rebuild ordering: %s", query)
+		}
+		if !strings.Contains(query, "LEFT JOIN energy_daily d ON d.device_id=e.device_id AND d.day=e.day") {
+			t.Fatalf("selection lost the energy_daily join: %s", query)
+		}
+	}
+	if !strings.Contains(dirtyRecentSQL, "e.day>=((now() AT TIME ZONE 'Asia/Shanghai')::date - 1)") {
+		t.Fatalf("recent window changed: %s", dirtyRecentSQL)
+	}
+	if !strings.Contains(dirtyHistorySQL, "e.day<((now() AT TIME ZONE 'Asia/Shanghai')::date - 1)") {
+		t.Fatalf("history window changed: %s", dirtyHistorySQL)
+	}
+	for _, tc := range []struct{ limit, recent, history int }{
+		{12, 11, 1}, {2, 1, 1}, {1, 1, 0}, {0, 0, 0},
+	} {
+		recent, history := dirtyQuota(tc.limit)
+		if recent != tc.recent || history != tc.history {
+			t.Fatalf("quota(%d)=%d/%d want %d/%d", tc.limit, recent, history, tc.recent, tc.history)
+		}
+	}
+}

@@ -131,16 +131,69 @@ AND ts_ms>=? AND ts_ms<=? ORDER BY ts_ms,id`
 // 的行（当天通常几百条），IS DISTINCT FROM 保留原判据不变。
 const uncertainExistsSQL = `SELECT EXISTS(SELECT 1 FROM telemetry_inbox WHERE device_id=? AND ts_ms>=? AND ts_ms<=? AND processed_at IS NOT NULL AND business_state IS DISTINCT FROM 'success')`
 
+// dirtyRecentSQL selects today's and yesterday's pending device-days, oldest
+// rebuild first.
+//
+// The sort key deliberately is NOT changed_at. Every incoming sample re-marks
+// its device-day dirty and stamps changed_at again, so "least recently changed"
+// degenerates into "published earliest in the current sample cycle": a fixed
+// handful of devices is rebuilt over and over while the rest stay at the tail.
+// Measured in production on 2026-11-05: 39 devices had samples processed to the
+// current second while their daily aggregate was stuck 11-42 minutes behind,
+// with the worker still taking only 12 rows every 10 seconds. Ordering by
+// energy_daily.updated_at makes the queue reflect "how long since this device
+// was last refreshed", which restores a fair rotation.
+//
+// A device-day that was never rebuilt has no energy_daily row and sorts first
+// via -infinity; that is the correct priority for it.
+const dirtyRecentSQL = `SELECT e.device_id,e.day::text AS day,e.changed_at
+FROM energy_dirty_days e
+LEFT JOIN energy_daily d ON d.device_id=e.device_id AND d.day=e.day
+WHERE e.day>=((now() AT TIME ZONE 'Asia/Shanghai')::date - 1)
+ORDER BY COALESCE(d.updated_at,'-infinity'::timestamptz),e.changed_at
+LIMIT ?`
+
+// dirtyHistorySQL holds back the days before yesterday to a single slot per
+// round. Days such as 11-02/11-03 that never landed a row get re-marked by the
+// historical replay forever and are the most expensive to rebuild, so letting
+// them order freely lets them camp at the head of the queue and starve today.
+const dirtyHistorySQL = `SELECT e.device_id,e.day::text AS day,e.changed_at
+FROM energy_dirty_days e
+LEFT JOIN energy_daily d ON d.device_id=e.device_id AND d.day=e.day
+WHERE e.day<((now() AT TIME ZONE 'Asia/Shanghai')::date - 1)
+ORDER BY COALESCE(d.updated_at,'-infinity'::timestamptz),e.changed_at
+LIMIT ?`
+
+// dirtyQuota splits one round between recent and historical days.
+func dirtyQuota(limit int) (recent, history int) {
+	if limit <= 1 {
+		return limit, 0
+	}
+	return limit - 1, 1
+}
+
 // RebuildPending refreshes a bounded number of dirty days. A concurrent new
 // sample keeps its dirty marker so the next pass corrects the daily total.
 // One slow or failing day must not starve the rest of the queue: completed
 // days are already committed by rebuildDay, so the round continues and the
 // first error is reported afterwards.
 func RebuildPending(ctx context.Context, db *gorm.DB, limit int) (int, error) {
-	var days []dirtyDay
-	if err := db.WithContext(ctx).Raw(`SELECT device_id,day::text AS day,changed_at
-FROM energy_dirty_days ORDER BY changed_at LIMIT ?`, limit).Scan(&days).Error; err != nil {
-		return 0, err
+	recentLimit, historyLimit := dirtyQuota(limit)
+	days := make([]dirtyDay, 0, limit)
+	// Recent days go first: they are what the page shows as today's energy.
+	if recentLimit > 0 {
+		var recent []dirtyDay
+		if err := db.WithContext(ctx).Raw(dirtyRecentSQL, recentLimit).Scan(&recent).Error; err != nil {
+			return 0, err
+		}
+		days = append(days, recent...)
+	}
+	if historyLimit > 0 {
+		var history []dirtyDay
+		if err := db.WithContext(ctx).Raw(dirtyHistorySQL, historyLimit).Scan(&history).Error; err != nil {
+			return 0, err
+		}
+		days = append(days, history...)
 	}
 	rebuilt := 0
 	var firstErr error

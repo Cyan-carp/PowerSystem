@@ -480,6 +480,12 @@ const telemetryDependencyBudget = time.Second
 const restoreBudget = 30 * time.Second
 const shutdownBudget = 5 * time.Second
 
+// energyRoundBudget bounds one daily-energy rebuild round. It used to reuse
+// inboxTransactionBudget, which is shared by eleven call sites including MQTT
+// reception and every inbox transaction, so widening it there would loosen the
+// whole ingest chain. Keep this separate even while the value stays 3s.
+const energyRoundBudget = 3 * time.Second
+
 // inboxHeadProbeSQL 在事务内复核「刚锁住的这条还是不是该设备的队头」。
 // 方向必须与 inboxHeads 的取法一致：那边取每设备最新一条（id DESC），这里也必须
 // 取最新，否则每条都会被判成「已不是队头」而走 errInboxDeferred——那是个静默
@@ -682,12 +688,33 @@ func (s *Server) authorize(c *gin.Context) {
 func (s *Server) energyWorker(ctx context.Context) {
 	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
+	// Spending the whole round budget is this worker's normal ending, not a
+	// failure: every day that finished is already committed and the rest keeps
+	// its dirty marker for the next round. Logging it as warn every 10 seconds
+	// buried real errors, so the budget case is recorded at most once a minute
+	// with the numbers needed to tell throughput from backlog.
+	var lastBudgetLog time.Time
 	for {
-		round, finish := context.WithTimeout(ctx, inboxTransactionBudget)
-		_, err := energy.RebuildPending(round, s.db, 12)
+		round, finish := context.WithTimeout(ctx, energyRoundBudget)
+		started := time.Now()
+		rebuilt, err := energy.RebuildPending(round, s.db, 12)
+		// finish() discards the deadline signal; read it first.
+		budget := round.Err()
 		finish()
 		if err != nil && ctx.Err() == nil {
-			s.log.Warn("energy_rebuild_failed", zap.Error(err))
+			fields := []zap.Field{
+				zap.Int("rebuilt", rebuilt),
+				zap.Int64("elapsed_ms", time.Since(started).Milliseconds()),
+				zap.Error(err),
+			}
+			if errors.Is(budget, context.DeadlineExceeded) {
+				if time.Since(lastBudgetLog) >= time.Minute {
+					lastBudgetLog = time.Now()
+					s.log.Info("energy_rebuild_incomplete", fields...)
+				}
+			} else {
+				s.log.Warn("energy_rebuild_failed", fields...)
+			}
 		}
 		select {
 		case <-ctx.Done():
