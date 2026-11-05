@@ -50,6 +50,13 @@ STANDARD_TIER = 'standard-fast'
 FULL_TIER = 'full'
 STANDARD_SERVICES = {'api', 'gateway', 'frontend', 'agent-rag', 'ops-agent', 'security-agent'}
 MAX_FAST_BASELINE_AGE = 86400
+# Checks a release may skip at `publish --skip`, always with a written deviation.
+# Only checks that answer "did this release stay inside its declared scope" are
+# listed. Checks that protect the ledger itself are deliberately absent: skipping
+# immutable/accepted would let the pointer describe a manifest nobody verified,
+# and skipping inspect/compose_config/final_inspect/persist would drop the only
+# record that the running stack matched the candidate at activation time.
+SKIPPABLE_GATES = ('identity', 'environment_match', 'https_wss')
 # One-off, owner-authorized deferral of the pre-deployment full backup. Only these
 # two explicitly named candidates may carry it, and only at the full tier. This is
 # not a general --skip-backup/--force switch: no other release can be named here.
@@ -1832,7 +1839,11 @@ def deploy(path, services, startup_seconds=480):
                            for service in sorted(services) if service in rows}
 
 
-def gate(path, services, before, maintenance_only=False):
+def gate(path, services, before, maintenance_only=False, skips=(), deviation=None):
+    skips = set(skips)
+    require(not (skips - set(SKIPPABLE_GATES)),
+            'unsupported_gate_skip:' + ','.join(sorted(skips - set(SKIPPABLE_GATES))))
+    require(not skips or (deviation or '').strip(), 'deviation_text_required')
     with track('gate.immutable'):
         m = immutable(path)
     with track('gate.inspect'):
@@ -1841,23 +1852,27 @@ def gate(path, services, before, maintenance_only=False):
     require(set(rows) == set(before), 'service_set_changed')
     with track('gate.identity') as span:
         span['services'] = len(rows)
-        for service, row in rows.items():
-            require(row['Image'] == m['images'][service], 'unexpected_image:' + service)
-            if service not in services:
-                expected = before[service]
-                actual = states({service: row})[service]
-                keys = ('id', 'image', 'restarts') if service == 'ops-executor' else expected.keys()
-                require(all(actual[k] == expected[k] for k in keys),
-                        'unrelated_service_changed:' + service)
+        span['skipped'] = 'identity' in skips
+        if 'identity' not in skips:
+            for service, row in rows.items():
+                require(row['Image'] == m['images'][service], 'unexpected_image:' + service)
+                if service not in services:
+                    expected = before[service]
+                    actual = states({service: row})[service]
+                    keys = ('id', 'image', 'restarts') if service == 'ops-executor' else expected.keys()
+                    require(all(actual[k] == expected[k] for k in keys),
+                            'unrelated_service_changed:' + service)
     with track('gate.compose_config'):
         config = json.loads(command(compose(path) + ['config', '--format', 'json']))
         validate(config)
-    with track('gate.environment_match'):
-        for service in rows:
-            actual = dict(v.split('=', 1) for v in rows[service]['Config']['Env'])
-            require(all(actual.get(k) == str(v) for k, v in
-                        config['services'][service].get('environment', {}).items()),
-                    'runtime_environment_mismatch:' + service)
+    with track('gate.environment_match') as span:
+        span['skipped'] = 'environment_match' in skips
+        if 'environment_match' not in skips:
+            for service in rows:
+                actual = dict(v.split('=', 1) for v in rows[service]['Config']['Env'])
+                require(all(actual.get(k) == str(v) for k, v in
+                            config['services'][service].get('environment', {}).items()),
+                        'runtime_environment_mismatch:' + service)
     with track('gate.https_wss') as span:
         # Per-entry timings come from gate.py when that frozen copy supports them.
         evidence = path / ('gate-timing-' + str(time.time_ns()) + '.json')
@@ -1866,7 +1881,11 @@ def gate(path, services, before, maintenance_only=False):
         # original full checks. No old candidate becomes weaker after an update.
         gate_env['POWERSYSTEM_GATE_PROFILE'] = ('standard' if
             m.get('backup_tier') == STANDARD_TIER else 'full')
-        if not maintenance_only:
+        if 'https_wss' in skips:
+            # Owner-accepted deviation: the public HTTPS/WSS acceptance is not run
+            # for this release. Recorded in the acceptance receipt, never silent.
+            span['skipped'] = True
+        elif not maintenance_only:
             command([sys.executable, str(path / 'gate.py'), '/etc/powersystem/demo-password'],
                     path / ('https-wss-' + str(time.time_ns()) + '.log'), env=gate_env)
         else:
@@ -1889,8 +1908,11 @@ def gate(path, services, before, maintenance_only=False):
                             'kind': ('maintenance_state_reconciliation' if maintenance_only else
                                      'automatic_https_wss_gate'), 'accepted_at': now(),
                             'tests_rerun': not maintenance_only,
-                            'profile': ('maintenance' if maintenance_only else
-                                'standard' if m.get('backup_tier') == STANDARD_TIER else 'full')})
+                            'skipped': sorted(skips),
+                            'deviation': (deviation or '').strip() or None,
+                            'profile': ('deviation' if skips else
+                                        'maintenance' if maintenance_only else
+                                        'standard' if m.get('backup_tier') == STANDARD_TIER else 'full')})
     return name
 
 
@@ -2054,7 +2076,15 @@ def publish(a):
         with track('publish.deploy'):
             deploy(candidate, services)
         with track('publish.gate'):
-            accepted = gate(candidate, services, transaction['before'])
+            if getattr(a, 'skip', None):
+                write(candidate / ('deviation-' + str(time.time_ns()) + '.json'),
+                      {'skipped': sorted(set(a.skip)), 'deviation': a.deviation,
+                       'release': candidate.name, 'declared_at': now(),
+                       'manifest_sha256': digest(m)})
+                print('deviation: skipping ' + ','.join(sorted(set(a.skip))), flush=True)
+            accepted = gate(candidate, services, transaction['before'],
+                            skips=getattr(a, 'skip', ()) or (),
+                            deviation=getattr(a, 'deviation', None))
         with track('publish.planned_silence_cleanup'):
             telemetry_monitoring().cleanup_silence(telemetry_context(), candidate)
         with track('publish.activate'):
@@ -2198,6 +2228,10 @@ def main():
     activate = sub.add_parser('publish')
     activate.add_argument('--id', required=True)
     activate.add_argument('--backup')
+    activate.add_argument('--skip', action='append', default=[], choices=SKIPPABLE_GATES,
+                          help='owner-accepted deviation for this release; requires --deviation')
+    activate.add_argument('--deviation',
+                          help='who accepted the skip and why; written into the acceptance receipt')
     resume_telemetry = sub.add_parser('resume-telemetry')
     resume_telemetry.add_argument('--id', required=True)
     resume_telemetry.add_argument('--attempt', required=True, choices=('r1', 'r2', 'r3'))
