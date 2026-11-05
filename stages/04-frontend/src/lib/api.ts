@@ -199,6 +199,7 @@ export interface Summary {
   retained_energy_provisional: boolean
   energy_start_ms: number | null
   energy_updated_at: string | null
+  energy_oldest_at: string | null
 }
 
 /** GET /dashboard/overview 的 stations[] —— 每站是 summary 的超集 */

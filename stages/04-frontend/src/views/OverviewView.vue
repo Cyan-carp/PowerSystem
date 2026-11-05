@@ -107,6 +107,18 @@ const energy = computed(() => {
     : { value: n(value, 0), unit: 'kWh' }
 })
 
+/* 日聚合是逐设备重算的，「截至」取当天最旧的一台：用最新那台会把落后设备藏起来。 */
+const energyClock = computed(() => {
+  const iso = summary.value?.energy_oldest_at
+  if (!iso) return ''
+  return new Date(iso).toLocaleTimeString('zh-CN', {
+    timeZone: 'Asia/Shanghai',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  })
+})
+
 const stats = computed(() => {
   const s = summary.value
   return [
@@ -117,6 +129,7 @@ const stats = computed(() => {
       label: '实时功率',
       value: s ? n(s.current_power_kw, 1) : '—',
       unit: 'kW',
+      note: '',
       to: '',
     },
     {
@@ -126,6 +139,7 @@ const stats = computed(() => {
       label: '设备在线',
       value: s ? n(s.online) : '—',
       unit: s ? `/ ${n(s.device_total)}` : '',
+      note: '',
       to: '/devices',
     },
     {
@@ -135,6 +149,7 @@ const stats = computed(() => {
       label: '今日发电量',
       value: energy.value.value,
       unit: energy.value.unit,
+      note: energyClock.value ? `数据截至 ${energyClock.value}` : '',
       to: '',
     },
     {
@@ -144,6 +159,7 @@ const stats = computed(() => {
       label: '活动告警',
       value: s ? n(s.active_alarms) : '—',
       unit: '条',
+      note: '',
       to: '/alarms?status=unhandled',
     },
   ]
@@ -269,7 +285,7 @@ const exportCsv = () => {
           <span class="stat-icon" :class="`t-${item.tone}`">
             <Icon :name="item.icon" :size="27" :stroke="1.85" />
           </span>
-          <span class="stat-label">{{ item.label }}</span>
+          <span class="stat-label">{{ item.label }}<em v-if="item.note" class="stat-note">{{ item.note }}</em></span>
           <span class="stat-value num">
             {{ item.value }}<em>{{ item.unit }}</em>
           </span>
@@ -505,6 +521,17 @@ const exportCsv = () => {
   font-weight: 500;
   color: var(--ink-2);
   letter-spacing: 0.01em;
+}
+
+/* 只挂在「今日发电量」上：数据是逐设备重算的，标出截至时刻免得被当成实时值 */
+.stat-note {
+  margin-left: 6px;
+  font-style: normal;
+  font-size: 11.5px;
+  font-weight: 400;
+  color: var(--ink-3);
+  letter-spacing: 0;
+  white-space: nowrap;
 }
 
 .stat-value {

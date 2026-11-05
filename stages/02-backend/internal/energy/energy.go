@@ -28,7 +28,12 @@ type Summary struct {
 	RetainedKWh         *float64
 	StartMS             *int64
 
-	UpdatedAt *time.Time
+	// UpdatedAt is the newest rebuild across all device-days; OldestTodayAt is
+	// the oldest rebuild among today's rows. The page shows the oldest one:
+	// a "data as of" label taken from the newest row would look fresh even
+	// while one device is hours behind, which is exactly when it matters.
+	UpdatedAt     *time.Time
+	OldestTodayAt *time.Time
 }
 
 func dayFor(ts int64) string { return time.UnixMilli(ts).In(china).Format("2006-01-02") }
@@ -315,10 +320,11 @@ func summarizeWindow(samples []Sample, start, end int64) windowSummary {
 
 func ReadSummary(ctx context.Context, db *gorm.DB, now time.Time) (Summary, error) {
 	var todayValue, retainedValue sql.NullFloat64
-	var updated sql.NullTime
+	var updated, oldestToday sql.NullTime
 	today := now.In(china).Format("2006-01-02")
 	if err := db.WithContext(ctx).Raw(`SELECT SUM(CASE WHEN day=? AND segments_count>0 THEN kwh END),
-SUM(CASE WHEN segments_count>0 THEN kwh END), MAX(updated_at) FROM energy_daily`, today).Row().Scan(&todayValue, &retainedValue, &updated); err != nil {
+SUM(CASE WHEN segments_count>0 THEN kwh END), MAX(updated_at),
+MIN(CASE WHEN day=? AND segments_count>0 THEN updated_at END) FROM energy_daily`, today, today).Row().Scan(&todayValue, &retainedValue, &updated, &oldestToday); err != nil {
 		return Summary{}, err
 	}
 	var uncertainty struct {
@@ -344,6 +350,9 @@ SUM(CASE WHEN segments_count>0 THEN kwh END), MAX(updated_at) FROM energy_daily`
 	}
 	if updated.Valid {
 		s.UpdatedAt = &updated.Time
+	}
+	if oldestToday.Valid {
+		s.OldestTodayAt = &oldestToday.Time
 	}
 	return s, nil
 }
