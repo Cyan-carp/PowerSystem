@@ -1111,7 +1111,18 @@ def compose(path):
             '--profile', 'agent']
 
 
-def immutable(path):
+def immutable(path, notes=None):
+    """Verify a frozen candidate without demanding that pruned images come back.
+
+    An image for a service this release replaces must exist locally: the new
+    container cannot be created without it, and falling back to another image
+    would silently deploy something that was never frozen. An image for a service
+    this release does not touch may be missing from the store as long as a live
+    container still runs that exact ID -- the running container keeps its rootfs,
+    so the service is not at risk. What is at risk is any later recreate of that
+    service, which will fail; that is recorded in ``notes['pruned_images']`` so the
+    acceptance receipt carries it instead of the check failing forever.
+    """
     m = read(path / 'manifest.json')
     require(m['manifest_version'] == 1, 'unknown_manifest_version')
     for name, expected in m['files'].items():
@@ -1123,10 +1134,24 @@ def immutable(path):
                 'frozen_backup_deferral_unbound')
     for name, expected in m['private_references'].items():
         require(sha(name) == expected, 'private_configuration_changed')
-    for image in m['images'].values():
-        require(ID.fullmatch(image) and
-                json.loads(command(['docker', 'image', 'inspect', image]))[0]['Id'] == image,
-                'fixed_local_image_required')
+    released = set(m.get('services') or ())
+    pruned = []
+    for service, image in m['images'].items():
+        require(ID.fullmatch(image), 'fixed_local_image_required:' + service)
+        try:
+            local = json.loads(command(['docker', 'image', 'inspect', image]))[0]['Id']
+        except (Blocked, ValueError, IndexError):
+            if service in released:
+                raise Blocked('fixed_local_image_required:' + service) from None
+            pruned.append({'service': service, 'image': image})
+            continue
+        require(local == image, 'fixed_local_image_required:' + service)
+    if pruned:
+        running = {row['Image'] for row in inspect().values()}
+        for item in pruned:
+            require(item['image'] in running, 'pruned_image_not_running:' + item['service'])
+        if notes is not None:
+            notes['pruned_images'] = pruned
     return m
 
 
@@ -1844,8 +1869,14 @@ def gate(path, services, before, maintenance_only=False, skips=(), deviation=Non
     require(not (skips - set(SKIPPABLE_GATES)),
             'unsupported_gate_skip:' + ','.join(sorted(skips - set(SKIPPABLE_GATES))))
     require(not skips or (deviation or '').strip(), 'deviation_text_required')
-    with track('gate.immutable'):
-        m = immutable(path)
+    with track('gate.immutable') as span:
+        notes = {}
+        m = immutable(path, notes)
+        span['pruned_images'] = [item['service'] for item in notes.get('pruned_images', [])]
+        if notes.get('pruned_images'):
+            print('pruned_image_accepted:'
+                  + ','.join(sorted(item['service'] for item in notes['pruned_images'])),
+                  flush=True)
     with track('gate.inspect'):
         rows = inspect()
         healthy(rows)
@@ -1910,6 +1941,7 @@ def gate(path, services, before, maintenance_only=False, skips=(), deviation=Non
                             'tests_rerun': not maintenance_only,
                             'skipped': sorted(skips),
                             'deviation': (deviation or '').strip() or None,
+                            'pruned_images': notes.get('pruned_images', []),
                             'profile': ('deviation' if skips else
                                         'maintenance' if maintenance_only else
                                         'standard' if m.get('backup_tier') == STANDARD_TIER else 'full')})
@@ -2294,9 +2326,23 @@ def main():
                 actual_images = {s: row['Image'] for s, row in inspect().items()}
                 expected = (read(release(pointer['release'])/'manifest.json')['images']
                             if pointer else {})
+                # Images the manifest still points at but the store no longer has;
+                # they survive only inside their running containers.
+                local = {line.strip() for line in command(
+                    ['docker', 'image', 'ls', '-a', '--no-trunc', '--format', '{{.ID}}']
+                ).decode().split()}
+                pruned = []
+                for service, image in sorted(expected.items()):
+                    if image in local:
+                        continue
+                    try:
+                        json.loads(command(['docker', 'image', 'inspect', image]))
+                    except (Blocked, ValueError, IndexError):
+                        pruned.append({'service': service, 'image': image})
                 print(json.dumps({'active': pointer, 'pending': pending.exists(),
                                   'actual_images': actual_images,
                                   'images_match_accepted': actual_images == expected,
+                                  'pruned_images': pruned,
                                   'transaction': ({k: v for k, v in read(pending).items()
                                       if k in ('candidate', 'previous', 'services', 'started_at')}
                                       if pending.exists() else None)}))
