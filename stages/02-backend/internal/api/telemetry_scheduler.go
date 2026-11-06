@@ -13,6 +13,19 @@ import (
 )
 
 const inboxPageSize = 500
+
+// inboxWindow 是入库调度的时间窗：比这更老的消息视为过期，不再参与调度。
+// 它是「淘汰线之前的缓冲」，不是重试宽限——数据一行不删，payload 仍在表里，
+// 只是不再被选中。窗口存在的意义是让长期积压自动出局，避免队头被永远好不了
+// 的消息占住（2026-11-03 的死锁就是这么来的）。
+const inboxWindow = 7 * 24 * time.Hour
+
+// inboxPendingPredicate 同时用于取任务与事务内队头复核，两处必须一字不差。
+// 2026-11-03 只改取任务方向、漏改复核，导致每条样本都被判「已不是队头」并走
+// errInboxDeferred 静默返回，入库成功率归零 40 分钟。抽成常量是为了让两处无法漂移，
+// 并由 TestInboxPredicateSharedByHeadsAndProbe 守住。
+const inboxPendingPredicate = `processed_at IS NULL AND ts_ms>=?`
+
 const tdMissingGrace = 10 * time.Minute
 const tdMissingMinChecks = 6
 const tdMissingMaxGap = 2 * time.Minute
@@ -76,27 +89,39 @@ func retryDelay(attempt int64, base, cap time.Duration) time.Duration {
 // Heads are selected before applying retry deadlines. Never let a later row
 // bypass an unready head, even across run_id/seq resets.
 //
-// 每设备取**最新**一条（id DESC）而不是最旧一条。旧写法在积压时会饿死实时数据：
-// 2026-11-03 队列积压 891 万条，每个设备的队头都是 10-30 的消息，11-03 的新样本
-// 永远排不到，入库成功率归零、发电量日聚合成空。取最新后未处理的旧消息自然沉淀，
-// 不再阻塞实时链路。告警评估本身会按 Freshness 抑制历史样本，先新后旧不会造成误报。
-func (s *Server) inboxHeads(ctx context.Context, after, through int64, limit int) ([]model.Inbox, error) {
+// 每设备取**最旧**一条（id ASC），即先进先出。2026-11-03 曾因为积压时队头永远是
+// 10-30 的旧消息、新样本永远排不到，临时改成「最新优先」（id DESC）。最新优先救活了
+// 实时链路，但代价是每轮只取最新一条，中间的样本永远轮不到——实测会稳定留下
+// 永久空洞（2026-11-06 界上 3,827 条未处理，平均每台 26 条，且仍在缓慢增长）。
+//
+// 现在改回先进先出，由 inboxWindow 兜底：超过 7 天的消息直接不参与调度，队头
+// 不可能被「永远好不了」的旧消息占死，所以不会重演 11-03 的死锁。窗口与方向
+// 是一对——去掉窗口就不能改回 ASC，改回 DESC 就会继续漏样本。
+func (s *Server) inboxHeads(ctx context.Context, after, floor, through int64, limit int) ([]model.Inbox, error) {
 	var rows []model.Inbox
-	q := `WITH RECURSIVE heads AS ((SELECT * FROM telemetry_inbox WHERE processed_at IS NULL AND device_id>?`
-	args := []any{after}
-	if through > 0 {
-		q += ` AND device_id<=?`
-		args = append(args, through)
-	}
-	q += ` ORDER BY device_id,id DESC LIMIT 1) UNION ALL SELECT i.* FROM heads h CROSS JOIN LATERAL (SELECT * FROM telemetry_inbox WHERE processed_at IS NULL AND device_id>h.device_id`
-	if through > 0 {
-		q += ` AND device_id<=?`
-		args = append(args, through)
-	}
-	q += ` ORDER BY device_id,id DESC LIMIT 1) i) SELECT * FROM heads LIMIT ?`
-	args = append(args, limit)
+	q, args := buildInboxHeadsQuery(after, floor, through, limit)
 	err := s.db.WithContext(ctx).Raw(q, args...).Scan(&rows).Error
 	return rows, err
+}
+
+// buildInboxHeadsQuery 独立成纯函数，让测试能直接断言「取任务」与「队头复核」
+// 共享同一谓词、同一方向，而不必连数据库。
+func buildInboxHeadsQuery(after, floor, through int64, limit int) (string, []any) {
+	q := `WITH RECURSIVE heads AS ((SELECT * FROM telemetry_inbox WHERE ` + inboxPendingPredicate + ` AND device_id>?`
+	args := []any{floor, after}
+	if through > 0 {
+		q += ` AND device_id<=?`
+		args = append(args, through)
+	}
+	q += ` ORDER BY device_id,id ASC LIMIT 1) UNION ALL SELECT i.* FROM heads h CROSS JOIN LATERAL (SELECT * FROM telemetry_inbox WHERE ` + inboxPendingPredicate + ` AND device_id>h.device_id`
+	args = append(args, floor)
+	if through > 0 {
+		q += ` AND device_id<=?`
+		args = append(args, through)
+	}
+	q += ` ORDER BY device_id,id ASC LIMIT 1) i) SELECT * FROM heads LIMIT ?`
+	args = append(args, limit)
+	return q, args
 }
 func (s *Server) processPending(parent context.Context) {
 	s.processPendingBudget(parent, inboxTickBudget)
@@ -123,14 +148,18 @@ func (s *Server) processPendingBudget(parent context.Context, budget time.Durati
 	if !cursor.HistoryEnabled || cursor.HistoryParallelism < 1 || cursor.HistoryParallelism > 8 {
 		return
 	}
+	// 时间窗每轮现算，随墙钟前进，过期消息自动出局：不需要人工设界，也没有
+	// 「忘了回滚」的风险。同一轮内取任务与逐条复核共用这一个下界。
+	floor := time.Now().UTC().Add(-inboxWindow).UnixMilli()
+	s.inboxFloor.Store(floor)
 	start := cursor.LastDeviceID
-	items, err := s.inboxHeads(ctx, start, 0, inboxPageSize)
+	items, err := s.inboxHeads(ctx, start, floor, 0, inboxPageSize)
 	if err != nil {
 		s.telemetryLog("inbox_read", time.Now())
 		return
 	}
 	if len(items) < inboxPageSize && start > 0 {
-		tail, e := s.inboxHeads(ctx, 0, start, inboxPageSize-len(items))
+		tail, e := s.inboxHeads(ctx, 0, floor, start, inboxPageSize-len(items))
 		if e != nil {
 			return
 		}

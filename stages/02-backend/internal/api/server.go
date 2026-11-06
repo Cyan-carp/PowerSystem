@@ -60,6 +60,10 @@ type Server struct {
 
 	telemetry         telemetryMonitor
 	scheduler         inboxScheduler
+	// inboxFloor 是入库调度的时间窗下界（毫秒）。每轮由调度器按「现在 - inboxWindow」
+	// 重算；0 表示不设窗，行为与改动前完全一致。事务内队头复核读同一个值，
+	// 两处必须同源，否则会重演 2026-11-03 的静默丢弃。
+	inboxFloor atomic.Int64
 	snapshotMu        sync.Mutex
 	modelSwitch       sync.Mutex
 	tdCircuit         dependencyCircuit
@@ -487,11 +491,12 @@ const shutdownBudget = 5 * time.Second
 const energyRoundBudget = 3 * time.Second
 
 // inboxHeadProbeSQL 在事务内复核「刚锁住的这条还是不是该设备的队头」。
-// 方向必须与 inboxHeads 的取法一致：那边取每设备最新一条（id DESC），这里也必须
-// 取最新，否则每条都会被判成「已不是队头」而走 errInboxDeferred——那是个静默
-// 分支（不打日志、不写 business_state），表面现象是调度器照常选行、游标照常推进，
-// 但成功数长期为 0。2026-11-03 取任务方向改成最新优先后漏改这里，入库停摆 40 分钟。
-const inboxHeadProbeSQL = `SELECT id FROM telemetry_inbox WHERE device_id=? AND processed_at IS NULL ORDER BY id DESC LIMIT 1`
+// 谓词与方向都必须与 inboxHeads 一致：那边取每设备最旧一条（id ASC）并带 7 天
+// 时间窗，这里也必须一样，否则每条都会被判成「已不是队头」而走 errInboxDeferred
+// ——那是个静默分支（不打日志、不写 business_state），表面现象是调度器照常选行、
+// 游标照常推进，但成功数长期为 0。2026-11-03 取任务方向改动漏改这里，入库停摆
+// 40 分钟。谓词已抽成 inboxPendingPredicate，两处共享同一常量。
+const inboxHeadProbeSQL = `SELECT id FROM telemetry_inbox WHERE device_id=? AND ` + inboxPendingPredicate + ` ORDER BY id ASC LIMIT 1`
 
 func (s *Server) processInboxItem(parent context.Context, item model.Inbox) {
 	measured := time.Now()
@@ -520,7 +525,7 @@ func (s *Server) processInboxItem(parent context.Context, item model.Inbox) {
 			return errInboxDeferred
 		}
 		var head struct{ ID int64 }
-		if err := tx.Raw(inboxHeadProbeSQL, item.DeviceID).Scan(&head).Error; err != nil {
+		if err := tx.Raw(inboxHeadProbeSQL, item.DeviceID, s.inboxFloor.Load()).Scan(&head).Error; err != nil {
 			return err
 		}
 		if head.ID != item.ID {
