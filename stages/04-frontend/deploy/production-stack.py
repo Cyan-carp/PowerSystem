@@ -1204,11 +1204,24 @@ def freeze(name, args_path, parent, services, overrides, backup_tier=FULL_TIER,
         config = json.loads(command(args + ['config', '--format', 'json']))
         validate(config)
         span['services'] = len(config['services'])
-    require(set(rows) == set(config['services']) - {'backup-helper'}, 'project_service_set_changed')
+    declared = set(config['services']) - {'backup-helper'}
+    # A container that runs inside the compose project but is absent from the frozen
+    # configuration is not a release target and cannot become one: `compose up` has
+    # nothing to create it from. Accept it as an external service -- recorded in the
+    # manifest so the receipt says so -- instead of refusing every release because the
+    # snapshot predates it. A declared service that is not running stays fatal.
+    missing = declared - set(rows)
+    require(not missing, 'project_service_missing:' + ','.join(sorted(missing)))
+    external = sorted(set(rows) - declared)
+    external_set = set(external)
+    require(not (external_set & services),
+            'external_service_cannot_be_released:' + ','.join(sorted(external_set & services)))
     telemetry_monitoring().inherit(telemetry_context(), parent, config, rows, services)
     with track('freeze.pin_anonymous_volumes'):
         # Pin image-declared anonymous data volumes too; never silently replace them.
         for service, row in rows.items():
+            if service in external_set:
+                continue
             mounts = config['services'][service].get('volumes', [])
             targets = {mount['target'] for mount in mounts}
             for mount in row['Mounts']:
@@ -1222,10 +1235,10 @@ def freeze(name, args_path, parent, services, overrides, backup_tier=FULL_TIER,
                     mounts.append(retained)
                     config['services'][service]['volumes'] = mounts
     with track('freeze.preserve_storage'):
-        preserve_storage_and_ports(config, rows, set(rows))
+        preserve_storage_and_ports(config, rows, declared)
     with track('freeze.check_unrelated_environment'):
         for service, row in rows.items():
-            if service in services:
+            if service in services or service in external_set:
                 continue
             actual_env = dict(item.split('=', 1) for item in row['Config']['Env'])
             require(all(actual_env.get(k) == str(v) for k, v in
@@ -1314,7 +1327,9 @@ def freeze(name, args_path, parent, services, overrides, backup_tier=FULL_TIER,
              'backup_tier': backup_tier,
              'controller_sha256': sha(__file__),
              'services': sorted(services), 'origin_environment': env,
-             'images': {s: v['image'] for s, v in config['services'].items()},
+             'images': dict({s: v['image'] for s, v in config['services'].items()},
+                            **{s: rows[s]['Image'] for s in external}),
+             'external_services': external,
              'source_builds': source_builds,
              'files': {n: sha(path / n) for n in files},
              'private_references': references(config, env), 'before': states(rows)}
@@ -1899,7 +1914,7 @@ def gate(path, services, before, maintenance_only=False, skips=(), deviation=Non
     with track('gate.environment_match') as span:
         span['skipped'] = 'environment_match' in skips
         if 'environment_match' not in skips:
-            for service in rows:
+            for service in (s for s in rows if s in config['services']):
                 actual = dict(v.split('=', 1) for v in rows[service]['Config']['Env'])
                 require(all(actual.get(k) == str(v) for k, v in
                             config['services'][service].get('environment', {}).items()),
