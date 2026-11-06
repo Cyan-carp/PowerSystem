@@ -81,6 +81,23 @@ def prepare(ps, candidate, document, config, rows):
     return files
 
 
+def frozen_telemetry_source(ps, source):
+    """True only for a rendered copy frozen inside a release and still matching it."""
+    if not Path(source).is_file():
+        return False
+    try:
+        relative = Path(source).resolve().relative_to((ps.STATE_DIR / 'releases').resolve())
+    except (ValueError, OSError):
+        return False
+    parts = relative.parts
+    if len(parts) != 3 or parts[1] != 'telemetry-monitoring':
+        return False
+    manifest = ps.STATE_DIR / 'releases' / parts[0] / 'manifest.json'
+    if not manifest.is_file():
+        return False
+    return ps.read(manifest).get('files', {}).get('telemetry-monitoring/' + parts[2]) == ps.sha(source)
+
+
 def inherit(ps, parent, config, rows, services):
     if parent is None:
         return
@@ -95,8 +112,18 @@ def inherit(ps, parent, config, rows, services):
         planned = [v for v in config['services'].get(service, {}).get('volumes', []) if v['target'] == target]
         ps.require(len(expected) == len(current) == len(planned) == 1, 'telemetry_monitoring_mount_missing')
         expected, current, planned = expected[0], current[0], planned[0]
-        ps.require(expected['source'] == current['Source'], 'telemetry_monitoring_running_mount_drift')
-        planned['source'] = expected['source']
+        if expected['source'] == current['Source']:
+            planned['source'] = expected['source']
+            continue
+        # A telemetry transition re-points these mounts at a copy it rendered into
+        # its own release, and only a transition may change the rules. Accept that
+        # difference while the copy still matches the hash its release froze, and
+        # carry the source forward; never silently revert to the staged file,
+        # which can be older than what Prometheus is actually running.
+        ps.require(frozen_telemetry_source(ps, current['Source']),
+                   'telemetry_monitoring_running_mount_drift')
+        print('telemetry_mount_inherited:' + service + '=' + current['Source'], flush=True)
+        planned['source'] = current['Source']
 
 
 def endpoint(rows):

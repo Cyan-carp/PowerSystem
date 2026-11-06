@@ -1552,6 +1552,56 @@ def verify_backup_maintenance(a):
         raise
 
 
+def rebaseline(a):
+    """Re-sign the acceptance baseline from live containers, without any backup.
+
+    Owner policy for the development stage is no scheduled backups, so the only
+    sanctioned baseline move -- verify-backup, which needs an archive plus its
+    pause/resume receipt -- can never run. Without this, a single restart of a
+    backup writer pins prepare at running_baseline_drift forever.
+
+    Accepted: containers that were restarted (same id, same image, new
+    started_at). Refused: a service appearing or disappearing, or a container
+    recreated or repointed to another image -- that is a real change nobody
+    declared, and it must not be laundered into the baseline.
+    """
+    deviation = (getattr(a, 'deviation', '') or '').strip()
+    require(bool(deviation) and len(deviation) <= 400, 'deviation_text_required')
+    path, manifest = active()
+    pointer = read(STATE_DIR / 'active.json')
+    previous_name = pointer['gate_file']
+    previous = read(path / previous_name)
+    rows = inspect()
+    healthy(rows)
+    live = states(rows)
+    require(set(live) == set(previous['states']), 'rebaseline_service_set_changed')
+    restarted = []
+    for service, recorded in previous['states'].items():
+        actual = live[service]
+        for key in ('id', 'image'):
+            require(actual.get(key) == recorded.get(key),
+                    'rebaseline_identity_changed:' + service)
+        if actual != recorded:
+            restarted.append(service)
+    if not restarted:
+        print(json.dumps({'phase': a.phase, 'completed': True, 'rebaselined': False,
+                          'reason': 'baseline_already_matches', 'active': path.name}))
+        return
+    immutable(path)
+    name = 'rebaseline-' + str(time.time_ns()) + '.json'
+    write(path / name, {
+        'passed': True, 'manifest_sha256': digest(manifest), 'states': live,
+        'kind': 'owner_rebaseline_without_backup', 'accepted_at': now(),
+        'deviation': deviation, 'previous_gate_file': previous_name,
+        'previous_states': previous['states'], 'restarted_services': sorted(restarted),
+        'backup_verified': False, 'tests_rerun': False, 'profile': 'deviation'})
+    set_active(path, name, pointer.get('backup_baseline'),
+               pointer.get('published_at') or activation_time(pointer, path).isoformat())
+    print(json.dumps({'phase': a.phase, 'completed': True, 'rebaselined': True,
+                      'gate_file': name, 'active': path.name,
+                      'restarted_services': sorted(restarted)}))
+
+
 def rollback_maintenance_matches(receipt_path, path, pointer, rows):
     """A failed backup may prove resume, but cannot issue new acceptance."""
     receipt_path = Path(receipt_path).resolve()
@@ -2295,6 +2345,8 @@ def main():
     maintenance.add_argument('--backup', required=True)
     reconcile = sub.add_parser('reconcile-backup')
     reconcile.add_argument('--backup', required=True)
+    resign = sub.add_parser('rebaseline')
+    resign.add_argument('--deviation', required=True)
     resume = sub.add_parser('verify-resume')
     resume.add_argument('--receipt', required=True)
     rollback = sub.add_parser('rollback')
@@ -2408,6 +2460,7 @@ def main():
                 {'prepare': prepare, 'bootstrap': bootstrap, 'preflight': verify_candidate,
                  'verify-backup': verify_backup_maintenance,
                  'reconcile-backup': verify_backup_maintenance,
+                 'rebaseline': rebaseline,
                  'verify-resume': verify_failed_backup_resume,
                  'publish': publish}[a.phase](a)
     except Exception as error:
