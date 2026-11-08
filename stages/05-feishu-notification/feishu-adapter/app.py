@@ -27,25 +27,85 @@ def sign(timestamp: int, signing_secret: str) -> str:
     return base64.b64encode(hmac.new(material, digestmod=hashlib.sha256).digest()).decode()
 
 
-def message(payload: dict) -> str:
+MONITOR_NAMES = {
+    "PowerSystemAPIDown": ("API 服务不可用", "检查 API 容器、健康状态和监控采集。"),
+    "PowerSystemDiskHigh": ("磁盘空间不足", "检查占用增长和可用空间，按运维流程处理。"),
+    "PowerSystemTelemetryProbeFailed": ("遥测健康检查失败", "检查数据库、缓存及遥测探针。"),
+    "PowerSystemTelemetryInputStopped": ("遥测数据停止接收", "检查模拟器、MQTT 和网关输入。"),
+    "PowerSystemTelemetryCoverageLow": ("设备遥测覆盖不足", "检查缺失设备和数据新鲜度。"),
+    "PowerSystemTelemetryWorkerStalled": ("遥测处理停滞", "检查入库队列、处理任务和依赖状态。"),
+    "PowerSystemTelemetryNoBusinessSuccess": ("入库业务提交中断", "检查待处理队列与业务提交失败记录。"),
+    "PowerSystemTelemetryMaintenanceOverdue": ("遥测维护超时", "核对维护窗口和恢复进度。"),
+    "PowerSystemTelemetryRegistryUnknown": ("设备登记状态不明", "检查设备登记和维护状态来源。"),
+    "PowerSystemTelemetryRedisWriteStalled": ("遥测缓存写入停滞", "检查 Redis 写入及队列推进。"),
+    "PowerSystemInboxExpiryBurst": ("入库样本集中逾期", "排查持续入库故障或处理能力；过期留档不等于成功。"),
+    "PowerSystemInboxExpiryProbeBurst": ("入库过期受控演练", "这是受控演练，请勿当作正式业务故障。"),
+    "PowerSystemInboxExpiryStalled": ("过期样本收尾停滞", "检查过期收尾任务及窗口外待处理行。"),
+}
+
+MONITOR_SUMMARIES = {
+    "PowerSystemAPIDown": "监控连续超过 1 分钟无法采集 API。",
+    "PowerSystemDiskHigh": "主机磁盘占用持续超过 80%。",
+    "PowerSystemTelemetryProbeFailed": "遥测健康探针或依赖检查失败。",
+    "PowerSystemTelemetryInputStopped": "预期设备的数据接收停止或尚未初始化。",
+    "PowerSystemTelemetryCoverageLow": "登记设备出现缺数或数据变旧。",
+    "PowerSystemTelemetryWorkerStalled": "遥测处理任务或待处理队列没有正常推进。",
+    "PowerSystemTelemetryNoBusinessSuccess": "队列有待处理数据，但近期没有业务入库成功。",
+    "PowerSystemTelemetryMaintenanceOverdue": "遥测维护超过预定观察时间。",
+    "PowerSystemTelemetryRegistryUnknown": "设备登记或维护状态无法确认。",
+    "PowerSystemTelemetryRedisWriteStalled": "队列有待处理数据，但缓存近期没有成功写入。",
+    "PowerSystemInboxExpiryBurst": "15 分钟内至少 10 条正式样本超过 7 天，已过期留档。",
+    "PowerSystemInboxExpiryProbeBurst": "15 分钟内至少 10 条受控演练样本已过期留档。",
+    "PowerSystemInboxExpiryStalled": "超过 7 天的样本仍留在待处理队列超过 2 分钟。",
+}
+
+
+def monitor_field(label: str, value: str) -> dict:
+    return {"is_short": True, "text": {"tag": "plain_text", "content": f"{label}\n{value}"}}
+
+
+def message(payload: dict) -> dict:
+    if not isinstance(payload, dict):
+        raise ValueError("invalid Alertmanager payload")
     alerts = payload.get("alerts", [])
     if not isinstance(alerts, list) or not alerts:
         raise ValueError("Alertmanager alerts missing")
-    lines = ["PowerSystem 监控告警"]
-    for alert in alerts[:20]:
+    elements = []
+    for alert in alerts[:10]:
         if not isinstance(alert, dict):
             raise ValueError("invalid alert")
         labels = alert.get("labels") or {}
         annotations = alert.get("annotations") or {}
-        state = "恢复" if alert.get("status") == "resolved" else "触发"
+        if not isinstance(labels, dict) or not isinstance(annotations, dict):
+            raise ValueError("invalid alert details")
+        state = "已恢复" if alert.get("status") == "resolved" else "正在告警"
         name = str(labels.get("alertname", "unknown"))[:100]
-        severity = str(labels.get("severity", "unknown"))[:40]
-        summary = str(annotations.get("summary", ""))[:200]
-        when = str(alert.get("endsAt") if state == "恢复" else alert.get("startsAt"))[:40]
-        lines.append(f"{state} | {name} | {severity} | {when}\n{summary}")
-    if len(alerts) > 20:
-        lines.append(f"另有 {len(alerts) - 20} 条告警，请查看 Alertmanager")
-    return "\n".join(lines)
+        title, action = MONITOR_NAMES.get(name, (name, "请查看监控平台中的告警详情。"))
+        severity = {"critical": "紧急", "warning": "注意", "info": "提示"}.get(str(labels.get("severity", "")), "未标级别")
+        when = str((alert.get("endsAt") if state == "已恢复" else alert.get("startsAt")) or "")[:40]
+        occurred = beijing_time(when) if when else "时间未知"
+        summary = MONITOR_SUMMARIES.get(name, str(annotations.get("summary", ""))[:200])
+        instance = str(labels.get("instance", ""))[:100]
+        elements.append({"tag": "div", "fields": [
+            monitor_field("事件", title), monitor_field("状态 / 级别", f"{state} · {severity}"),
+            monitor_field("时间（北京）", occurred), monitor_field("来源", instance or str(labels.get("job", "监控系统"))[:100]),
+        ]})
+        elements.append({"tag": "div", "text": {"tag": "plain_text", "content":
+            (f"说明：{summary}\n" if summary else "") +
+            (f"恢复说明：已恢复；若反复出现，{action}" if state == "已恢复" else f"处理建议：{action}")}})
+        elements.append({"tag": "hr"})
+    if len(alerts) > 10:
+        elements.append({"tag": "note", "elements": [{"tag": "plain_text", "content":
+            f"另有 {len(alerts) - 10} 条，请到监控平台查看。"}]})
+    single = alerts[0] if len(alerts) == 1 else None
+    single_name = str((single.get("labels") or {}).get("alertname", "unknown")) if isinstance(single, dict) else ""
+    headline = MONITOR_NAMES.get(single_name, (single_name, ""))[0] if single else f"监控告警 {len(alerts)} 项"
+    firing = any(alert.get("status") != "resolved" for alert in alerts)
+    critical = any((alert.get("labels") or {}).get("severity") == "critical" for alert in alerts)
+    return {"config": {"wide_screen_mode": True}, "header": {
+        "template": "red" if firing and critical else "orange" if firing else "green",
+        "title": {"tag": "plain_text", "content": f"PowerSystem · {headline} · {'告警' if firing else '已恢复'}"[:100]}},
+        "elements": elements}
 
 
 LEVEL_LABELS = {"urgent": "🔴 紧急", "major": "🟠 重要", "minor": "🟡 一般"}
