@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import Icon from './Icon.vue'
 import StatusChip from './StatusChip.vue'
 import RiskBandsChart from './RiskBandsChart.vue'
 import ConfusionMatrix from './ConfusionMatrix.vue'
 import QualityTrend from './QualityTrend.vue'
+import Pager from './Pager.vue'
 import { api } from '../lib/api'
 import type {
   DriftEvent,
@@ -66,6 +67,13 @@ const versionMismatch = computed(
 )
 const drift = computed(() => driftRequest.data.value ?? [])
 
+/* 漂移事件分页与归档：列表默认只返回未归档行，归档只打标记、不删除原始观察记录 */
+const DRIFT_PAGE_SIZE = 10
+const driftPage = ref(1)
+const driftTotal = ref(0)
+const pickedDrift = ref<Set<number>>(new Set())
+const archivingDrift = ref(false)
+
 const loading = computed(
   () => summaryRequest.pending.value || seriesRequest.pending.value || riskBandsRequest.pending.value,
 )
@@ -107,7 +115,64 @@ const loadCore = async () => {
 const loadModels = () =>
   modelsRequest.run(async (signal) => await api.predictionQualityModels(signal), { keepData: true })
 const loadDrift = () =>
-  driftRequest.run(async (signal) => (await api.predictionQualityDrift(50, signal)).items, { keepData: true })
+  driftRequest.run(
+    async (signal) => {
+      const result = await api.predictionQualityDrift(driftPage.value, DRIFT_PAGE_SIZE, signal)
+      driftTotal.value = result.total
+      return result.items
+    },
+    { keepData: true },
+  )
+
+const driftPages = computed(() => Math.max(1, Math.ceil(driftTotal.value / DRIFT_PAGE_SIZE)))
+const allDriftPicked = computed(
+  () => drift.value.length > 0 && drift.value.every((item) => pickedDrift.value.has(item.id)),
+)
+
+watch(driftPage, () => {
+  pickedDrift.value = new Set()
+  void loadDrift()
+})
+
+const togglePickDrift = (id: number) => {
+  const next = new Set(pickedDrift.value)
+  if (next.has(id)) next.delete(id)
+  else next.add(id)
+  pickedDrift.value = next
+}
+
+const togglePickAllDrift = () => {
+  pickedDrift.value = allDriftPicked.value ? new Set() : new Set(drift.value.map((item) => item.id))
+}
+
+/** 归档只打标记：原始观察记录保留，列表默认不再返回；失败项不中断其余 */
+const archivePickedDrift = async () => {
+  const ids = [...pickedDrift.value]
+  if (!ids.length || archivingDrift.value) return
+  const confirmed = await askConfirm({
+    title: `归档 ${ids.length} 条漂移事件`,
+    body: '归档只打标记，原始观察记录保留；归档后默认列表不再显示这些事件。',
+    confirmText: '归档',
+  })
+  if (!confirmed) return
+  archivingDrift.value = true
+  try {
+    const result = await api.archiveDrifts(ids)
+    if (result.failed.length) {
+      toast('warn', `已归档 ${result.archived} 条，${result.failed.length} 条未能归档`)
+    } else {
+      toast('ok', `已归档 ${result.archived} 条漂移事件`)
+    }
+    pickedDrift.value = new Set()
+    /* 整页都被归档时往回退一页，避免停在一张空表上 */
+    if (result.archived >= drift.value.length && driftPage.value > 1) driftPage.value -= 1
+    else await loadDrift()
+  } catch (error) {
+    toast('bad', `归档失败：${error instanceof Error ? error.message : String(error)}`)
+  } finally {
+    archivingDrift.value = false
+  }
+}
 const loadEligibility = () =>
   eligibilityRequest.run(async (signal) => await api.predictionQualityTrainEligibility(signal), { keepData: true })
 
@@ -248,12 +313,19 @@ const batchCaption = computed(() => {
   return `${value.total} 批 · 命中 ${value.hit} · 漏 ${value.total - value.hit}`
 })
 
-/** AI 解读默认只留两条依据，其余收进「展开」：正文一长，值班员就不看了 */
-const reasonOpen = ref(false)
-const visibleReasons = computed(() => {
-  const list = driftAnalysis.value?.reasons ?? []
-  return reasonOpen.value ? list : list.slice(0, 2)
+/** 卡片里只放结论，完整解读进大弹窗：小格子塞不下，也不该塞 */
+const analysisOpen = ref(false)
+const closeAnalysis = () => {
+  analysisOpen.value = false
+}
+const onEsc = (event: KeyboardEvent) => {
+  if (event.key === 'Escape') closeAnalysis()
+}
+watch(analysisOpen, (open) => {
+  if (open) window.addEventListener('keydown', onEsc)
+  else window.removeEventListener('keydown', onEsc)
 })
+onBeforeUnmount(() => window.removeEventListener('keydown', onEsc))
 
 /** 运行态徽标：一致 / 不一致 / 读不到，三种都写清，不静默当成一致 */
 const runtimeState = computed(() => {
@@ -464,12 +536,10 @@ const levelHint = (value: string) => LEVEL_HINT[value] || value
         <p v-else-if="versionUnknown" class="side-warn is-soft">
           推理服务运行版本暂无法核对（健康检查不可读或未返回版本），不要据此认为版本已一致。
         </p>
-        <p v-else class="side-ok">台账现役与推理服务加载版本一致</p>
+        <p v-else class="side-ok">台账与推理服务版本一致</p>
         <div class="side-meta">
           <span>统计窗口</span><b class="num">{{ windowLabel }}</b>
           <span>样本量</span><b class="num">{{ summary ? n(summary.samples) : '—' }}</b>
-          <span>统计版本</span><b class="num">{{ summary?.model_version || '—' }}</b>
-          <span>漂移事件</span><b>{{ drift.length }} 条 · 触发级 {{ triggeredDrift.length }} 条</b>
         </div>
       </div>
     </section>
@@ -489,43 +559,22 @@ const levelHint = (value: string) => LEVEL_HINT[value] || value
             </button>
           </div>
         </div>
-        <div class="insight">
+        <!-- 小卡片只放结论：完整解读点开弹窗看，正文不再挤在这里 -->
+        <div
+          class="insight"
+          :class="{ 'is-clickable': !!driftAnalysis }"
+          @click="driftAnalysis && (analysisOpen = true)"
+        >
           <template v-if="driftAnalysis">
-            <!-- 结论与建议各限两行：全文放 title，鼠标停一下就能看全，正文不再铺开 -->
             <p class="insight-conclusion clamp-2" :title="driftAnalysis.conclusion">{{ driftAnalysis.conclusion }}</p>
-            <ul v-if="visibleReasons.length" class="insight-list">
-              <li v-for="reason in visibleReasons" :key="reason" class="clamp-1" :title="reason">{{ reason }}</li>
-            </ul>
-            <button
-              v-if="driftAnalysis.reasons.length > 2"
-              class="insight-more"
-              @click="reasonOpen = !reasonOpen"
-            >
-              {{ reasonOpen ? '收起依据' : `展开另外 ${driftAnalysis.reasons.length - 2} 条依据` }}
-            </button>
-            <p
-              v-if="driftAnalysis.suggestions.length"
-              class="insight-suggest clamp-1"
-              :title="driftAnalysis.suggestions.join('；')"
-            >
-              建议：{{ driftAnalysis.suggestions.join('；') }}
-            </p>
-            <p class="insight-meta">
-              {{ driftAnalysis.created_at ? stamp(driftAnalysis.created_at) : '' }} ·
-              tokens {{ driftAnalysis.prompt_tokens + driftAnalysis.completion_tokens }}
+            <p class="insight-peek">
+              <span class="num">{{ driftAnalysis.reasons.length }}</span> 条依据 ·
+              <span class="num">{{ driftAnalysis.suggestions.length }}</span> 条建议
+              <template v-if="trialAnalysis"> · 含试用对比</template>
+              <span class="insight-open">阅读完整解读 →</span>
             </p>
           </template>
           <p v-else class="insight-empty">还没有解读记录，点「分析漂移」让模型读一遍分时误差</p>
-          <div v-if="trialAnalysis" class="insight-trial">
-            <p class="insight-conclusion clamp-2" :title="trialAnalysis.conclusion">试用对比：{{ trialAnalysis.conclusion }}</p>
-            <p
-              v-if="trialAnalysis.suggestions.length"
-              class="insight-suggest clamp-1"
-              :title="trialAnalysis.suggestions.join('；')"
-            >
-              建议：{{ trialAnalysis.suggestions.join('；') }}
-            </p>
-          </div>
         </div>
         <div class="retrain-row">
           <div class="retrain-text">
@@ -770,11 +819,20 @@ const levelHint = (value: string) => LEVEL_HINT[value] || value
     <section ref="driftSection" class="card">
       <div class="card-head">
         <span class="card-title">漂移事件</span>
-        <span class="card-sub">最近 {{ drift.length }} 条 · 指标越限时自动登记</span>
+        <span class="card-sub">
+          共 <b class="num">{{ driftTotal }}</b> 条 · 指标越限时自动登记
+          <template v-if="pickedDrift.size"> · 已选 <b class="num">{{ pickedDrift.size }}</b> 条</template>
+        </span>
+        <div v-if="pickedDrift.size" class="card-tools">
+          <button class="btn btn-sm" :disabled="archivingDrift" @click="archivePickedDrift">
+            {{ archivingDrift ? '归档中…' : `归档选中 ${pickedDrift.size} 条` }}
+          </button>
+        </div>
       </div>
       <div class="table-wrap">
         <table class="table dr-table">
           <colgroup>
+            <col style="width: 38px" />
             <col style="width: 20%" />
             <col style="width: 11%" />
             <col style="width: 18%" />
@@ -784,6 +842,16 @@ const levelHint = (value: string) => LEVEL_HINT[value] || value
           </colgroup>
           <thead>
             <tr>
+              <th class="pick-col">
+                <input
+                  type="checkbox"
+                  class="pick"
+                  :checked="allDriftPicked"
+                  :disabled="!drift.length"
+                  aria-label="全选本页"
+                  @change="togglePickAllDrift"
+                />
+              </th>
               <th>时间</th>
               <th>层级</th>
               <th>信号</th>
@@ -793,7 +861,16 @@ const levelHint = (value: string) => LEVEL_HINT[value] || value
             </tr>
           </thead>
           <tbody>
-            <tr v-for="item in drift" :key="item.id">
+            <tr v-for="item in drift" :key="item.id" :class="{ 'is-picked': pickedDrift.has(item.id) }">
+              <td class="pick-col">
+                <input
+                  type="checkbox"
+                  class="pick"
+                  :checked="pickedDrift.has(item.id)"
+                  :aria-label="`选择 ${item.id}`"
+                  @change="togglePickDrift(item.id)"
+                />
+              </td>
               <td class="num">{{ stamp(item.detected_at) }}</td>
               <td class="num" :title="levelHint(item.level)">{{ item.level }}</td>
               <td>{{ signalText(item.signal) }}</td>
@@ -807,12 +884,19 @@ const levelHint = (value: string) => LEVEL_HINT[value] || value
               </td>
             </tr>
             <tr v-if="!drift.length">
-              <td colspan="6" class="empty">{{ driftRequest.pending.value ? '正在读取漂移事件…' : '窗口内无漂移事件' }}</td>
+              <td colspan="7" class="empty">{{ driftRequest.pending.value ? '正在读取漂移事件…' : '没有未归档的漂移事件' }}</td>
             </tr>
           </tbody>
         </table>
       </div>
-      <div class="pager tight-pager"><span>观察级事件仅登记，处置需人工确认</span></div>
+      <Pager
+        :page="driftPage"
+        :total-pages="driftPages"
+        :total="driftTotal"
+        :page-size="DRIFT_PAGE_SIZE"
+        note="观察级事件仅登记，归档只打标记"
+        @update:page="driftPage = $event"
+      />
     </section>
 
     <!-- 口径说明：原文一条不删，只是不占正文 -->
@@ -839,6 +923,59 @@ const levelHint = (value: string) => LEVEL_HINT[value] || value
         <p><b>漂移事件</b>：观测值与基线采用同一口径；观察级事件仅登记，处置需人工确认。L1 分布漂移、L2 校准漂移、L3 精度退化，详见表内层级提示。</p>
       </div>
     </section>
+
+    <!-- AI 解读大弹窗：居中、不占满屏，背后留出页面位置，读完知道自己在哪 -->
+    <Teleport to="body">
+      <div v-if="analysisOpen" class="qa-scrim" @click.self="closeAnalysis">
+        <div class="qa-modal" role="dialog" aria-modal="true" aria-label="AI 解读详情">
+          <div class="qa-head">
+            <div class="qa-title">
+              <b>AI 解读 · 漂移归因</b>
+              <span v-if="driftAnalysis?.created_at" class="num">{{ stamp(driftAnalysis.created_at) }}</span>
+            </div>
+            <button class="qa-close" type="button" aria-label="关闭" @click="closeAnalysis">
+              <Icon name="close" :size="16" />
+            </button>
+          </div>
+
+          <div class="qa-body">
+            <template v-if="driftAnalysis">
+              <p class="qa-conclusion">{{ driftAnalysis.conclusion }}</p>
+
+              <div v-if="driftAnalysis.reasons.length" class="qa-block">
+                <h4>依据</h4>
+                <ul>
+                  <li v-for="(reason, index) in driftAnalysis.reasons" :key="index">{{ reason }}</li>
+                </ul>
+              </div>
+
+              <div v-if="driftAnalysis.suggestions.length" class="qa-block">
+                <h4>建议</h4>
+                <ol>
+                  <li v-for="(item, index) in driftAnalysis.suggestions" :key="index" class="qa-advice">{{ item }}</li>
+                </ol>
+              </div>
+
+              <div v-if="trialAnalysis" class="qa-block is-trial">
+                <h4>试用对比</h4>
+                <p>{{ trialAnalysis.conclusion }}</p>
+                <ul v-if="trialAnalysis.reasons.length">
+                  <li v-for="(reason, index) in trialAnalysis.reasons" :key="index">{{ reason }}</li>
+                </ul>
+                <p v-for="(item, index) in trialAnalysis.suggestions" :key="`s${index}`" class="qa-advice">
+                  建议：{{ item }}
+                </p>
+              </div>
+
+              <p class="qa-meta">
+                tokens {{ driftAnalysis.prompt_tokens + driftAnalysis.completion_tokens }} ·
+                模型只给建议，不会自动切换版本
+              </p>
+            </template>
+          </div>
+        </div>
+      </div>
+    </Teleport>
   </div>
 </template>
 
@@ -881,7 +1018,8 @@ const levelHint = (value: string) => LEVEL_HINT[value] || value
 /* ---------- 首屏 A：质量速览 ---------- */
 .hero {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 268px;
+  /* 右侧核对区加宽到 300：左边读数与进度条就能贴在一起，中间不再空一大块 */
+  grid-template-columns: minmax(0, 1fr) 300px;
 }
 
 .hero-main {
@@ -911,10 +1049,10 @@ const levelHint = (value: string) => LEVEL_HINT[value] || value
 /* 数字 + 格子 + 进度条三段式：文字只保留标签，读数靠长度和颜色表达 */
 .hero-body {
   display: flex;
-  /* 左边读数、右边进度条各占一段，中间留白分开；条固定宽度，避免拉成一条长线 */
+  /* 读数与进度条紧贴着排，条吃满剩余宽度：中间留白比条长更难看 */
   align-items: center;
-  justify-content: space-between;
-  gap: 24px;
+  justify-content: flex-start;
+  gap: 28px;
   margin-top: 6px;
 }
 
@@ -974,8 +1112,9 @@ const levelHint = (value: string) => LEVEL_HINT[value] || value
   display: flex;
   flex-direction: column;
   gap: 8px;
-  flex: 0 1 400px;
+  flex: 1 1 auto;
   min-width: 190px;
+  max-width: 460px;
 }
 
 .mini {
@@ -1106,7 +1245,11 @@ const levelHint = (value: string) => LEVEL_HINT[value] || value
 
 .insight {
   flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
   min-width: 0;
+  min-height: 0;
   padding: 0 16px 12px;
 }
 
@@ -1125,25 +1268,7 @@ const levelHint = (value: string) => LEVEL_HINT[value] || value
   color: var(--ink-2);
 }
 
-.insight-suggest {
-  margin-top: 6px;
-  font-size: 11.5px;
-  line-height: 1.6;
-  color: var(--brand);
-}
-
-/* 单行/两行截断：正文只给结论，全文放 title，鼠标停一下看全 */
-.clamp-1 {
-  display: block;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.insight-list li.clamp-1 {
-  display: list-item;
-}
-
+/* 结论依旧限两行；其余内容全在弹窗里 */
 .clamp-2 {
   display: -webkit-box;
   -webkit-box-orient: vertical;
@@ -1151,20 +1276,166 @@ const levelHint = (value: string) => LEVEL_HINT[value] || value
   overflow: hidden;
 }
 
-.insight-more {
-  margin-top: 4px;
+.insight-peek {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 8px;
   font-size: 11.5px;
-  font-weight: 550;
-  color: var(--brand);
+  color: var(--ink-3);
 }
 
-.insight-more:hover {
+.insight-open {
+  margin-left: auto;
+  font-weight: 550;
+  color: var(--brand);
+  white-space: nowrap;
+}
+
+.insight.is-clickable {
+  cursor: pointer;
+  border-radius: var(--r-md);
+  transition: background 0.16s ease;
+}
+
+.insight.is-clickable:hover {
+  background: var(--card-soft);
+}
+
+.insight.is-clickable:hover .insight-open {
   color: var(--brand-deep);
 }
 
-.insight-meta {
-  margin-top: 6px;
-  font-size: 10.5px;
+/* ---------- AI 解读大弹窗 ---------- */
+.qa-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  display: grid;
+  place-items: center;
+  padding: 44px 24px;
+  background: var(--overlay);
+  animation: qa-fade 0.16s ease;
+}
+
+@keyframes qa-fade {
+  from {
+    opacity: 0;
+  }
+}
+
+.qa-modal {
+  width: min(760px, 92vw);
+  max-height: min(76vh, 720px);
+  display: flex;
+  flex-direction: column;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--r-xl);
+  box-shadow: var(--shadow-3);
+  overflow: hidden;
+}
+
+.qa-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 13px 18px;
+  border-bottom: 1px solid var(--line);
+}
+
+.qa-title {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+}
+
+.qa-title b {
+  font-size: 13.5px;
+  font-weight: 650;
+  color: var(--ink);
+}
+
+.qa-title span {
+  font-size: 11.5px;
+  color: var(--ink-4);
+}
+
+.qa-close {
+  margin-left: auto;
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--r-sm);
+  color: var(--ink-3);
+  transition: background 0.14s ease, color 0.14s ease;
+}
+
+.qa-close:hover {
+  background: var(--hover-bg);
+  color: var(--ink);
+}
+
+.qa-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 16px 20px 20px;
+  font-size: 12.5px;
+  line-height: 1.75;
+  color: var(--ink-2);
+}
+
+.qa-conclusion {
+  font-size: 13.5px;
+  font-weight: 600;
+  line-height: 1.65;
+  color: var(--ink);
+}
+
+.qa-block {
+  margin-top: 18px;
+}
+
+.qa-block h4 {
+  margin-bottom: 7px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  color: var(--ink-4);
+}
+
+.qa-block ul,
+.qa-block ol {
+  margin: 0;
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.qa-block li {
+  padding-left: 2px;
+}
+
+.qa-block.is-trial {
+  padding: 12px 14px;
+  border-radius: var(--r-md);
+  background: var(--card-soft);
+  border: 1px solid var(--line-soft);
+}
+
+.qa-advice {
+  color: var(--brand);
+}
+
+.qa-meta {
+  margin-top: 20px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line-soft);
+  font-size: 11px;
   color: var(--ink-4);
 }
 
@@ -1422,7 +1693,22 @@ const levelHint = (value: string) => LEVEL_HINT[value] || value
 
 .dr-table {
   table-layout: fixed;
-  min-width: 720px;
+  min-width: 760px;
+}
+
+/* 勾选列：原生 checkbox + accent-color，深浅主题都跟着品牌色走 */
+.dr-table th.pick-col,
+.dr-table td.pick-col {
+  padding-left: 14px;
+  padding-right: 0;
+}
+
+.pick {
+  width: 14px;
+  height: 14px;
+  accent-color: var(--brand);
+  cursor: pointer;
+  vertical-align: middle;
 }
 
 .md-table .cell-note,

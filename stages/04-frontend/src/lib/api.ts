@@ -1159,8 +1159,15 @@ export const api = {
     post<{ model_version: string; status: ModelVersionStatus; rolled_back_to: string }>(
       `/predictions/quality/models/${encodeURIComponent(version)}/rollback`,
     ),
-  predictionQualityDrift: (limit = 50, signal?: AbortSignal) =>
-    get<{ items: DriftEvent[] }>(`/predictions/quality/drift${query({ limit })}`, signal),
+  /** 漂移事件：默认只返回未归档，按时间倒序分页 */
+  predictionQualityDrift: (page = 1, pageSize = 20, signal?: AbortSignal) =>
+    get<{ items: DriftEvent[]; total: number; page: number; page_size: number }>(
+      `/predictions/quality/drift${query({ page, page_size: pageSize })}`,
+      signal,
+    ),
+  /** 批量归档漂移事件：只打标记，不删除原始观察记录；failed 里的编号不中断其余 */
+  archiveDrifts: (ids: number[]) =>
+    post<{ archived: number; failed: number[]; updated_at: string }>('/predictions/quality/drift-archive', { ids }),
   /** AI 解读：kind=drift 解释最近退化，kind=trial 对比试用版本 */
   predictionQualityAnalysis: (kind: 'drift' | 'trial') =>
     post<QualityAnalysis>('/predictions/quality/analysis', { kind }),

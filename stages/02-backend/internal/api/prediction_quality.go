@@ -1418,16 +1418,31 @@ func (s *Server) predictionQualityRollback(c *gin.Context) {
 	ok(c, gin.H{"model_version": version, "status": "candidate", "rolled_back_to": previous})
 }
 
-// predictionQualityDrift 返回最近的漂移事件，只读事实，不触发训练。
+// predictionQualityDrift 返回漂移事件分页列表，默认只含未归档记录。
+// 只读事实，不触发训练；归档只打标记，原始观察行一律保留。
 func (s *Server) predictionQualityDrift(c *gin.Context) {
-	limit, err := strconv.Atoi(c.DefaultQuery("limit", "50"))
-	if err != nil || limit < 1 || limit > 500 {
-		fail(c, 400, 40001, "invalid limit")
+	page, err := strconv.Atoi(c.DefaultQuery("page", "1"))
+	if err != nil || page < 1 {
+		fail(c, 400, 40001, "invalid page")
+		return
+	}
+	pageSize, err := strconv.Atoi(c.DefaultQuery("page_size", "20"))
+	if err != nil || pageSize < 1 || pageSize > 200 {
+		fail(c, 400, 40001, "invalid page_size")
+		return
+	}
+	ctx := c.Request.Context()
+	var total int64
+	if err := s.db.WithContext(ctx).Model(&model.PredictionDriftEvent{}).
+		Where("archived = FALSE").Count(&total).Error; err != nil {
+		fail(c, 503, 50000, "drift query failed")
 		return
 	}
 	var rows []model.PredictionDriftEvent
-	if err := s.db.WithContext(c.Request.Context()).
-		Order("detected_at DESC, id DESC").Limit(limit).Find(&rows).Error; err != nil {
+	if err := s.db.WithContext(ctx).Model(&model.PredictionDriftEvent{}).
+		Where("archived = FALSE").
+		Order("detected_at DESC, id DESC").
+		Offset((page - 1) * pageSize).Limit(pageSize).Find(&rows).Error; err != nil {
 		fail(c, 503, 50000, "drift query failed")
 		return
 	}
@@ -1439,7 +1454,67 @@ func (s *Server) predictionQualityDrift(c *gin.Context) {
 			"action": row.Action,
 		})
 	}
-	ok(c, gin.H{"items": items})
+	ok(c, gin.H{"items": items, "total": total, "page": page, "page_size": pageSize})
+}
+
+// driftArchiveInput 是批量归档的请求体；只接受正整数编号。
+type driftArchiveInput struct {
+	IDs []int64 `json:"ids"`
+}
+
+// predictionQualityDriftArchive 批量归档漂移事件：只打标记，不删除观察事实。
+// 已归档编号保持已归档、不重复计数；不存在或本就归档的编号进 failed，不中断其余。
+func (s *Server) predictionQualityDriftArchive(c *gin.Context) {
+	var in driftArchiveInput
+	if err := c.ShouldBindJSON(&in); err != nil {
+		fail(c, 400, 40000, "请求格式不正确")
+		return
+	}
+	ids := make([]int64, 0, len(in.IDs))
+	seen := make(map[int64]bool, len(in.IDs))
+	for _, id := range in.IDs {
+		if id <= 0 || seen[id] {
+			continue
+		}
+		seen[id] = true
+		ids = append(ids, id)
+	}
+	if len(ids) == 0 {
+		fail(c, 400, 40000, "未提供漂移事件编号")
+		return
+	}
+	if len(ids) > 200 {
+		fail(c, 400, 40000, "单次最多归档 200 条漂移事件")
+		return
+	}
+	now := time.Now().UTC()
+	ctx := c.Request.Context()
+	updates := map[string]any{"archived": true, "archived_at": now}
+	if uid := c.GetInt64("user_id"); uid > 0 {
+		updates["archived_by"] = strconv.FormatInt(uid, 10)
+	}
+	if err := s.db.WithContext(ctx).Model(&model.PredictionDriftEvent{}).
+		Where("id IN ?", ids).Where("archived = FALSE").Updates(updates).Error; err != nil {
+		fail(c, 500, 50000, "archive failed")
+		return
+	}
+	var archivedIDs []int64
+	if err := s.db.WithContext(ctx).Model(&model.PredictionDriftEvent{}).
+		Where("id IN ?", ids).Where("archived = TRUE").Pluck("id", &archivedIDs).Error; err != nil {
+		fail(c, 500, 50000, "archive failed")
+		return
+	}
+	done := make(map[int64]bool, len(archivedIDs))
+	for _, id := range archivedIDs {
+		done[id] = true
+	}
+	failed := make([]int64, 0)
+	for _, id := range ids {
+		if !done[id] {
+			failed = append(failed, id)
+		}
+	}
+	ok(c, gin.H{"archived": len(archivedIDs), "failed": failed, "updated_at": now})
 }
 
 // operationsQualityRow 是运维口径的聚合结果，一次查询把「台次」与「提前量」都取回来。

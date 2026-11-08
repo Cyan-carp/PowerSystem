@@ -85,6 +85,7 @@ type ModelRegistry struct {
 func (ModelRegistry) TableName() string { return "model_registry" }
 
 // PredictionDriftEvent 是一条漂移观察记录，本轮只写事实，不触发训练。
+// Archived 为软归档标记：默认列表不返回已归档行，原始记录一律保留。
 type PredictionDriftEvent struct {
 	ID         int64           `json:"id"`
 	DetectedAt time.Time       `json:"detected_at"`
@@ -95,6 +96,9 @@ type PredictionDriftEvent struct {
 	Threshold  *float64        `json:"threshold"`
 	Action     string          `json:"action"`
 	Detail     json.RawMessage `gorm:"type:jsonb" json:"detail"`
+	Archived   bool            `json:"archived"`
+	ArchivedAt *time.Time      `json:"archived_at"`
+	ArchivedBy *string         `json:"archived_by"`
 }
 
 func (PredictionDriftEvent) TableName() string { return "prediction_drift_events" }
