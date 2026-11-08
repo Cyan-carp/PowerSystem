@@ -14,8 +14,10 @@ tags:
 
 | 文件 | 用途 |
 | --- | --- |
-| `feishu-adapter/app.py` | 接收业务事件和 Alertmanager Webhook，校验内部令牌、生成文本、签名并调用飞书群机器人 |
-| `feishu-adapter/test_app.py` | 签名载荷、监控及业务状态文案测试；不访问真实机器人 |
+| `feishu-adapter/app.py` | 接收业务事件和 Alertmanager Webhook，校验内部令牌、生成统一卡片、签名并调用飞书群机器人 |
+| `feishu-adapter/test_app.py` | 签名载荷、13 类监控卡片及业务状态测试；不访问真实机器人 |
+| `entry-probe/entry-probe.py` | VM117 公网入口独立探活脚本的受控源码；原件与卡片版按 SHA-256 核对，本轮生产发布见日志 103 |
+| `entry-probe/test_entry_probe.py` | 入口异常、恢复和飞书交互卡片载荷短测；不访问真实机器人 |
 | `feishu-adapter/Dockerfile` | 适配器容器构建 |
 | `deploy/alertmanager.yml` | 接收组、聚合与恢复通知、内网适配器地址 |
 | `../02-backend/deploy/postgres/004_business_notifications.sql` | 业务通知持久投递表及待发索引 |
@@ -34,6 +36,8 @@ python -m unittest -v test_app.py
 ```
 
 > 测试不读取服务器密钥，也不发送群消息。
+
+入口探活测试另运行 `python -m unittest discover -s stages/05-feishu-notification/entry-probe -p test_entry_probe.py`。生产 VM117 的 `/opt/powersystem-probe/entry-probe.py` 独立于 Compose；当前镜像、脚本摘要及群内目视待验事项以 `notes/00-当前系统状态.md` 和 [[notes/04-系统部署发布备份与变更记录/部署与运维日志/02-界面展示与通知/103-飞书运维告警统一卡片发布]] 为准。
 
 #### 步骤 2 · 在 R730xd 检查私有配置和 Compose
 

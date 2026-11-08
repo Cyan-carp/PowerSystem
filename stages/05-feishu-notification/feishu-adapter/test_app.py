@@ -1,9 +1,11 @@
 import unittest
 import io
 import json
+import re
+from pathlib import Path
 from unittest.mock import patch
 
-from app import Handler, business_message, message, send, sign
+from app import Handler, MONITOR_NAMES, business_message, message, send, sign
 
 
 class AdapterTests(unittest.TestCase):
@@ -33,9 +35,35 @@ class AdapterTests(unittest.TestCase):
     def test_alert_statuses(self):
         payload = {"alerts": [{"status": "firing", "labels": {"alertname": "PowerSystemAPIDown"}},
                               {"status": "resolved", "labels": {"alertname": "PowerSystemAPIDown"}}]}
-        result = message(payload)
-        self.assertIn("触发", result)
-        self.assertIn("恢复", result)
+        result = json.dumps(message(payload), ensure_ascii=False)
+        self.assertIn("API 服务不可用", result)
+        self.assertIn("正在告警", result)
+        self.assertIn("已恢复", result)
+
+    def test_every_monitor_rule_uses_card_with_readable_status_and_time(self):
+        rules = (Path(__file__).resolve().parents[2] / "04-frontend" / "deploy" / "alerts.yml").read_text(encoding="utf-8")
+        self.assertEqual(set(re.findall(r"^\s*- alert: (\S+)$", rules, re.MULTILINE)), set(MONITOR_NAMES))
+        for name in MONITOR_NAMES:
+            with self.subTest(name=name):
+                card = message({"alerts": [{"status": "firing", "labels": {
+                    "alertname": name, "severity": "critical", "instance": "api:8090"},
+                    "annotations": {"summary": "source details"},
+                    "startsAt": "2026-11-08T00:00:00Z"}]})
+                body = json.dumps(card, ensure_ascii=False)
+                self.assertEqual(card["header"]["template"], "red")
+                self.assertIn(MONITOR_NAMES[name][0], body)
+                self.assertIn("2026-11-08 08:00:00", body)
+                self.assertIn("处理建议：", body)
+                self.assertIn("说明：", body)
+                self.assertIn("api:8090", body)
+                self.assertNotIn("source details", body)
+        recovered = message({"alerts": [{"status": "resolved", "labels": {
+            "alertname": "PowerSystemAPIDown"}, "endsAt": "2026-11-08T01:00:00Z"}]})
+        self.assertEqual(recovered["header"]["template"], "green")
+        unknown = json.dumps(message({"alerts": [{"status": "firing", "labels": {
+            "alertname": "CustomRule"}, "annotations": {"summary": "read me"}}]}), ensure_ascii=False)
+        self.assertIn("CustomRule", unknown)
+        self.assertIn("read me", unknown)
 
     def test_business_alarm_lifecycle_and_invalid_payload(self):
         event = {"event_id": "alarm:42:triggered", "category": "device_alarm", "state": "triggered",
