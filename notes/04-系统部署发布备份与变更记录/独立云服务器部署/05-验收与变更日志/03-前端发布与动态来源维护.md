@@ -1,6 +1,6 @@
 ---
 tags: [源网智联, 独立云服务器部署, 验收]
-status: 现行
+status: 历史
 scope: 部署运维
 updated: 2026-10-17
 ---

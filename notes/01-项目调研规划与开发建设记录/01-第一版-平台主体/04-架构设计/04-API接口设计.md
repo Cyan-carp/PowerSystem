@@ -142,7 +142,7 @@ updated: 2026-10-13
 | 总览 | `GET /api/v1/dashboard/summary` | 保留在线/离线/故障数、当前功率、活动告警与运行正常占比；阶段四 P0 增加 `today_energy_kwh`、`retained_energy_kwh`、`energy_start_ms`、`energy_updated_at` 和 `health_score_percent`，空数据为 `null`；远端对账与公网接口已核对 |
 | 实时 | `POST /api/v1/ws-ticket`；`GET /ws/realtime?ticket=...` | JWT 换一次性 60 秒票据；WebSocket 推送遥测及告警事件 |
 
-所有阶段二业务 REST 接口均需 Bearer JWT，成功与失败都返回 `code/message/data`；列表默认第 1 页、每页 20 条，上限 100。详情告警不内嵌曲线，可通过关联设备的遥测接口查询。上文列出的预测、导出和报表接口仍是后续阶段规划，M2 不以其上线为前提。运行和自测命令见 [[05-代码工作区导航与链接映射/stages-02-backend-README|README]]。
+所有阶段二业务 REST 接口均需 Bearer JWT，成功与失败都返回 `code/message/data`；列表默认第 1 页、每页 20 条，上限 100。详情告警不内嵌曲线，可通过关联设备的遥测接口查询。上文列出的预测、导出和报表接口仍是后续阶段规划，M2 不以其上线为前提。运行和自测命令见 [[05-代码工作区导航与链接映射/01-项目与阶段说明/stages-02-backend-README|README]]。
 
 
 ## 八、阶段三预测接口落地
@@ -175,7 +175,7 @@ updated: 2026-10-13
 
 ## 十一、第二版智能体接口（v2.0.0 生效）
 
-保留第一版历史接口及验收。当前接口仍返回 `code/message/data`，Go 是业务鉴权入口，Agent 只在 Compose 内网服务。详见 [[01-项目调研规划与开发建设记录/02-第二版-智能体升级/问答及调度业务主智能体/废案-旧智能体方案/02-功能开发与阶段交付/01-基础服务与只读工具链/02-Agent服务与模型接入]] 和 [[05-代码工作区导航与链接映射/stages-07-agent-README|README]]。
+保留第一版历史接口及验收。当前接口仍返回 `code/message/data`，Go 是业务鉴权入口，Agent 只在 Compose 内网服务。详见 [[01-项目调研规划与开发建设记录/02-第二版-智能体升级/问答及调度业务主智能体/废案-旧智能体方案/02-功能开发与阶段交付/01-基础服务与只读工具链/02-Agent服务与模型接入]] 和 [[05-代码工作区导航与链接映射/01-项目与阶段说明/stages-07-agent-README|README]]。
 
 | 方法与路径 | 权限与含义 |
 | --- | --- |

@@ -55,11 +55,14 @@ ADDITIONAL_TARGETS = (
     "stages/04-frontend/dev/mock-server.mjs",
 )
 
-# 索引分组：按序匹配，首个命中即归类。判断顺序影响结果，
-# 「部署脚本」必须先于「前端实现」，「阶段 README」必须先于「部署脚本」。
+# 代理页按使用目的分文件夹；每个工作区目标仍有唯一代理页。
 GROUPS = (
-    ("私有证据（本机产物，不入库）", lambda path: path.startswith("artifacts/")),
-    ("阶段运行说明", lambda path: re.fullmatch(r"stages/\d+-[^/]+/README\.md", path) is not None),
+    (
+        "项目与阶段说明",
+        lambda path: "/" not in path
+        or re.fullmatch(r"stages/\d+-[^/]+/README\.md", path) is not None
+        or path == "stages/02-backend/deploy/home-dev/README.md",
+    ),
     (
         "部署与发布工具",
         lambda path: path.startswith("stages/04-frontend/deploy/")
@@ -67,17 +70,25 @@ GROUPS = (
         or path.startswith(".github/"),
     ),
     ("前端实现与联调", lambda path: path.startswith("stages/04-frontend/")),
-    ("仓库根文档", lambda path: "/" not in path),
+    ("本机证据入口", lambda path: path.startswith("artifacts/")),
 )
 
+GROUP_DIRS = {
+    "项目与阶段说明": "01-项目与阶段说明",
+    "前端实现与联调": "02-前端实现与联调",
+    "部署与发布工具": "03-部署与发布工具",
+    "本机证据入口": "04-本机证据入口",
+    "其他入口": "05-其他入口",
+}
+
 GROUP_NOTES = {
-    "私有证据（本机产物，不入库）": (
+    "本机证据入口": (
         "下列目标被 `.gitignore` 排除，只在本机存在；`updated` 是产物自身的落盘/提交时间，"
         "表示该次取证的完成时点，不代表当前线上状态。"
     ),
     "前端实现与联调": (
         "前端技术事实与实现规则分别维护在 01 分区「04-前端、上线与沉淀」的当前前端工程说明"
-        "与 02 分区「发布仓库与界面验收规范」；本组只放入口，不复制结论。"
+        "与 02 分区「仓库与前端质量」；本组只放入口，不复制结论。"
     ),
 }
 
@@ -138,9 +149,14 @@ def github_url(path: str) -> str:
     return f"{REPOSITORY_BASE}/blob/main/{quote(path, safe='/.-_')}"
 
 
-def relative_target(path: str) -> str:
+def relative_target(path: str, proxy: str) -> str:
     """Return a portable path from a proxy page to its workspace target."""
-    return Path(os.path.relpath(ROOT / path, PROXY_DIR)).as_posix()
+    return Path(os.path.relpath(ROOT / path, (PROXY_DIR / proxy).parent)).as_posix()
+
+
+def proxy_path(path: str, previous: str | None = None) -> str:
+    name = Path(previous).name if previous else proxy_name(path)
+    return f"{GROUP_DIRS[group_of(path)]}/{name}"
 
 
 def is_ignored(path: str) -> bool:
@@ -244,11 +260,12 @@ def main() -> None:
         if not target.exists():
             raise FileNotFoundError(path)
         is_tracked = tracked(path)
+        proxy = proxy_path(path, old_proxy.get(path))
         entries.append(
             {
                 "workspace_path": path,
-                "proxy": old_proxy.get(path, proxy_name(path)),
-                "relative_path": relative_target(path),
+                "proxy": proxy,
+                "relative_path": relative_target(path, proxy),
                 "repository_url": github_url(path) if is_tracked else None,
                 "tracked": is_tracked,
             }
@@ -256,7 +273,9 @@ def main() -> None:
 
     PROXY_DIR.mkdir(parents=True, exist_ok=True)
     for entry in entries:
-        write_atomic(PROXY_DIR / str(entry["proxy"]), proxy_source(entry))
+        proxy_file = PROXY_DIR / str(entry["proxy"])
+        proxy_file.parent.mkdir(parents=True, exist_ok=True)
+        write_atomic(proxy_file, proxy_source(entry))
 
     index_lines = [
         "---",
@@ -268,31 +287,46 @@ def main() -> None:
         f"updated: {GENERATED_DATE}",
         "---",
         "",
-        "# 代码工作区导航与链接映射",
+        "# 代码工作区导航",
         "",
-        "> 本目录将 Obsidian 笔记连接到 Vault 外部的代码、部署脚本、私有证据和工具。代理页由治理工具生成，"
+        "> 本目录将 Obsidian 笔记连接到 Vault 外部的代码、部署脚本和私有证据。代理页由治理工具生成，"
         "每页 `updated` 取该目标自身的最后变更日，不是生成日。",
         "",
         "> 工作区结构变化后运行 `python tools/note-governance/build_workspace_links.py` 重算；"
         "`artifacts/` 与 `stages/04-frontend/dev/` 按 `.gitignore` 不入库，换机后这些入口可能为空。",
         "",
+        "运行产物的用途、留存和清理规则见 [[02-工程规范边界与验收治理/运行产物说明/00-索引·运行产物说明]]；"
+        "这里仅提供打开工作区目标的入口。",
+        "",
+        "## 分类入口",
+        "",
     ]
     grouped: dict[str, list[dict[str, object]]] = {}
     for entry in sorted(entries, key=lambda item: str(item["workspace_path"])):
         grouped.setdefault(group_of(str(entry["workspace_path"])), []).append(entry)
-    order = [name for name, _ in GROUPS] + ["其他入口"]
+    order = sorted(GROUP_DIRS, key=lambda name: GROUP_DIRS[name])
     for name in order:
         items = grouped.get(name)
         if not items:
             continue
-        index_lines.extend([f"## {name}", ""])
+        folder = GROUP_DIRS[name]
+        index_title = f"00-索引·{name}"
+        index_lines.append(f"- [[05-代码工作区导航与链接映射/{folder}/{index_title}|{name}]]（{len(items)} 个入口）")
+        group_lines = [
+            "---", "tags: [源网智联, 工作区导航, 索引]", "status: 现行", "scope: 跨版本",
+            f"updated: {GENERATED_DATE}", "---", "", f"# {name}", "",
+            "> 本页由 `tools/note-governance/build_workspace_links.py` 生成；只列工作区入口，运行状态仍以 [[00-当前系统状态]] 为准。",
+            "",
+        ]
         note = GROUP_NOTES.get(name)
         if note:
-            index_lines.extend([f"> {note}", ""])
+            group_lines.extend([f"> {note}", ""])
         for entry in items:
-            stem = Path(str(entry["proxy"])).stem
-            index_lines.append(f"- [[05-代码工作区导航与链接映射/{stem}|{entry['workspace_path']}]]")
-        index_lines.append("")
+            stem = Path(str(entry["proxy"])).with_suffix("").as_posix()
+            group_lines.append(f"- [[05-代码工作区导航与链接映射/{stem}|{entry['workspace_path']}]]")
+        group_lines.extend(["", "## 返回", "", "- [[05-代码工作区导航与链接映射/00-索引·代码工作区导航]]", ""])
+        write_atomic(PROXY_DIR / folder / (index_title + ".md"), "\n".join(group_lines))
+    index_lines.append("")
     write_atomic(PROXY_DIR / "00-索引·代码工作区导航.md", "\n".join(index_lines))
     write_atomic(MANIFEST, json.dumps(entries, ensure_ascii=False, indent=2) + "\n")
     print(f"generated {len(entries)} workspace proxies")
