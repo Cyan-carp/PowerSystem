@@ -195,29 +195,64 @@ const batchLine = computed(() => {
   return `${value.total} 批中叫出 ${value.hit} 批${lead == null ? '' : ` · 中位提前 ${lead} 分钟`}`
 })
 
-/** 一句话事实摘要：只陈述已取得的数据，不做「健康/异常」档位判定 */
-const headline = computed(() => {
+/**
+ * 批次格：每个方块代表一个故障批次，绿色=提前叫出、红色=漏报。
+ * 一屏内用「格子的颜色比例」代替「90%、9/10」这类百分比说明，
+ * 运维不用读数字就知道漏了几次。超过 40 批只画前 40 格，文字仍给全量。
+ */
+const BATCH_CELLS_MAX = 40
+const batchCells = computed(() => {
   const value = batch.value
-  if (!summary.value) return '正在读取质量数据…'
-  if (!hasBatch.value || !value) return '统计区间内没有故障批次，暂无命中结论'
-  const missed = value.total - value.hit
-  const perDevice = operations.value ? `${operations.value.false_alarms_per_device_day.toFixed(1)} 次` : null
-  return `${days.value} 天内 ${value.total} 次故障，提前叫出 ${value.hit} 次${missed ? `、漏掉 ${missed} 次` : '、全部叫出'}${perDevice ? `；近 1 天每台设备日均误报约 ${perDevice}` : ''}`
+  if (!hasBatch.value || !value) return []
+  const total = Math.min(value.total, BATCH_CELLS_MAX)
+  const hit = Math.min(value.hit, total)
+  return Array.from({ length: total }, (_, index) => index < hit)
 })
 
-/** 原来的四格 KPI + 三格运维视角合并成一行胶囊：结论占大数字，其余只留读数 */
-const quickFacts = computed(() => {
+/** 三条可量化的进度条：给刻度上限才能画出「离满还有多远」，没上限的样本量不进条 */
+const miniBars = computed(() => {
   const value = summary.value
   const ops = operations.value
+  const accuracy = value?.accuracy
+  const lead = ops?.lead_minutes_p50
+  const falseAlarms = ops?.false_alarms_per_device_day ?? null
   return [
-    { label: '漏报批次', value: hasBatch.value ? `${batch.value!.total - batch.value!.hit}/${batch.value!.total}` : '—', tone: 'bad' },
-    { label: '批次漏报率', value: hasBatch.value ? ratioOf(1 - (batch.value!.rate ?? 0)) : '—', tone: 'bad' },
-    { label: '每台设备日均误报', value: ops ? `${ops.false_alarms_per_device_day.toFixed(1)} 次` : '—', tone: '' },
-    { label: '误报事件/台·天', value: ops ? `${ops.false_alarm_events_per_device_day.toFixed(1)} 起` : '—', tone: '' },
-    { label: '中位提前量', value: ops ? `${ops.lead_minutes_p50} 分钟` : '—', tone: '' },
-    { label: '样本量', value: value ? n(value.samples) : '—', tone: '' },
-    { label: '窗口准确率', value: value ? ratioOf(value.accuracy) : '—', tone: '' },
+    {
+      label: '窗口准确率',
+      value: value ? ratioOf(accuracy) : '—',
+      hint: '窗口口径：(TP+TN) ÷ 全部窗口',
+      pct: accuracy == null ? 0 : Math.max(0, Math.min(100, accuracy * 100)),
+      color: 'var(--brand)',
+    },
+    {
+      label: '中位提前量',
+      value: ops ? `${lead} 分` : '—',
+      hint: '满格 = 1 小时提前量上限，越接近满越好',
+      pct: lead == null ? 0 : Math.max(0, Math.min(100, (lead / 60) * 100)),
+      color: 'var(--ok)',
+    },
+    {
+      label: '每台日均误报',
+      value: falseAlarms == null ? '—' : `${falseAlarms.toFixed(1)} 次`,
+      hint: '满格 = 每台每天 20 次，越短越好',
+      pct: falseAlarms == null ? 0 : Math.max(0, Math.min(100, (falseAlarms / 20) * 100)),
+      color: 'var(--warn)',
+    },
   ]
+})
+
+/** 格子条下面只留一行计数，避免把批次口径再写成长句 */
+const batchCaption = computed(() => {
+  const value = batch.value
+  if (!hasBatch.value || !value) return '区间内无故障批次'
+  return `${value.total} 批 · 命中 ${value.hit} · 漏 ${value.total - value.hit}`
+})
+
+/** AI 解读默认只留两条依据，其余收进「展开」：正文一长，值班员就不看了 */
+const reasonOpen = ref(false)
+const visibleReasons = computed(() => {
+  const list = driftAnalysis.value?.reasons ?? []
+  return reasonOpen.value ? list : list.slice(0, 2)
 })
 
 /** 运行态徽标：一致 / 不一致 / 读不到，三种都写清，不静默当成一致 */
@@ -393,23 +428,28 @@ const levelHint = (value: string) => LEVEL_HINT[value] || value
       <button class="btn btn-sm" @click="reload">重试</button>
     </div>
 
-    <!-- 首屏 A：一句话结论 + 唯一主数字 + 全部次要读数胶囊 + 运行态 -->
+    <!-- 首屏 A：主数字 + 批次格（一格格的颜色比例就是命中率）+ 三条进度条 -->
     <section class="card hero">
       <div class="hero-main">
         <div class="hero-eyebrow">质量速览 <span>按故障批次 · 近 {{ days }} 天</span></div>
-        <div class="hero-primary">
-          <span class="hero-value num">{{ batchHitRate }}</span>
-          <div class="hero-primary-text">
-            <b>故障提前叫出</b>
-            <span class="num">{{ batchLine }}</span>
+        <div class="hero-body">
+          <div class="hero-lead">
+            <span class="hero-value num">{{ batchHitRate }}</span>
+            <div class="hero-lead-side">
+              <div v-if="batchCells.length" class="batch-cells" :title="batchLine">
+                <i v-for="(hit, index) in batchCells" :key="index" :class="hit ? 'is-hit' : 'is-miss'"></i>
+              </div>
+              <span class="batch-caption num" :title="batchLine">{{ batchCaption }}</span>
+            </div>
           </div>
-        </div>
-        <p class="hero-line">{{ headline }}</p>
-        <div class="hero-chips">
-          <span v-for="fact in quickFacts" :key="fact.label" class="fact" :class="{ 'is-bad': fact.tone === 'bad' }">
-            <span class="fact-label">{{ fact.label }}</span>
-            <b class="fact-value num">{{ fact.value }}</b>
-          </span>
+
+          <div class="hero-bars">
+            <div v-for="bar in miniBars" :key="bar.label" class="mini" :title="bar.hint">
+              <span class="mini-label">{{ bar.label }}</span>
+              <span class="mini-track"><i :style="{ width: `${bar.pct}%`, background: bar.color }"></i></span>
+              <b class="mini-value num">{{ bar.value }}</b>
+            </div>
+          </div>
         </div>
       </div>
       <div class="hero-side">
@@ -427,6 +467,7 @@ const levelHint = (value: string) => LEVEL_HINT[value] || value
         <p v-else class="side-ok">台账现役与推理服务加载版本一致</p>
         <div class="side-meta">
           <span>统计窗口</span><b class="num">{{ windowLabel }}</b>
+          <span>样本量</span><b class="num">{{ summary ? n(summary.samples) : '—' }}</b>
           <span>统计版本</span><b class="num">{{ summary?.model_version || '—' }}</b>
           <span>漂移事件</span><b>{{ drift.length }} 条 · 触发级 {{ triggeredDrift.length }} 条</b>
         </div>
@@ -450,11 +491,25 @@ const levelHint = (value: string) => LEVEL_HINT[value] || value
         </div>
         <div class="insight">
           <template v-if="driftAnalysis">
-            <p class="insight-conclusion">{{ driftAnalysis.conclusion }}</p>
-            <ul v-if="driftAnalysis.reasons.length" class="insight-list">
-              <li v-for="reason in driftAnalysis.reasons" :key="reason">{{ reason }}</li>
+            <!-- 结论与建议各限两行：全文放 title，鼠标停一下就能看全，正文不再铺开 -->
+            <p class="insight-conclusion clamp-2" :title="driftAnalysis.conclusion">{{ driftAnalysis.conclusion }}</p>
+            <ul v-if="visibleReasons.length" class="insight-list">
+              <li v-for="reason in visibleReasons" :key="reason" class="clamp-1" :title="reason">{{ reason }}</li>
             </ul>
-            <p v-if="driftAnalysis.suggestions.length" class="insight-suggest">建议：{{ driftAnalysis.suggestions.join('；') }}</p>
+            <button
+              v-if="driftAnalysis.reasons.length > 2"
+              class="insight-more"
+              @click="reasonOpen = !reasonOpen"
+            >
+              {{ reasonOpen ? '收起依据' : `展开另外 ${driftAnalysis.reasons.length - 2} 条依据` }}
+            </button>
+            <p
+              v-if="driftAnalysis.suggestions.length"
+              class="insight-suggest clamp-1"
+              :title="driftAnalysis.suggestions.join('；')"
+            >
+              建议：{{ driftAnalysis.suggestions.join('；') }}
+            </p>
             <p class="insight-meta">
               {{ driftAnalysis.created_at ? stamp(driftAnalysis.created_at) : '' }} ·
               tokens {{ driftAnalysis.prompt_tokens + driftAnalysis.completion_tokens }}
@@ -462,8 +517,14 @@ const levelHint = (value: string) => LEVEL_HINT[value] || value
           </template>
           <p v-else class="insight-empty">还没有解读记录，点「分析漂移」让模型读一遍分时误差</p>
           <div v-if="trialAnalysis" class="insight-trial">
-            <p class="insight-conclusion">试用对比：{{ trialAnalysis.conclusion }}</p>
-            <p v-if="trialAnalysis.suggestions.length" class="insight-suggest">建议：{{ trialAnalysis.suggestions.join('；') }}</p>
+            <p class="insight-conclusion clamp-2" :title="trialAnalysis.conclusion">试用对比：{{ trialAnalysis.conclusion }}</p>
+            <p
+              v-if="trialAnalysis.suggestions.length"
+              class="insight-suggest clamp-1"
+              :title="trialAnalysis.suggestions.join('；')"
+            >
+              建议：{{ trialAnalysis.suggestions.join('；') }}
+            </p>
           </div>
         </div>
         <div class="retrain-row">
@@ -826,6 +887,10 @@ const levelHint = (value: string) => LEVEL_HINT[value] || value
 .hero-main {
   min-width: 0;
   padding: 15px 20px 16px;
+  /* 右侧核对区行数多，左侧读数少：垂直居中，别让下方空出一块 */
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
 }
 
 .hero-eyebrow {
@@ -843,77 +908,109 @@ const levelHint = (value: string) => LEVEL_HINT[value] || value
   color: var(--ink-4);
 }
 
-.hero-primary {
+/* 数字 + 格子 + 进度条三段式：文字只保留标签，读数靠长度和颜色表达 */
+.hero-body {
   display: flex;
-  align-items: baseline;
+  /* 左边读数、右边进度条各占一段，中间留白分开；条固定宽度，避免拉成一条长线 */
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  margin-top: 6px;
+}
+
+.hero-lead {
+  display: flex;
+  align-items: center;
   gap: 14px;
-  margin-top: 4px;
+  min-width: 0;
 }
 
 .hero-value {
   font-size: 44px;
   font-weight: 700;
   letter-spacing: -0.035em;
-  line-height: 1.1;
+  line-height: 1;
   color: var(--brand);
 }
 
-.hero-primary-text {
+.hero-lead-side {
   display: flex;
   flex-direction: column;
-  gap: 1px;
+  gap: 7px;
   min-width: 0;
 }
 
-.hero-primary-text b {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--ink);
-}
-
-.hero-primary-text span {
-  font-size: 11.5px;
-  color: var(--ink-3);
-}
-
-.hero-line {
-  margin-top: 6px;
-  font-size: 12.5px;
-  line-height: 1.55;
-  color: var(--ink-2);
-}
-
-.hero-chips {
+/* 一个方块 = 一个故障批次：绿色提前叫出，红色漏报 */
+.batch-cells {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
-  margin-top: 12px;
+  gap: 2px;
+  /* 27 批一行放得下；超过 40 批才折行，避免首屏出现两排格子 */
+  max-width: 300px;
 }
 
-.fact {
-  display: inline-flex;
-  align-items: baseline;
-  gap: 6px;
-  padding: 4px 10px;
-  border: 1px solid var(--line);
-  border-radius: var(--r-pill);
-  background: var(--card-soft);
+.batch-cells i {
+  width: 8px;
+  height: 14px;
+  border-radius: 2px;
+  background: var(--track-bg);
+}
+
+.batch-cells i.is-hit {
+  background: var(--ok);
+}
+
+.batch-cells i.is-miss {
+  background: var(--bad);
+}
+
+.batch-caption {
+  font-size: 11px;
+  color: var(--ink-3);
   white-space: nowrap;
 }
 
-.fact-label {
+.hero-bars {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex: 0 1 400px;
+  min-width: 190px;
+}
+
+.mini {
+  display: grid;
+  grid-template-columns: 74px minmax(0, 1fr) 62px;
+  align-items: center;
+  gap: 8px;
+}
+
+.mini-label {
   font-size: 11px;
   color: var(--ink-3);
+  white-space: nowrap;
 }
 
-.fact-value {
+.mini-track {
+  height: 6px;
+  border-radius: 999px;
+  background: var(--track-bg);
+  overflow: hidden;
+}
+
+.mini-track i {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  transition: width 0.4s ease;
+}
+
+.mini-value {
   font-size: 12px;
-  font-weight: 600;
+  font-weight: 650;
   color: var(--ink);
-}
-
-.fact.is-bad .fact-value {
-  color: var(--bad-deep);
+  text-align: right;
+  white-space: nowrap;
 }
 
 .hero-side {
@@ -1035,6 +1132,36 @@ const levelHint = (value: string) => LEVEL_HINT[value] || value
   color: var(--brand);
 }
 
+/* 单行/两行截断：正文只给结论，全文放 title，鼠标停一下看全 */
+.clamp-1 {
+  display: block;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.insight-list li.clamp-1 {
+  display: list-item;
+}
+
+.clamp-2 {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+}
+
+.insight-more {
+  margin-top: 4px;
+  font-size: 11.5px;
+  font-weight: 550;
+  color: var(--brand);
+}
+
+.insight-more:hover {
+  color: var(--brand-deep);
+}
+
 .insight-meta {
   margin-top: 6px;
   font-size: 10.5px;
@@ -1047,10 +1174,13 @@ const levelHint = (value: string) => LEVEL_HINT[value] || value
   color: var(--ink-3);
 }
 
+/* 试用对比单独成块：两块文字用底色分开，扫读时不会连成一大段 */
 .insight-trial {
   margin-top: 9px;
-  padding-top: 8px;
-  border-top: 1px dashed var(--line-strong);
+  padding: 8px 10px;
+  border-radius: var(--r-md);
+  background: var(--card-soft);
+  border: 1px solid var(--line-soft);
 }
 
 .retrain-row {
