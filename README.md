@@ -2,14 +2,14 @@
 
 # 源网智联 · 新能源设备智能运维平台
 
-> **home-dev开发环境**：本机Docker Desktop可关闭；远端中间件与原生API的连接、两种开发方式及旧脚本限制见[后端远程开发说明](stages/02-backend/deploy/home-dev/README.md)。以下本地启动命令仅适用于有意在本机启动Docker的独立环境。
+> **本地开发入口**：先读 [home-dev 开发手册](stages/02-backend/deploy/home-dev/README.md)，按手册选择远端 API 或本机后端；不要直接套用旧的本地 Docker 预检脚本。
 
 
 新能源场站的设备监测、告警解读与受控运维一体化平台
 
 An integrated operations platform for renewable-energy assets — monitoring, alarm interpretation and guarded automation.
 
-<p><i>合成数据演示 · 生产以受限只读档运行 · 全部发布证据可回溯</i></p>
+<p><i>合成数据演示 · 生产能力按权限开放 · 发布证据可回溯</i></p>
 
 [English](#english) | 中文说明
 
@@ -21,7 +21,7 @@ An integrated operations platform for renewable-energy assets — monitoring, al
 
 </div>
 
-## 这是什么
+## 系统概述
 
 一个从零写起的新能源设备运维平台：把光伏逆变器的遥测数据接进来，落成时序库，做告警、健康评分和故障预测，再让大模型把"这条告警到底怎么了"讲清楚，并在人批准后执行受控操作。
 
@@ -42,12 +42,12 @@ An integrated operations platform for renewable-energy assets — monitoring, al
 | 告警闭环 | 阈值与自然规则判警、去重合并、恢复跟踪、值班筛选；AI 解读失败时保留事件事实 |
 | 健康评分 | 按可用率、告警密度与遥测质量打分，缺数据显式标"未知"而不是记 0 分 |
 | 故障预测 | XGBoost 模型输出未来 60 分钟故障概率与风险等级，故障前一小时起进入前兆爬升；页面区分"过期"与"无结果" |
-| 模型质量 | 独立页面：混淆矩阵、累积增益曲线（抽查 10% 设备能覆盖九成故障）、每台设备日均误报与预警提前量 |
+| 模型质量 | 独立页面展示评估指标、混淆矩阵、增益曲线、漂移观察与版本台账；数据不足和分析失败会明确提示 |
 | 换版闭环 | 页面一键重训 → 候选入台账 → 试用 → 确认或回退；推理热加载，切换不停机 |
 | AI 辅助解读 | 解读漂移原因、对比试用版本，结论只作建议，不触发任何训练或换版动作 |
 | 智能助手 | 自然语言问设备状态、告警与报表；答案分层为"直接结论 / 已核验事实 / 未核验解释" |
 | 定期任务 | 日报、巡检等周期任务，带预演与交付位置；写动作须人工批准 |
-| 受控运维 | 重启采集、限功率等动作经独立安全模型审查后才执行，全程留审计 |
+| 受控运维 | 设计了独立审查与人工批准流程；生产开关和实际开放范围以当前系统状态为准 |
 | 桌面访问 | Windows 客户端复用网站业务，支持托盘显隐、系统通知、原生另存为和连接恢复；完全退出后须重新登录 |
 | 可追溯发布 | 按风险选择验证与备份，保留批次、镜像来源及回退/前滚依据；操作入口统一 |
 
@@ -70,7 +70,7 @@ An integrated operations platform for renewable-energy assets — monitoring, al
 
 | 层 | 选型 |
 | --- | --- |
-| 前端 | Vue 3 · Vite · TypeScript · Element Plus · ECharts |
+| 前端 | Vue 3 · Vite · TypeScript · 自研界面与图表组件 |
 | 桌面端 | Electron · TypeScript · NSIS（Windows x64 安装程序） |
 | 后端 | Go 1.24 · Gin · GORM · WebSocket |
 | 智能体 | Python 3.12 · 大模型 API · 检索增强（RAG）· FastAPI（模型服务） |
@@ -95,32 +95,19 @@ An integrated operations platform for renewable-energy assets — monitoring, al
 | Python | 3.12 |
 | Node.js | 20.19+ 或 22.12+ |
 
-### 本地四步启动
+### 本地开发
 
 ```powershell
-# 1. 克隆并准备本机配置（.env 已被 Git 忽略，密码只留本机）
+# 1. 克隆项目
 git clone https://github.com/Cyan-carp/PowerSystem.git
 cd PowerSystem
-Copy-Item .env.example .env       # 至少填 TDENGINE_ROOT_PASSWORD
-
-# 2. 起数据链路：EMQX + TDengine + 模拟器 + 网关（预检约 2 分钟）
-cd stages\01-data-chain
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\preflight-stage1.ps1
-cd ..\..
-
-# 3. 起后端：PostgreSQL / Redis / API / WebSocket
-cd stages\02-backend
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\preflight-stage2.ps1
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\start-stage2.ps1 -SkipPreflight
-cd ..\..
-
-# 4. 起前端
+# 2. 先按 home-dev 手册准备 API 和中间件连接；再启动前端
 cd stages\04-frontend
 npm ci
 npm run dev                       # http://127.0.0.1:5173
 ```
 
-Vite 把 `/api` 与 `/ws` 代理到 `127.0.0.1:8080`。本地跨端口调试需在 `.env` 设 `WS_ALLOWED_ORIGINS=http://127.0.0.1:5173`（精确 Origin）。
+后端环境、配置模板、隧道与 `/api`、`/ws` 代理方式以 [home-dev 开发手册](stages/02-backend/deploy/home-dev/README.md) 和[前端开发说明](stages/04-frontend/README.md)为准。本机独立 Docker 环境另按对应阶段手册准备。
 
 ### 常用命令
 
@@ -131,22 +118,21 @@ Vite 把 `/api` 与 `/ws` 代理到 `127.0.0.1:8080`。本地跨端口调试需�
 | 前端类型检查 | `npm --prefix stages/04-frontend run typecheck` |
 | 前端单元测试 | `npm --prefix stages/04-frontend test` |
 | 前端生产构建 | `npm --prefix stages/04-frontend run build` |
-| 停止后端进程（保留数据） | `.\stages\02-backend\scripts\stop-stage2.ps1` |
-| 完整跑一次一小时 M1 验收 | `.\stages\01-data-chain\scripts\run-stage1-test.ps1` |
+| 开发环境连接与停止 | 见 `stages/02-backend/deploy/home-dev/README.md` |
 | 笔记治理校验 | `python tools\note-governance\check_notes.py` |
 
 ## 疑难解答
 
 | 现象 | 处理 |
 | --- | --- |
-| 前端能打开，接口全 404 | 后端没起，或不在 8080。先 `curl http://127.0.0.1:8080/api/v1/summary`，再查 Vite 代理目标 |
+| 前端能打开，接口全 404 | 按 home-dev 手册检查当前选择的 API 地址和 Vite 代理目标 |
 | `npm run dev` 报 Node 版本不支持 | Vite 要求 Node 20.19+ / 22.12+，18 与 22.11 都不行 |
-| 预检脚本在中文路径下失败 | 少数 Python 虚拟环境在含中文的路径下创建失败。把仓库放到纯 ASCII 路径，或改用已装好依赖的解释器 |
+| 本机开发脚本在中文路径下失败 | 少数 Python 虚拟环境在含中文的路径下创建失败；按对应阶段手册改用纯 ASCII 路径或已装好依赖的解释器 |
 | 设备显示"离线"或"健康未知"，是不是坏了 | 不是。离线按最后上报时间判定，健康未知表示样本不足或遥测故障，页面用 `?state=offline` 或 `?state=unknown` 可单独筛，二者都不等于设备故障 |
 | 登录后刷新还在，关掉标签页就掉线 | JWT 存在 `sessionStorage`，按标签页生命周期，这是有意的，避免共用电脑留登录态 |
 | 关闭桌面窗口后程序还在 | 点击 × 会隐藏到托盘；需要完全关闭时，从托盘菜单选择“退出” |
 | 桌面端没有收到系统通知 | 先核客户端通知设置、Windows 免打扰和网络状态；通知不保证必达，告警事实以站内记录为准 |
-| 能不能 `docker compose down -v` 清一下 | 不要。`-v` 会连阶段一、阶段二的 TDengine / PostgreSQL / Redis 数据卷一起删。停止用 `stop-stage2.ps1` |
+| 能不能 `docker compose down -v` 清一下 | 不要。`-v` 会删除数据库数据卷；开发环境的停止方式见 home-dev 手册 |
 | 报表日期对不上 | 报表按北京时间自然日聚合，`end_date` 不含当日；跨时区看数据前先把时区对齐 |
 | 端口被占但 `netstat` 查不到 | Windows 上 Hyper-V / WSL 会预留动态端口段，落在区间内的端口 bind 直接失败。`netsh interface ipv4 show excludedportrange protocol=tcp` 可确认 |
 
@@ -163,8 +149,10 @@ Vite 把 `/api` 与 `/ws` 代理到 `127.0.0.1:8080`。本地跨端口调试需�
 | 按阶段读源码说明（六至十） | [阶段六](stages/06-security-recovery/README.md) · [阶段七](stages/07-agent/README.md) · [阶段八](stages/08-agent-rag/README.md) · [阶段九](stages/09-ops-agent/README.md) · [阶段十](stages/10-security-agent/README.md) |
 | 开发 Windows 桌面客户端（阶段十一） | [源码、构建与测试](stages/11-desktop-client/README.md) |
 | 查桌面版设计、验收与交接 | [第五版总索引](notes/01-项目调研规划与开发建设记录/05-第五版-Windows桌面客户端/00-索引·第五版-Windows桌面客户端.md) · [团队交付](notes/01-项目调研规划与开发建设记录/05-第五版-Windows桌面客户端/02-分阶段实施/03-S03联合验收与团队交付/02-V5-S03测试与交付.md) · [正式交接](notes/01-项目调研规划与开发建设记录/05-第五版-Windows桌面客户端/03-跨对话交接/V5-S03-阶段交接.md) |
-| 部署到自己的服务器 | [部署说明](stages/04-frontend/deploy/README.md) · [上传服务器规范](notes/02-工程规范边界与验收治理/项目工程规范/05-上传服务器规范.md) |
-| 高效率开发、测试与发布 | [分级流程与本次优化记录](notes/04-系统部署发布备份与变更记录/部署与运维日志/05-发布工具链与文档治理/54-开发测试发布与备份流程提效.md) |
+| 部署到自己的服务器 | [部署说明](stages/04-frontend/deploy/README.md) · [上传服务器规范](notes/02-工程规范边界与验收治理/项目工程规范/04-生产发布与恢复/01-上传服务器与分级发布规范.md) |
+| 查工程规范和产物目录 | [按目的整理的工程规范](notes/02-工程规范边界与验收治理/项目工程规范/00-索引·项目工程规范.md) · [运行产物说明](notes/02-工程规范边界与验收治理/运行产物说明/00-索引·运行产物说明.md) · [代码工作区导航](notes/05-代码工作区导航与链接映射/00-索引·代码工作区导航.md) |
+| 查入库积压与死信出口 | [专项索引](notes/01-项目调研规划与开发建设记录/专项修复-入库容错与死信出口/00-索引·入库容错与死信出口.md)；实际生效阶段见[当前系统状态](notes/00-当前系统状态.md) |
+| 高效率开发、测试与发布 | [分级流程与本次优化记录](notes/04-系统部署发布备份与变更记录/部署与运维日志/05-发布工具链与文档治理/01-发布机制与门禁/54-开发测试发布与备份流程提效.md) |
 | 查历史发布与恢复记录 | [部署与运维日志索引](notes/04-系统部署发布备份与变更记录/部署与运维日志/00-索引·部署与运维日志.md) |
 | 核对里程碑与待办 | [项目验收与收尾清单](notes/02-工程规范边界与验收治理/项目验收与收尾清单/00-索引·项目验收与收尾清单.md) |
 
@@ -180,7 +168,7 @@ Vite 把 `/api` 与 `/ws` 代理到 `127.0.0.1:8080`。本地跨端口调试需�
 
 ## 目录
 
-- [这是什么](#这是什么)
+- [系统概述](#系统概述)
 - [主要功能](#主要功能)
 - [技术架构](#技术架构)
 - [快速开始](#快速开始)
@@ -204,7 +192,7 @@ PowerSystem/
 │   ├── 10-security-agent/  安全审查与门禁
 │   └── 11-desktop-client/  Windows 桌面客户端
 ├── notes/          Obsidian 笔记库（设计、验收、部署日志、手册）
-├── artifacts/      阶段快照与批次证据（不入库，索引见 notes/05-设备知识设计素材与历史归档资产/）
+├── artifacts/      阶段快照与批次证据（不入库，说明见 notes/02-工程规范边界与验收治理/运行产物说明/）
 ├── deploy/         边缘服务器部署配置
 ├── tools/          笔记治理与知识图谱校验
 ├── shared-memory/  跨会话过程记录（不作验收依据）
@@ -224,17 +212,17 @@ The same platform is available in a browser and through an Electron-based Window
 - End-to-end chain: ingest → store → detect → explain → act → review
 - 143 synthetic devices across 5 stations, 5-second sampling, replay on reconnect
 - Layered answers: verified facts separated from unverified explanation
-- Every action that writes goes through human approval and an audit trail
+- Sensitive assistant actions require explicit approval and leave an audit trail; enabled actions are listed in the current status page
 - Windows desktop access with tray controls, native saving and connection recovery
-- Releases are traceable: batch id, backup, isolated restore and observation window
+- Releases are traceable by batch and evidence; the actual checks and backup status are recorded per batch
 
 **Quick start**
 
 To use the platform, open the [website](https://www.cyancarp.cn/) or install the Windows team package and sign in with an existing account. Desktop installation does not require the development tools below; installation and upgrade instructions are included in `TEAM-GUIDE.md`.
 
-For local development, follow the [four-step setup](#本地四步启动) above to start the data chain, backend and frontend in order.
+For local development, first read the [home-dev guide](stages/02-backend/deploy/home-dev/README.md) and choose the remote API or local backend workflow; then start the Vue frontend.
 
-Requires Windows PowerShell 5.1+, Docker CLI (Desktop engine locally or via home-dev), Go 1.24+, Python 3.12 and Node 20.19+/22.12+. The console runs at `http://127.0.0.1:5173` and proxies `/api` and `/ws` to `127.0.0.1:8080`.
+Development requirements depend on the selected workflow. The frontend requires Node 20.19+ or 22.12+; the API and WebSocket proxy targets are configured as described in the home-dev guide.
 
 **Notes**
 
@@ -242,4 +230,4 @@ All fleet data in this repository is synthetic and must not be used as a basis f
 
 Desktop installers are distributed separately from the source repository. The internal Windows package is unsigned, has no automatic updates and requires the online platform; system notification delivery is best effort. Desktop source and development instructions are in [stage eleven](stages/11-desktop-client/README.md).
 
-遥测修复的发布、冻结退路与恢复验证边界见[遥测可靠性发布与前滚门禁](notes/04-系统部署发布备份与变更记录/部署与运维日志/05-发布工具链与文档治理/53-遥测可靠性修复发布与前滚门禁.md)；当前运行状态统一见[当前系统状态](notes/00-当前系统状态.md)。
+遥测修复的发布与恢复记录见[遥测可靠性发布与前滚门禁](notes/04-系统部署发布备份与变更记录/部署与运维日志/05-发布工具链与文档治理/01-发布机制与门禁/53-遥测可靠性修复发布与前滚门禁.md)；当前运行状态统一见[当前系统状态](notes/00-当前系统状态.md)。

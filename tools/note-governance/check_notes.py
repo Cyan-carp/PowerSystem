@@ -194,13 +194,14 @@ def main() -> int:
                 elif not (proxies / entry["proxy"]).is_file():
                     errors.append(f"workspace proxy is missing: {entry['proxy']}")
                 continue
-            expected_relative = Path(os.path.relpath(target, proxies)).as_posix()
+            proxy_file = proxies / entry["proxy"]
+            expected_relative = Path(os.path.relpath(target, proxy_file.parent)).as_posix()
             relative_path = entry.get("relative_path")
             if relative_path != expected_relative:
                 errors.append(f"stale relative_path: {workspace_path}")
             if not relative_path or Path(str(relative_path)).is_absolute() or "://" in str(relative_path):
                 errors.append(f"workspace path is not relative: {workspace_path}")
-            elif (proxies / str(relative_path)).resolve() != target.resolve():
+            elif (proxy_file.parent / str(relative_path)).resolve() != target.resolve():
                 errors.append(f"relative workspace path resolves incorrectly: {workspace_path}")
             # Git tracks files, not directory objects.  A directory proxy may
             # resolve locally but intentionally has no file-level GitHub URL.

@@ -45,7 +45,7 @@ updated: 2026-10-30
 - `stage7_20260930_173842_c74b/`：更早的离线与预检批次。
 - `stage7_*/`：按运行编号生成的离线、预检、联调日志与响应。
 
-> `run.json` 不自动签收。运行与阶段笔记：[[05-代码工作区导航与链接映射/stages-07-agent-README|README]] · [[01-项目调研规划与开发建设记录/02-第二版-智能体升级/问答及调度业务主智能体/废案-旧智能体方案/02-功能开发与阶段交付/01-基础服务与只读工具链/05-V2-M1测试与交付]]。
+> `run.json` 不自动签收。运行与阶段笔记：[[05-代码工作区导航与链接映射/01-项目与阶段说明/stages-07-agent-README|README]] · [[01-项目调研规划与开发建设记录/02-第二版-智能体升级/问答及调度业务主智能体/废案-旧智能体方案/02-功能开发与阶段交付/01-基础服务与只读工具链/05-V2-M1测试与交付]]。
 
 ## 十、第二版阶段二 · 告警解读与监控产物
 
@@ -287,7 +287,7 @@ updated: 2026-10-30
 - `artifacts/stage7-智能体/distribution/PowerSystem-Knowledge-Misses.exe`：可分发的 Windows 64 位单文件程序；`使用说明.txt` 与 `PowerSystem-Knowledge-Misses-share.zip` 是给收件人的说明和仅含程序、说明的分享包。程序不内置服务器地址、私钥、口令或知识缺口数据；收件人须自行具备 SSH 授权与主机密钥记录。`distribution/build/`、`.spec` 为可再生成的 PyInstaller 构建产物，不需分享。
 - 分发版在收件人的 `%LOCALAPPDATA%/PowerSystem/knowledge-misses/knowledge-misses.html` 生成并覆盖私有报告，不写入仓库。服务器记录仍由运行中 Agent 的 `/knowledge-misses` 实际 bind source 读取；默认宿主目录是 `/opt/powersystem/runtime/agent-knowledge-misses/`，不因查看器而复制、清理或修改服务器数据。
 
-上述本机入口、报告和分发包均位于 Git 忽略的 `artifacts/`；分享前仅取 `PowerSystem-Knowledge-Misses-share.zip`，不要将整个 `private/` 或 `distribution/` 目录打包。使用方式与权限边界见 [[05-代码工作区导航与链接映射/stages-07-agent-README|README]]、[[02-工程规范边界与验收治理/项目工程规范/07-能力数据与服务器边界]]。
+上述本机入口、报告和分发包均位于 Git 忽略的 `artifacts/`；分享前仅取 `PowerSystem-Knowledge-Misses-share.zip`，不要将整个 `private/` 或 `distribution/` 目录打包。使用方式与权限边界见 [[05-代码工作区导航与链接映射/01-项目与阶段说明/stages-07-agent-README|README]]、[[02-工程规范边界与验收治理/项目工程规范/05-安全与能力边界/01-能力数据与服务器边界]]。
 
 ## 十七、自然语言问答本地候选（2026-10-09）
 
