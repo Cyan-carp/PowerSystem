@@ -6,6 +6,14 @@ tags: [源网智联, 后端, 源码运行]
 
 > **home-dev开发**：依赖已迁到远端；当前连接命令见[远程开发说明](deploy/home-dev/README.md)。本页原本地Compose/preflight仅适用于有意启动本地引擎的模式，不用于home-dev日常连接。前端可直接经隧道连接远端API。
 
+### IR-S02 过期出口（本地候选，默认关闭）
+
+`INBOX_EXPIRY_ENABLED` 默认 `false`。显式开启后，单 worker 每 `INBOX_EXPIRY_INTERVAL_SECONDS`（默认 30）秒在维护门禁内处理一批：`processed_at IS NULL AND ts_ms < now-7d AND failure_code IS DISTINCT FROM 'owner_abandoned'` 的行写为 `business_state='quarantined'`、`failure_code='window_expired'`、`processed_at=clock_timestamp()`，并清空 `next_attempt_at`；payload、attempts、first_failed_at、reason/missing 证据保留。单批上限 `INBOX_EXPIRY_BATCH`（默认 2000），事务预算 `INBOX_EXPIRY_BUDGET_SECONDS`（默认 5 秒）；30 秒/2000 行的名义排水能力为 240,000 行/小时。`history_enabled=false` 或调度单例缺失时 fail-closed 暂停过期写入；过期 worker 不持有 `scheduler.mu`，与实时路径按 `ts_ms` 窗口不相交，行级 `SKIP LOCKED` 兜底。不删除行、不改 TDengine 或 energy_daily；本轮不建新索引，生产是否启用及是否先做 021 只认[唯一状态页](../../notes/00-当前系统状态.md)，发布与生产故障注入需当轮授权。
+
+### IR-S03 系统性查无熔断（本地候选，默认关闭）
+
+`TD_MISSING_CIRCUIT_ENABLED` 默认 `false`。显式开启后，历史 TD 确认查询的成功查无与查询报错分别计数；只有接收至少 2 分钟的样本才可进入系统性缺失证据。最近 3 分钟内至少 16 台不同设备各有 2 次成熟查无、每台跨度至少 30 秒，才打开独立缺失熔断；30 秒冷却后只允许一次真实样本半开探测，命中才恢复。它不修改原错误熔断、单行 `td_missing` 宽限、同设备 FIFO 或 S02 过期出口。阈值是隔离候选，生产 TD 写入延迟尚未实测，是否启用只认[唯一状态页](../../notes/00-当前系统状态.md)。不删除行、不改 TDengine/energy_daily 历史值；发布与生产故障注入需当轮授权。
+
 
 可用率报表保持`availability-v1`与原查询参数，新增可选统计元数据`statistics_updated_at`、`aggregation_state`、`aggregation_lag_ms`；JSON与CSV使用同一时长结果。017只新增派生小时汇总及控制状态，完整小时汇总与窗口首尾原始补算组合，未知时长与15秒样本上限不变。缺桶、脏桶、过期或停用读取时回到原始计算。后台任务与回退管理命令唯一维护在[阶段四部署README](../04-frontend/deploy/README.md#可用率小时汇总的本机管理)，实际是否部署/开启仍以[唯一状态页](../../notes/00-当前系统状态.md)为准。
 

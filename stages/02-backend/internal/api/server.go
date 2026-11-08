@@ -58,17 +58,22 @@ type Server struct {
 	restoreOK    bool
 	runContext   context.Context
 
-	telemetry         telemetryMonitor
-	scheduler         inboxScheduler
+	telemetry telemetryMonitor
+	scheduler inboxScheduler
+	// IR-S02 过期出口的冻结参数与灰度开关。默认关闭；测试可显式覆盖。
+	expiry inboxExpirySettings
 	// inboxFloor 是入库调度的时间窗下界（毫秒）。每轮由调度器按「现在 - inboxWindow」
 	// 重算；0 表示不设窗，行为与改动前完全一致。事务内队头复核读同一个值，
 	// 两处必须同源，否则会重演 2026-11-03 的静默丢弃。
-	inboxFloor atomic.Int64
+	inboxFloor        atomic.Int64
 	snapshotMu        sync.Mutex
 	modelSwitch       sync.Mutex
 	tdCircuit         dependencyCircuit
 	snapshotTDCircuit dependencyCircuit
 	redisCircuit      dependencyCircuit
+	// IR-S03 独立于 tdCircuit 的系统性查无熔断。只有 HasSample 成功返回
+	// false 且样本已过接收成熟线才累计证据；错误仍走 tdCircuit。
+	tdMissingCircuit tdMissingCircuit
 
 	fleetCatalog    *fleet.Catalog
 	rollupInstalled bool
@@ -80,6 +85,19 @@ func New(cfg config.Config, db *gorm.DB, redis *redis.Client, td *tdengine.Clien
 	if db != nil {
 		s.rollupInstalled = db.Migrator().HasTable("availability_rollup_state")
 	}
+	s.expiry = inboxExpirySettings{
+		Enabled:  cfg.InboxExpiryEnabled,
+		Interval: time.Duration(cfg.InboxExpiryIntervalSeconds) * time.Second,
+		Batch:    cfg.InboxExpiryBatch,
+		Budget:   time.Duration(cfg.InboxExpiryBudgetSeconds) * time.Second,
+	}.withDefaults()
+	// IR-S03 默认关闭，与 S02 一样由显式环境变量灰度；关闭时只停止新的系统性
+	// 缺失开路，不改变既有单行 missing 证据和错误熔断。
+	s.tdMissingCircuit = tdMissingCircuit{
+		enabled:  cfg.TDMissingCircuitEnabled,
+		settings: defaultTDMissingCircuitSettings(),
+	}
+	s.telemetry.auxValues = unknownInboxQueueValues()
 	s.telemetry.touch("start", time.Now())
 	// The fleet manifest is optional: a missing or invalid file must not stop the
 	// existing API from serving devices and alarms without scope filtering.
@@ -166,6 +184,7 @@ func New(cfg config.Config, db *gorm.DB, redis *redis.Client, td *tdengine.Clien
 	d := r.Group("/api/v1/demo-console", s.demoConsoleAuth)
 	d.GET("/devices", s.demoConsoleDevices)
 	d.GET("/alarms", s.demoConsoleList)
+	d.GET("/inbox-operations", s.demoConsoleInboxOperations)
 	d.POST("/alarms", s.demoConsoleCreate)
 	d.GET("/alarms/:id", s.demoConsoleGet)
 	d.POST("/alarms/:id/ack", s.demoConsoleAck)
@@ -274,6 +293,11 @@ func (s *Server) Run(parent context.Context) (runErr error) {
 			if err := s.restoreLatest(ctx); err == nil {
 				s.setStartup("running", true)
 				launch(s.worker)
+				// S02 队列观测始终启用；过期写路径只在灰度开关打开时启动，且只有一个 worker。
+				launch(s.inboxQueueWatcher)
+				if s.expiry.Enabled {
+					launch(s.expiryWorker)
+				}
 				launch(s.snapshotWorker)
 				launch(s.manualAlarmEvents)
 				launch(s.energyWorker)
@@ -498,6 +522,25 @@ const energyRoundBudget = 3 * time.Second
 // 40 分钟。谓词已抽成 inboxPendingPredicate，两处共享同一常量。
 const inboxHeadProbeSQL = `SELECT id FROM telemetry_inbox WHERE device_id=? AND ` + inboxPendingPredicate + ` ORDER BY id ASC LIMIT 1`
 
+// tdQueryCancellationError 在 HasSample 返回后按真实 context 状态做 fail-closed
+// 判定。父/事务取消以及单次 TD 查询预算截止都不能记作命中或查无。单次查询
+// 的错误须在 depcancel 前捕获；否则主动 cancel 会让每次调用都看似已取消。
+func (s *Server) tdQueryCancellationError(ctx, txctx context.Context, depErr error, probe bool) error {
+	if ctx.Err() == nil && txctx.Err() == nil && depErr == nil {
+		return nil
+	}
+	s.tdMissingCircuit.abortProbe(probe)
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := txctx.Err(); err != nil {
+		return err
+	}
+	// The dependency deadline can expire before the parent transaction. Skip
+	// this attempt without recording a false missing or a durable row failure.
+	return errDependencyOpen
+}
+
 func (s *Server) processInboxItem(parent context.Context, item model.Inbox) {
 	measured := time.Now()
 	defer func() { s.telemetry.elapsed("history", time.Since(measured)) }()
@@ -551,22 +594,67 @@ func (s *Server) processInboxItem(parent context.Context, item model.Inbox) {
 			return errors.New(code)
 		}
 		if item.TDConfirmedAt == nil {
-			if !s.tdCircuit.enter(time.Now()) {
+			now := time.Now()
+			// IR-S03：先看系统性查无熔断，再看原错误熔断。缺失熔断只限制
+			// TD 确认尝试频率，不写业务状态，也不越过同设备队列头。
+			decision := s.tdMissingCircuit.allowQuery(now, item.DeviceID, item.ReceivedAt)
+			if decision.HalfOpenTransition {
+				s.telemetry.touch("td_missing_circuit_half_open", now)
+			}
+			if !decision.Allow {
+				s.telemetry.touch("td_missing_circuit_skip", now)
+				return errDependencyOpen
+			}
+			if !s.tdCircuit.enter(now) {
+				// 错误熔断先拒绝时没有真正执行探测，释放名额但不改缺失状态。
+				s.tdMissingCircuit.abortProbe(decision.Probe)
 				s.telemetry.touch("td_circuit_skip", time.Now())
 				return errDependencyOpen
 			}
 			dep, depcancel := context.WithTimeout(txctx, telemetryDependencyBudget)
 			found, err := s.td.HasSample(dep, item.DeviceID, item.TS, item.Seq)
+			depErr := dep.Err()
 			depcancel()
+			// 原错误熔断语义完全不变：仍按 txctx 取消标记，错误累计/冷却/半开
+			// 由 dependencyCircuit 自己处理。
 			s.tdCircuit.finish(time.Now(), err, txctx.Err() != nil)
 			s.telemetry.touch("td_circuit_attempt", time.Now())
+			// A real TD error keeps the existing td_unavailable retry path. The
+			// dependency deadline guard below only resolves an ambiguous nil result.
 			if err != nil {
+				depErr = nil
+			}
+			// 取消在错误、查无、命中三条分支之前统一 fail-closed：HasSample 即使
+			// 返回 (false,nil)，只要查询返回时父/tx context 已取消或单次
+			// TD 预算已截止，就不能记查无或成熟证据。父/tx 取消走 cancelled，
+			// 单次预算走无持久失败的跳过；半开探测名额由 helper 释放。
+			if cancelErr := s.tdQueryCancellationError(ctx, txctx, depErr, decision.Probe); cancelErr != nil {
+				return cancelErr
+			}
+			if err != nil {
+				s.telemetry.touch("td_query_error", time.Now())
+				if s.tdMissingCircuit.observeError(time.Now(), item.DeviceID, decision.Probe) {
+					s.telemetry.touch("td_missing_circuit_open", time.Now())
+				}
 				code = "td_unavailable"
 				return err
 			}
 			if !found {
+				observed := time.Now()
+				s.telemetry.touch("td_query_missing", observed)
+				mature, opened := s.tdMissingCircuit.observeMissing(observed, item.DeviceID, item.ReceivedAt, decision.Probe)
+				if mature {
+					s.telemetry.touch("td_missing_mature", observed)
+				}
+				if opened {
+					s.telemetry.touch("td_missing_circuit_open", observed)
+				}
 				code = "td_missing"
 				return errors.New(code)
+			}
+			s.telemetry.touch("td_query_hit", time.Now())
+			if s.tdMissingCircuit.observeHit(time.Now(), item.DeviceID) {
+				s.telemetry.touch("td_missing_circuit_recovered", time.Now())
 			}
 			if err := tx.Model(&model.Inbox{}).Where("id=?", item.ID).Update("td_confirmed_at", gorm.Expr("clock_timestamp()")).Error; err != nil {
 				return err

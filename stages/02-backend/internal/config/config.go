@@ -52,6 +52,16 @@ type Config struct {
 	FleetPath               string
 	SimulationAlarmMode     string
 	AgentInterpretProtocol  string
+	// IR-S02 过期出口。默认关闭；开启后只把超过 7 天窗口且仍未处理的行写为
+	// quarantined/window_expired，不删除数据，历史证据字段保留（仅清空调度字段
+	// next_attempt_at）。
+	InboxExpiryEnabled         bool
+	InboxExpiryIntervalSeconds int
+	InboxExpiryBatch           int
+	InboxExpiryBudgetSeconds   int
+	// IR-S03 系统性 TD 查无熔断。默认关闭；开启后只影响历史确认路径的
+	// HasSample(false,nil)，不改变错误熔断、单行 missing 证据或 S02 出口。
+	TDMissingCircuitEnabled bool
 }
 
 var identifier = regexp.MustCompile(`^[a-z][a-z0-9_]{0,63}$`)
@@ -66,12 +76,12 @@ func Load(service string) (Config, error) {
 	v.SetDefault("AGENT_CHAT_CONCURRENCY", 4)
 	v.SetDefault("AI_URL", "http://127.0.0.1:8090")
 	v.SetDefault("TRAINER_URL", "http://ai-trainer:8091")
-	// 质量解读复用解读通道的 DeepSeek 账号（同一把 Key、同一份余额），
-	// 但单独开 thinking——归因要读多个时段的数据，值得多花点 token。
+	// 质量解读复用解读通道的 DeepSeek 账号（同一把 Key、同一份余额）。
+	// 结构化 JSON 解读默认关闭 thinking，避免推理占完输出预算而没有正文。
 	v.SetDefault("QUALITY_LLM_BASE_URL", "https://api.deepseek.com")
 	v.SetDefault("QUALITY_LLM_MODEL", "deepseek-flash")
 	v.SetDefault("QUALITY_LLM_KEY_FILE", "/run/secrets/quality_llm_key")
-	v.SetDefault("QUALITY_LLM_THINKING", "enabled")
+	v.SetDefault("QUALITY_LLM_THINKING", "disabled")
 	v.SetDefault("AI_ENABLED", false)
 	v.SetDefault("AI_POLL_SECONDS", 300)
 	v.SetDefault("MQTT_BROKER", "tcp://127.0.0.1:1883")
@@ -88,6 +98,11 @@ func Load(service string) (Config, error) {
 	v.SetDefault("FLEET_CONFIG_PATH", filepath.Join("..", "01-data-chain", "simulator", "fleet.json"))
 	v.SetDefault("SIMULATION_ALARM_MODE", "off")
 	v.SetDefault("AGENT_INTERPRET_PROTOCOL", "v1")
+	v.SetDefault("INBOX_EXPIRY_ENABLED", false)
+	v.SetDefault("INBOX_EXPIRY_INTERVAL_SECONDS", 30)
+	v.SetDefault("INBOX_EXPIRY_BATCH", 2000)
+	v.SetDefault("INBOX_EXPIRY_BUDGET_SECONDS", 5)
+	v.SetDefault("TD_MISSING_CIRCUIT_ENABLED", false)
 	cfg := Config{
 		HTTPAddr: v.GetString("HTTP_ADDR"), Broker: v.GetString("MQTT_BROKER"),
 		ClientID:  v.GetString("MQTT_CLIENT_PREFIX") + "-" + service,
@@ -104,12 +119,28 @@ func Load(service string) (Config, error) {
 		FleetPath:              v.GetString("FLEET_CONFIG_PATH"),
 		SimulationAlarmMode:    v.GetString("SIMULATION_ALARM_MODE"),
 		AgentInterpretProtocol: v.GetString("AGENT_INTERPRET_PROTOCOL"),
+
+		InboxExpiryEnabled:         v.GetBool("INBOX_EXPIRY_ENABLED"),
+		InboxExpiryIntervalSeconds: v.GetInt("INBOX_EXPIRY_INTERVAL_SECONDS"),
+		InboxExpiryBatch:           v.GetInt("INBOX_EXPIRY_BATCH"),
+		InboxExpiryBudgetSeconds:   v.GetInt("INBOX_EXPIRY_BUDGET_SECONDS"),
+
+		TDMissingCircuitEnabled: v.GetBool("TD_MISSING_CIRCUIT_ENABLED"),
 	}
 	if cfg.SimulationAlarmMode != "off" && cfg.SimulationAlarmMode != "controlled" && cfg.SimulationAlarmMode != "paused" {
 		return Config{}, errors.New("invalid SIMULATION_ALARM_MODE")
 	}
 	if cfg.AgentInterpretProtocol != "v1" && cfg.AgentInterpretProtocol != "v2" {
 		return Config{}, errors.New("invalid AGENT_INTERPRET_PROTOCOL")
+	}
+	if cfg.InboxExpiryIntervalSeconds < 5 || cfg.InboxExpiryIntervalSeconds > 3600 {
+		return Config{}, errors.New("INBOX_EXPIRY_INTERVAL_SECONDS must be 5..3600")
+	}
+	if cfg.InboxExpiryBatch < 1 || cfg.InboxExpiryBatch > 5000 {
+		return Config{}, errors.New("INBOX_EXPIRY_BATCH must be 1..5000")
+	}
+	if cfg.InboxExpiryBudgetSeconds < 1 || cfg.InboxExpiryBudgetSeconds > 30 {
+		return Config{}, errors.New("INBOX_EXPIRY_BUDGET_SECONDS must be 1..30")
 	}
 	// Agent configuration must never prevent the business API from starting.
 	if service == "api" {

@@ -25,12 +25,13 @@ type telemetryMonitor struct {
 	durationSum   map[string]time.Duration
 	durationMax   map[string]time.Duration
 
-	mu       sync.Mutex
-	counts   map[string]uint64
-	values   map[string]float64
-	times    map[string]time.Time
-	failures map[string]uint64
-	logs     map[string]time.Time
+	mu        sync.Mutex
+	counts    map[string]uint64
+	values    map[string]float64
+	auxValues map[string]float64
+	times     map[string]time.Time
+	failures  map[string]uint64
+	logs      map[string]time.Time
 }
 
 func (m *telemetryMonitor) touch(key string, at time.Time) {
@@ -45,6 +46,24 @@ func (m *telemetryMonitor) touch(key string, at time.Time) {
 	}
 	m.counts[key]++
 }
+
+// add 用于累计“行数”而不是“调用次数”的指标，例如 expiry_rows。
+func (m *telemetryMonitor) add(key string, n uint64, at time.Time) {
+	if n == 0 {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.counts == nil {
+		m.counts = map[string]uint64{}
+	}
+	if m.times == nil {
+		m.times = map[string]time.Time{}
+	}
+	m.counts[key] += n
+	m.times[key] = at
+}
+
 func (m *telemetryMonitor) failure(code string, quarantine bool, at time.Time) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -311,6 +330,10 @@ func telemetryAge(at *time.Time, now time.Time) float64 {
 }
 func (s *Server) serveTelemetryMetrics(c *gin.Context) {
 	// The handler performs no database/cache I/O. Ages keep increasing if a loop stops.
+	// Read the missing circuit before telemetry.mu. Core updates may record a
+	// telemetry counter after releasing the circuit lock; taking locks in the
+	// reverse order here would deadlock with that path.
+	missingState := s.tdMissingCircuit.snapshot(time.Now())
 	m := &s.telemetry
 	m.mu.Lock()
 	var b strings.Builder
@@ -321,6 +344,17 @@ func (s *Server) serveTelemetryMetrics(c *gin.Context) {
 	for key, value := range values {
 		fmt.Fprintf(&b, "powersystem_telemetry_%s %g\n", key, value)
 	}
+	// S02 队列观测使用独立 map，避免被 5 秒探针的整体替换清掉。
+	aux := m.auxValues
+	if aux == nil {
+		aux = unknownInboxQueueValues()
+	}
+	for key, value := range aux {
+		fmt.Fprintf(&b, "powersystem_telemetry_%s %g\n", key, value)
+	}
+	// 0=closed, 1=open, 2=eligible for or in half-open probing. This is an instantaneous process state;
+	// counters below survive only until process restart.
+	fmt.Fprintf(&b, "powersystem_telemetry_td_missing_circuit_state %g\n", missingState)
 	fmt.Fprintf(&b, "powersystem_telemetry_admission_inflight %d\n", len(s.ingressSlots))
 	fmt.Fprintf(&b, "powersystem_telemetry_admission_queued %d\n", len(s.ingressQueue))
 	fmt.Fprintf(&b, "powersystem_telemetry_admission_waiting_ack %d\n", len(s.ingressAcks))
@@ -332,13 +366,13 @@ func (s *Server) serveTelemetryMetrics(c *gin.Context) {
 	for _, key := range []string{"ingress_ack_requested", "ingress_oversize"} {
 		fmt.Fprintf(&b, "powersystem_telemetry_%s_total %d\n", key, m.counts[key])
 	}
-	for _, key := range []string{"start", "probe", "loop", "advance", "success", "redis_write", "cancelled", "commit_unknown", "gate_disabled", "gate_enabled", "gate_sql_error", "gate_missing", "ws_drop", "ws_slow", "ws_write_timeout", "td_probe_attempt", "td_probe_success", "td_probe_timeout", "td_probe_error", "td_probe_skipped", "scheduler_visit", "scheduler_wrap", "scheduler_budget", "retry", "quarantine", "td_circuit_attempt", "td_circuit_skip", "redis_circuit_attempt", "redis_circuit_skip"} {
+	for _, key := range []string{"start", "probe", "loop", "advance", "success", "redis_write", "cancelled", "commit_unknown", "gate_disabled", "gate_enabled", "gate_sql_error", "gate_missing", "ws_drop", "ws_slow", "ws_write_timeout", "td_probe_attempt", "td_probe_success", "td_probe_timeout", "td_probe_error", "td_probe_skipped", "scheduler_visit", "scheduler_wrap", "scheduler_budget", "retry", "quarantine", "td_circuit_attempt", "td_circuit_skip", "redis_circuit_attempt", "redis_circuit_skip", "td_query_hit", "td_query_missing", "td_query_error", "td_missing_mature", "td_missing_circuit_open", "td_missing_circuit_skip", "td_missing_circuit_half_open", "td_missing_circuit_recovered", "inbox_queue", "inbox_queue_probe_error", "expiry_run", "expiry_success", "expiry_rows", "expiry_probe_rows", "expiry_failure", "expiry_timeout", "expiry_unknown", "expiry_skip", "expiry_paused"} {
 		at := m.times[key]
 		fmt.Fprintf(&b, "powersystem_telemetry_%s_total %d\n", key, m.counts[key])
 		fmt.Fprintf(&b, "powersystem_telemetry_%s_age_seconds %g\n", key, telemetryAge(&at, time.Now()))
 		fmt.Fprintf(&b, "powersystem_telemetry_%s_timestamp_seconds %g\n", key, telemetryTimestamp(at))
 	}
-	for _, path := range []string{"history", "business_pg", "snapshot", "ingress", "cursor", "td_confirm"} {
+	for _, path := range []string{"history", "business_pg", "snapshot", "ingress", "cursor", "td_confirm", "expiry"} {
 		fmt.Fprintf(&b, "powersystem_telemetry_path_seconds_sum{path=%q} %g\n", path, m.durationSum[path].Seconds())
 		fmt.Fprintf(&b, "powersystem_telemetry_path_seconds_count{path=%q} %d\n", path, m.durationCount[path])
 	}

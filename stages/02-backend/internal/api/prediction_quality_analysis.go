@@ -27,7 +27,7 @@ import (
 
 const qualityAnalysisPromptVersion = "v1"
 
-// qualityLLMThinking 控制是否开启深度思考。默认开启，可在环境里关掉做对比。
+// qualityLLMThinking 控制是否开启深度思考。默认关闭，仍可显式开启做对比。
 func (s *Server) qualityLLMThinking() string {
 	if strings.EqualFold(strings.TrimSpace(s.cfg.QualityLLMThinking), "disabled") {
 		return "disabled"
@@ -187,27 +187,48 @@ func (s *Server) collectAnalysisFacts(ctx context.Context, kind string) (quality
 	return facts, nil
 }
 
-// callQualityLLM 一次性请求 DeepSeek。返回正文与 token 用量。
+// callQualityLLM 请求 DeepSeek。JSON 模式偶尔返回空白正文；仅对此重试一次，
+// 第二次关闭 thinking 并退出 JSON 模式，避免再次得到空白。token 用量计入两次请求。
 func (s *Server) callQualityLLM(ctx context.Context, system, user string) (string, int, int, error) {
 	key := s.qualityLLMKey()
 	if key == "" {
 		return "", 0, 0, errors.New("llm key unavailable")
 	}
+	callCtx, cancel := context.WithTimeout(ctx, 90*time.Second)
+	defer cancel()
+	thinking := s.qualityLLMThinking()
+	var promptTokens, completionTokens int
+	for attempt := 0; attempt < 2; attempt++ {
+		content, prompt, completion, err := s.callQualityLLMOnce(callCtx, key, thinking, attempt == 0, system, user)
+		promptTokens += prompt
+		completionTokens += completion
+		if err != nil {
+			return "", promptTokens, completionTokens, err
+		}
+		if strings.TrimSpace(content) != "" {
+			return content, promptTokens, completionTokens, nil
+		}
+		thinking = "disabled"
+	}
+	return "", promptTokens, completionTokens, errors.New("模型未返回可用正文，请稍后重试")
+}
+
+func (s *Server) callQualityLLMOnce(ctx context.Context, key, thinking string, jsonMode bool, system, user string) (string, int, int, error) {
 	body := map[string]any{
 		"model": s.cfg.QualityLLMModel,
 		"messages": []map[string]string{
 			{"role": "system", "content": system},
 			{"role": "user", "content": user},
 		},
-		"thinking":        map[string]string{"type": s.qualityLLMThinking()},
-		"stream":          false,
-		"response_format": map[string]string{"type": "json_object"},
-		"max_tokens":      1200,
+		"thinking":   map[string]string{"type": thinking},
+		"stream":     false,
+		"max_tokens": 1200,
+	}
+	if jsonMode {
+		body["response_format"] = map[string]string{"type": "json_object"}
 	}
 	payload, _ := json.Marshal(body)
-	callCtx, cancel := context.WithTimeout(ctx, 90*time.Second)
-	defer cancel()
-	req, err := http.NewRequestWithContext(callCtx, http.MethodPost,
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
 		strings.TrimRight(s.cfg.QualityLLMBaseURL, "/")+"/chat/completions", bytes.NewReader(payload))
 	if err != nil {
 		return "", 0, 0, err
@@ -219,7 +240,10 @@ func (s *Server) callQualityLLM(ctx context.Context, system, user string) (strin
 		return "", 0, 0, err
 	}
 	defer resp.Body.Close()
-	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return "", 0, 0, err
+	}
 	if resp.StatusCode != http.StatusOK {
 		return "", 0, 0, fmt.Errorf("llm http %d", resp.StatusCode)
 	}
