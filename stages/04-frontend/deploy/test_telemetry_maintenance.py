@@ -204,7 +204,13 @@ class TelemetryMaintenanceTests(unittest.TestCase):
         self.ps.write(root/'old', {'states': states})
         self.ps.write(receipt_path, {'archive': None, 'version': 1, 'active': pointer,
                      'before': states, 'after': states, 'resumed_at': stack.now()})
-        timing = {'status': 'failed', 'archive_bytes': 0, 'uploads': [], 'failed_stage': 'queues_snapshot'}
+        # backup-timing.py 真实产出的 spans 里必有 v4_pause（pause 阶段先执行），
+        # 生产校验 9646794 起要求它存在，夹具照实补齐
+        timing = {'status': 'failed', 'archive_bytes': 0, 'uploads': [], 'failed_stage': 'queues_snapshot',
+                  'spans': [{'name': 'v4_pause', 'microseconds': 1200,
+                             'offset_microseconds': 0, 'bytes': 0},
+                            {'name': 'queues_snapshot', 'microseconds': 300,
+                             'offset_microseconds': 1200, 'bytes': 0}]}
         self.ps.write(timing_path, timing)
         with patch.multiple(stack, STATE_DIR=root, BACKUP_DIR=root, active=lambda: (root, {}),
              inspect=self.ps.inspect, states=self.ps.states,

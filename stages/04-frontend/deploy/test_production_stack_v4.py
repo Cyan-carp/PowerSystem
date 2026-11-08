@@ -370,7 +370,8 @@ class BackupDeferralTests(unittest.TestCase):
                             active=lambda: (previous, {'parent': None}),
                             immutable=lambda path: m, inspect=lambda: rows,
                             drain=lambda: None, deploy=lambda *args: None,
-                            gate=lambda *args: 'accepted.json',
+                            # publish 自 62417c9 起以关键字传 skips/deviation，桩需一并接收
+                            gate=lambda *args, **kwargs: 'accepted.json',
                             preflight=lambda *args: None, healthy=lambda *args: None,
                             set_active=activate):
             ps.publish(SimpleNamespace(id=self.candidate, backup=backup))
