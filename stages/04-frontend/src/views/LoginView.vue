@@ -314,7 +314,7 @@ onMounted(() => {
 
 .panel {
   background: var(--card);
-  border: 1px solid #e7ebf3;
+  border: 1px solid var(--card-border);
   border-radius: var(--r-xl);
   box-shadow: var(--shadow-2);
   padding: 20px 24px 20px;
@@ -340,8 +340,8 @@ onMounted(() => {
   border-radius: var(--r-sm);
   font-size: 10.5px;
   font-weight: 600;
-  background: #f1f5f9;
-  color: #64748b;
+  background: var(--chip-bg);
+  color: var(--chip-ink);
 }.link-chip i {
   width: 5px;
   height: 5px;
@@ -351,7 +351,7 @@ onMounted(() => {
 
 .link-chip.is-ok {
   background: var(--ok-soft);
-  color: #047857;
+  color: var(--chip-ok-ink);
 }
 
 .link-chip.is-bad {
@@ -390,7 +390,7 @@ onMounted(() => {
   padding: 0 11px;
   border-radius: var(--r-md);
   border: 1px solid var(--line-strong);
-  background: #fff;
+  background: var(--field-bg);
   color: var(--ink-placeholder);
   transition: border-color 0.16s ease, box-shadow 0.16s ease, color 0.16s ease;
 }
@@ -402,7 +402,7 @@ onMounted(() => {
 }
 
 .f-box.is-bad {
-  border-color: #f3b4b4;
+  border-color: var(--bad-line);
   color: var(--bad);
 }
 
@@ -423,7 +423,7 @@ onMounted(() => {
 /* 浏览器自带的密码眼睛与补全背景要压掉，否则和自绘样式打架 */
 .f-box input:-webkit-autofill {
   -webkit-text-fill-color: var(--ink);
-  box-shadow: 0 0 0 40px #fff inset;
+  box-shadow: 0 0 0 40px var(--card) inset;
 }
 
 .f-eye {

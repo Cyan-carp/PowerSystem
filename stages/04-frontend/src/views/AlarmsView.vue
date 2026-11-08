@@ -659,8 +659,8 @@ const timeline = computed(() => {
   padding: 0 5px;
   border-radius: var(--r-pill);
   background: var(--violet-soft);
-  border: 1px solid #ddd6fe;
-  color: #6d28d9;
+  border: 1px solid var(--violet-line);
+  color: var(--chip-violet-ink);
   font-size: 9.5px;
   line-height: 15px;
   display: inline-block;
@@ -691,7 +691,7 @@ const timeline = computed(() => {
   height: 14px;
   border-radius: 3px;
   border: 1px solid var(--line-strong);
-  background: #fff;
+  background: var(--field-bg);
   color: #fff;
   cursor: pointer;
   vertical-align: middle;
@@ -704,7 +704,7 @@ const timeline = computed(() => {
 
 /* 半选：左半品牌色右半留白，和任务记录里的复选框同一写法 */
 .pick-box.is-half {
-  background: linear-gradient(90deg, var(--brand) 50%, #fff 50%);
+  background: linear-gradient(90deg, var(--brand) 50%, var(--field-bg) 50%);
   border-color: var(--brand);
 }
 
@@ -716,7 +716,7 @@ const timeline = computed(() => {
   padding: 7px 10px 7px 12px;
   border-radius: var(--r-md);
   background: var(--brand-soft);
-  border: 1px solid #d3e2fb;
+  border: 1px solid var(--brand-line);
   font-size: 12px;
   color: var(--brand-deep);
 }
@@ -731,7 +731,7 @@ const timeline = computed(() => {
 
 .pickbar-hint {
   font-size: 11px;
-  color: #5c7fae;
+  color: var(--ink-4);
 }
 
 /* 勾选行的底色压过 hover 的浅灰，否则鼠标一过就看不出选中了 */
@@ -781,7 +781,7 @@ const timeline = computed(() => {
   height: 9px;
   margin: 12px 0 9px;
   border-radius: var(--r-pill);
-  background: #e8edf6;
+  background: var(--track-bg);
 }
 
 .metric-track .fill {
@@ -848,7 +848,7 @@ const timeline = computed(() => {
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: #fff;
+  background: var(--field-bg);
   border: 2px solid var(--line-strong);
 }
 

@@ -788,7 +788,7 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   gap: 16px;
-  background: linear-gradient(180deg, #fcfdff 0%, #ffffff 100%);
+  background: var(--card);
 }
 
 /* 一轮 = 一句提问 + 一个回答块；回答块要能撑满宽度放运行卡 */
@@ -838,7 +838,7 @@ onBeforeUnmount(() => {
   place-items: center;
   background: var(--brand-soft);
   color: var(--brand);
-  box-shadow: 0 0 0 7px #eef2fb;
+  box-shadow: 0 0 0 7px var(--card-soft);
   margin-bottom: 13px;
 }
 
@@ -872,7 +872,7 @@ onBeforeUnmount(() => {
   padding: 10px 13px;
   border-radius: var(--r-md);
   border: 1px solid var(--line);
-  background: #fff;
+  background: var(--field-bg);
   font-size: 12.5px;
   color: var(--ink-2);
   text-align: left;
@@ -1030,7 +1030,7 @@ onBeforeUnmount(() => {
   padding: 10px 13px;
   border-radius: var(--r-md);
   border: 1px solid var(--line-strong);
-  background: #fff;
+  background: var(--field-bg);
   color: var(--ink-3);
 }
 
@@ -1125,7 +1125,7 @@ onBeforeUnmount(() => {
   padding: 0 8px;
   border: 1px solid var(--line);
   border-radius: var(--r-sm);
-  background: #fff;
+  background: var(--field-bg);
   color: var(--ink-3);
   font-size: 11px;
 }
@@ -1170,7 +1170,7 @@ onBeforeUnmount(() => {
 
 .batch-del {
   color: var(--bad-deep);
-  border-color: #f0c7c2;
+  border-color: var(--bad-line);
 }
 
 .batch-del:hover:not(:disabled) {
@@ -1186,7 +1186,7 @@ onBeforeUnmount(() => {
   height: 15px;
   border-radius: 3px;
   border: 1px solid var(--line-strong);
-  background: #fff;
+  background: var(--field-bg);
   color: #fff;
 }
 

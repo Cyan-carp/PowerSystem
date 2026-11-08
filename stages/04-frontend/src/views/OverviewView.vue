@@ -615,8 +615,8 @@ const exportCsv = () => {
   /* 参考稿的列头是一行浅灰底、正文字重的标签，不是加粗标题 */
   height: 34px;
   font-weight: 500;
-  color: #4b5566;
-  background: #f7f8fb;
+  color: var(--ink-3);
+  background: var(--thead-bg);
   border-top: 1px solid var(--line);
   border-bottom: 1px solid var(--line);
 }
@@ -666,7 +666,7 @@ const exportCsv = () => {
 
 .dot-cell.is-warn,
 .dot-cell.is-warn i {
-  color: #b45309;
+  color: var(--warn-deep);
 }
 
 .dot-cell.is-bad,
@@ -676,7 +676,7 @@ const exportCsv = () => {
 
 .dot-cell.is-idle,
 .dot-cell.is-idle i {
-  color: #8d97a8;
+  color: var(--ink-placeholder);
 }
 
 .table-note {
@@ -718,7 +718,7 @@ const exportCsv = () => {
   padding: 9px 11px;
   border-radius: var(--r-md);
   background: var(--warn-soft);
-  border: 1px solid #fde68a;
+  border: 1px solid var(--note-line);
   color: var(--warn-deep);
   font-size: 11.5px;
   line-height: 1.5;

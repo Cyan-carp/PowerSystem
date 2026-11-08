@@ -476,12 +476,12 @@ async function download(row: RunArtifact): Promise<void> {
 
 .run-cancel {
   color: var(--bad-deep);
-  border-color: #f3c9c9;
+  border-color: var(--bad-line);
 }
 
 .run-cancel:hover:not(:disabled) {
   background: var(--bad-soft);
-  border-color: #edb4b4;
+  border-color: var(--bad-line);
 }
 
 .run-foot-note {

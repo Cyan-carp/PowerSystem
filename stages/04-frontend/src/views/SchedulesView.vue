@@ -1085,7 +1085,7 @@ onUnmounted(() => {
   padding: 9px 14px;
   border-radius: var(--r-md);
   background: var(--ok-soft);
-  border: 1px solid #bbf7d0;
+  border: 1px solid var(--ok-line);
   color: var(--ok-deep);
   font-size: 12px;
 }
@@ -1221,7 +1221,7 @@ onUnmounted(() => {
 }
 
 .btn-quiet:hover {
-  border-color: #fecaca;
+  border-color: var(--err-line);
   background: var(--bad-soft);
 }
 

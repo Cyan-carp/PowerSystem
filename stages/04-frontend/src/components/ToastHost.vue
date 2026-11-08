@@ -123,7 +123,7 @@ const onConfirmKey = (event: KeyboardEvent) => {
 .confirm-scrim {
   position: absolute;
   inset: 0;
-  background: rgba(11, 19, 34, 0.32);
+  background: var(--overlay);
 }
 
 .confirm-box {

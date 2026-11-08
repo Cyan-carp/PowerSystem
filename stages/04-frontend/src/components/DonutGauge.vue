@@ -18,15 +18,8 @@ const circumference = computed(() => 2 * Math.PI * radius.value)
 const clamped = computed(() => Math.min(100, Math.max(0, Number.isFinite(props.value) ? props.value : 0)))
 const dash = computed(() => `${(clamped.value / 100) * circumference.value} ${circumference.value}`)
 const shown = computed(() => `${Math.round(clamped.value)}%`)
-const palette: Record<string, string> = {
-  brand: '#2563eb',
-  ok: '#10b981',
-  warn: '#f59e0b',
-  bad: '#ef4444',
-  violet: '#8b5cf6',
-  info: '#2563eb',
-}
-const stroke = computed(() => palette[props.tone] || palette.brand)
+/* 颜色不在这里写死：SVG 的 stroke 属性读不到 CSS 变量，所以由 scoped 样式按 .t-* 上色，
+   这样环图会自动跟随白天/夜间主题，不用在脚本里维护第二套色板。 */
 </script>
 
 <template>
@@ -43,11 +36,11 @@ const stroke = computed(() => palette[props.tone] || palette.brand)
         />
         <circle
           class="value"
+          :class="`t-${tone}`"
           :cx="size / 2"
           :cy="size / 2"
           :r="radius"
           fill="none"
-          :stroke="stroke"
           :stroke-width="thickness"
           stroke-linecap="round"
           :stroke-dasharray="dash"
@@ -80,11 +73,32 @@ const stroke = computed(() => palette[props.tone] || palette.brand)
 }
 
 .track {
-  stroke: #eef2f8;
+  stroke: var(--track-bg);
 }
 
 .value {
   transition: stroke-dasharray 0.6s cubic-bezier(0.22, 0.8, 0.32, 1);
+}
+
+.value.t-brand,
+.value.t-info {
+  stroke: var(--brand);
+}
+
+.value.t-ok {
+  stroke: var(--ok);
+}
+
+.value.t-warn {
+  stroke: var(--warn);
+}
+
+.value.t-bad {
+  stroke: var(--bad);
+}
+
+.value.t-violet {
+  stroke: var(--violet);
 }
 
 .center {

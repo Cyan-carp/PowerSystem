@@ -20,6 +20,7 @@ import {
   roleLabel,
 } from './lib/auth'
 import { resetModelBoard, startModelPolling, topbarBalance, topbarTone } from './lib/model-usage'
+import { theme, toggleTheme } from './lib/theme'
 import { toast } from './lib/toast'
 
 import { LEVEL_CN, METRIC_CN, across } from './lib/format'
@@ -103,11 +104,11 @@ watch(() => route.path, () => {
 const recent = ref<AlarmView[]>([])
 /** 活动告警 = 未处理 + 已确认（铃铛角标与弹层标题用这个口径） */
 const activeCount = ref(0)
-/** 待处理 = 未处理（快捷入口与「处理告警」按钮用这个口径，点进去条数能对上） */
-const pendingCount = ref(0)
-const urgentCount = ref(0)
-const offlineCount = ref(0)
-const unknownCount = ref(0)
+/**
+ * 顶栏快捷入口只留「最新告警」：原先并排的待处理 / 紧急未处理 / 离线设备 / 健康未知
+ * 长期为 0 且很难有值，占着一整排宽度却几乎不提供信息；这些数字在总览页指标卡与
+ * 各自列表页首屏都能看到，不在这里重复。
+ */
 const latestAlarm = ref<AlarmView | null>(null)
 let timer: number | undefined
 
@@ -141,20 +142,12 @@ watch(() => shell.insightRevision, bumpUnread)
 
 const loadHeadline = async () => {
   try {
-    const [summary, alarms, pending, urgent] = await Promise.all([
-      api.summary(),
-      fetchAlarmViews(8),
-      api.alarms({ status: 'unhandled', pageSize: 1 }),
-      api.alarms({ status: 'unhandled', level: 'urgent', pageSize: 1 }),
-    ])
+    /* 只拉顶栏真正要展示的两样：活动告警数（铃铛角标）与最新一条告警（快捷入口）。
+       原先为四枚计数胶囊各查一次列表，胶囊删掉后这两次请求也一并省掉。 */
+    const [summary, alarms] = await Promise.all([api.summary(), fetchAlarmViews(8)])
     activeCount.value = summary.active_alarms
     recent.value = alarms.list.slice(0, 6)
     latestAlarm.value = alarms.list[0] || null
-    pendingCount.value = pending.total
-    urgentCount.value = urgent.total
-    /* 离线 = 台账总数 − 在线数（含故障），与 /devices?state=offline 的口径一致 */
-    offlineCount.value = Math.max(0, summary.device_total - summary.online)
-    unknownCount.value = summary.health_unknown_count ?? 0
   } catch {
     /* 顶栏是旁路信息，失败不阻断页面 */
   }
@@ -199,10 +192,6 @@ const halt = () => {
   }
   unreadInsights.value = 0
   activeCount.value = 0
-  pendingCount.value = 0
-  urgentCount.value = 0
-  offlineCount.value = 0
-  unknownCount.value = 0
   recent.value = []
   latestAlarm.value = null
 }
@@ -279,45 +268,10 @@ onBeforeUnmount(() => {
           />
         </label>
 
-        <!-- 快捷入口：五个常用深链，数字即当前口径；结构统一为「状态点 + 标签 + 数值」 -->
+        <!-- 快捷入口：只留「最新告警」一枚深链。原先并排的待处理 / 紧急未处理 / 离线设备 /
+             健康未知四项长期为 0，占满一整排却几乎不提供信息，已移除；这些数字在总览页指标卡
+             与各自列表页首屏都能看到，不在顶栏重复。 -->
         <nav class="tb-quick" aria-label="常用入口">
-          <RouterLink
-            class="q-chip"
-            :title="`待处理告警 ${pendingCount} 条`"
-            :to="{ path: '/alarms', query: { status: 'unhandled' } }"
-          >
-            <i class="q-dot" :class="{ 'is-live': pendingCount > 0 }" aria-hidden="true"></i>
-            <span class="q-label">待处理告警</span>
-            <b class="q-num num" :class="{ 'is-zero': !pendingCount }">{{ pendingCount }}</b>
-          </RouterLink>
-          <RouterLink
-            class="q-chip"
-            :class="{ 'is-urgent': urgentCount > 0 }"
-            :title="`紧急未处理 ${urgentCount} 条`"
-            :to="{ path: '/alarms', query: { status: 'unhandled', level: 'urgent' } }"
-          >
-            <i class="q-dot" :class="{ 'is-urgent': urgentCount > 0 }" aria-hidden="true"></i>
-            <span class="q-label">紧急未处理</span>
-            <b class="q-num num" :class="{ 'is-zero': !urgentCount }">{{ urgentCount }}</b>
-          </RouterLink>
-          <RouterLink
-            class="q-chip"
-            :title="`离线设备 ${offlineCount} 台`"
-            :to="{ path: '/devices', query: { state: 'offline' } }"
-          >
-            <i class="q-dot" :class="{ 'is-offline': offlineCount > 0 }" aria-hidden="true"></i>
-            <span class="q-label">离线设备</span>
-            <b class="q-num num" :class="{ 'is-zero': !offlineCount }">{{ offlineCount }}</b>
-          </RouterLink>
-          <RouterLink
-            class="q-chip"
-            :title="`健康未知 ${unknownCount} 台`"
-            :to="{ path: '/health', query: { state: 'unknown' } }"
-          >
-            <i class="q-dot" :class="{ 'is-unknown': unknownCount > 0 }" aria-hidden="true"></i>
-            <span class="q-label">健康未知</span>
-            <b class="q-num num" :class="{ 'is-zero': !unknownCount }">{{ unknownCount }}</b>
-          </RouterLink>
           <RouterLink
             class="q-chip is-latest"
             :class="{ 'is-zero': !latestAlarm }"
@@ -404,6 +358,17 @@ onBeforeUnmount(() => {
               </div>
             </div>
           </div>
+
+          <!-- 白天/夜间：只切 <html data-theme>，颜色全部由 tokens.css 承担 -->
+          <button
+            class="tb-icon"
+            :title="theme === 'dark' ? '切换到白天模式' : '切换到夜间模式'"
+            :aria-label="theme === 'dark' ? '切换到白天模式' : '切换到夜间模式'"
+            :aria-pressed="theme === 'dark'"
+            @click="toggleTheme"
+          >
+            <Icon :name="theme === 'dark' ? 'sun' : 'moon'" :size="19" />
+          </button>
 
           <span class="tb-divider" aria-hidden="true"></span>
 
@@ -493,13 +458,13 @@ onBeforeUnmount(() => {
 
 .tb-usage.is-warn {
   color: var(--warn-deep);
-  border-color: #f3d9a8;
+  border-color: var(--warn-line);
 }
 
 .tb-usage.is-bad {
   color: var(--bad-deep);
   background: var(--bad-soft);
-  border-color: #f6cccc;
+  border-color: var(--bad-line);
 }
 
 .tb-icon.is-open {
@@ -514,7 +479,7 @@ onBeforeUnmount(() => {
 /* ---------- 顶栏账号菜单 ---------- */
 
 .tb-user.is-open {
-  background: #f1f3f7;
+  background: var(--hover-bg);
 }
 
 .user-pop {
@@ -604,7 +569,7 @@ onBeforeUnmount(() => {
 }
 
 .sev-minor {
-  background: #94a3b8;
+  background: var(--dot-muted);
 }
 
 .tb-quick {
@@ -654,7 +619,7 @@ onBeforeUnmount(() => {
   flex: 0 0 5px;
   border-radius: 50%;
   /* 无数据时的「哑点」：形状固定，颜色才是信息 */
-  background: #cfd7e3;
+  background: var(--dot-faint);
   transition: background 0.16s ease, box-shadow 0.16s ease;
 }
 
@@ -672,7 +637,7 @@ onBeforeUnmount(() => {
 }
 
 .q-dot.is-minor {
-  background: #94a3b8;
+  background: var(--dot-muted);
 }
 
 .q-dot.is-offline {
@@ -693,7 +658,7 @@ onBeforeUnmount(() => {
 }
 
 .q-num.is-zero {
-  color: #9aa4b4;
+  color: var(--text-dim);
   font-weight: 550;
 }
 
@@ -708,7 +673,7 @@ onBeforeUnmount(() => {
 /* 紧急未处理有数字才整枚转红：全屏只允许这一个元素喊话 */
 .q-chip.is-urgent {
   background: var(--bad-soft);
-  border-color: #f7cfcf;
+  border-color: var(--bad-line-soft);
 }
 
 .q-chip.is-urgent .q-label,
@@ -717,8 +682,8 @@ onBeforeUnmount(() => {
 }
 
 .q-chip.is-urgent:hover {
-  background: #fde8e8;
-  border-color: #f2bbbb;
+  background: var(--bad-hover-bg);
+  border-color: var(--bad-line-strong);
 }
 
 /* 解读按钮上的未读点：不带数字，避免和铃铛的角标重复 */
@@ -730,7 +695,7 @@ onBeforeUnmount(() => {
   height: 6px;
   border-radius: 50%;
   background: var(--bad);
-  border: 1.5px solid #fff;
+  border: 1.5px solid var(--card);
 }
 
 /* 图标组与账号之间的竖线：参考稿用它把「工具」和「人」分开 */

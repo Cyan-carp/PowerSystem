@@ -668,7 +668,7 @@ watch(
 }
 
 .pred-hero.is-high {
-  border-color: #f0c7c2;
+  border-color: var(--bad-line);
   background: var(--bad-soft);
 }
 
@@ -694,18 +694,18 @@ watch(
   padding: 1px 8px;
   border-radius: 999px;
   border: 1px solid var(--line);
-  background: #fff;
+  background: var(--field-bg);
   white-space: nowrap;
 }
 
 .pred-risk.is-bad {
   color: var(--bad-deep);
-  border-color: #f0c7c2;
+  border-color: var(--bad-line);
 }
 
 .pred-risk.is-ok {
   color: var(--ok-deep);
-  border-color: #c6e8d6;
+  border-color: var(--ok-line);
 }
 
 .pred-hero-value {
@@ -740,7 +740,7 @@ watch(
   gap: 8px;
   margin-top: 12px;
   padding: 9px 12px;
-  border: 1px solid #f5dfb3;
+  border: 1px solid var(--warn-line);
   border-radius: var(--r-md);
   background: var(--warn-soft);
   color: var(--warn-deep);

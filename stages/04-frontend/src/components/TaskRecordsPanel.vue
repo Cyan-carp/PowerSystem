@@ -365,7 +365,7 @@ onUnmounted(stopRequests)
 .tr-scrim {
   position: fixed;
   inset: 0;
-  background: rgba(11, 19, 34, 0.28);
+  background: var(--overlay);
   z-index: 90;
 }
 
@@ -476,7 +476,7 @@ onUnmounted(stopRequests)
   height: 14px;
   border-radius: 3px;
   border: 1px solid var(--line-strong);
-  background: #fff;
+  background: var(--field-bg);
   color: #fff;
   flex: 0 0 14px;
   cursor: pointer;
@@ -488,13 +488,13 @@ onUnmounted(stopRequests)
 }
 
 .tr-box.is-half {
-  background: linear-gradient(90deg, var(--brand) 50%, #fff 50%);
+  background: linear-gradient(90deg, var(--brand) 50%, var(--field-bg) 50%);
   border-color: var(--brand);
 }
 
 .tr-danger {
   color: var(--bad-deep);
-  border-color: #f0c7c2;
+  border-color: var(--bad-line);
 }
 
 .tr-danger:hover:not(:disabled) {

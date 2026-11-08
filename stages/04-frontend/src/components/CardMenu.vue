@@ -115,7 +115,7 @@ function exportJson() {
   z-index: 40;
   min-width: 152px;
   padding: 5px;
-  background: #fff;
+  background: var(--field-bg);
   border: 1px solid var(--line);
   border-radius: 6px;
   box-shadow: var(--shadow-2);

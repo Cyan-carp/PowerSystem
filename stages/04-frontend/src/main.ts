@@ -4,11 +4,15 @@ import App from './App.vue'
 import { authToken, setUnauthorizedHandler } from './lib/auth'
 import { toast } from './lib/toast'
 import { watchDensity } from './lib/density'
+import { watchTheme } from './lib/theme'
 import './styles/tokens.css'
 import './styles/shell.css'
 
 /* 低像素密度屏（1080p 级）把页面内容收紧一档，抵消固定 px 被放大后的「字大、贴边」 */
 watchDensity()
+
+/* 主题标记要在挂载前就打上：晚一步会先闪一帧白底 */
+watchTheme()
 
 const router = createRouter({
   history: createWebHistory(),

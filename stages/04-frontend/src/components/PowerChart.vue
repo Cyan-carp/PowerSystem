@@ -137,9 +137,10 @@ const gradientId = `power-fill-${Math.random().toString(36).slice(2, 8)}`
       >
         <defs>
           <linearGradient :id="gradientId" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stop-color="#2563eb" stop-opacity="0.2" />
-            <stop offset="70%" stop-color="#2563eb" stop-opacity="0.03" />
-            <stop offset="100%" stop-color="#2563eb" stop-opacity="0" />
+            <!-- 颜色交给 CSS：SVG 的 presentation attribute 读不到主题变量，用 class 才能跟着换 -->
+            <stop offset="0%" class="stop-top" />
+            <stop offset="70%" class="stop-mid" />
+            <stop offset="100%" class="stop-end" />
           </linearGradient>
         </defs>
 
@@ -214,15 +215,30 @@ const gradientId = `power-fill-${Math.random().toString(36).slice(2, 8)}`
   overflow: visible;
 }
 
+.stop-top {
+  stop-color: var(--chart-fill-from);
+  stop-opacity: 0.2;
+}
+
+.stop-mid {
+  stop-color: var(--chart-fill-from);
+  stop-opacity: 0.03;
+}
+
+.stop-end {
+  stop-color: var(--chart-fill-from);
+  stop-opacity: 0;
+}
+
 .grid line {
-  /* 辅助线要看得见：浅灰虚线在浅底上几乎消失，压到 #cdd6e4 */
-  stroke: #ccd5e3;
+  /* 辅助线要看得见：浅灰虚线在浅底上几乎消失，所以比 --line 深一档 */
+  stroke: var(--chart-grid);
   stroke-width: 1;
   stroke-dasharray: 3 4;
 }
 
 .axis text {
-  fill: #2b3546;
+  fill: var(--chart-axis);
   font-size: 12px;
   font-family: var(--font);
   font-variant-numeric: tabular-nums;
@@ -236,32 +252,32 @@ const gradientId = `power-fill-${Math.random().toString(36).slice(2, 8)}`
 }
 
 .head .halo {
-  fill: rgba(37, 99, 235, 0.14);
+  fill: var(--brand-glow);
 }
 
 .head .dot {
   fill: var(--brand);
-  stroke: #fff;
+  stroke: var(--card);
   stroke-width: 1.6;
 }
 
 .probe line {
-  stroke: #93aeea;
+  stroke: var(--chart-probe);
   stroke-width: 1;
   stroke-dasharray: 3 3;
 }
 
 .probe .dot {
   fill: var(--brand);
-  stroke: #fff;
+  stroke: var(--card);
   stroke-width: 1.6;
 }
 
 .tip {
   position: absolute;
   transform: translate(-50%, -100%);
-  background: var(--ink);
-  color: #fff;
+  background: var(--tip-bg);
+  color: var(--tip-ink);
   border-radius: 5px;
   padding: 6px 9px;
   pointer-events: none;
@@ -275,7 +291,7 @@ const gradientId = `power-fill-${Math.random().toString(36).slice(2, 8)}`
 
 .tip-time {
   font-size: 10px;
-  color: rgba(255, 255, 255, 0.62);
+  color: var(--tip-dim);
 }
 
 .tip-value {
@@ -286,7 +302,7 @@ const gradientId = `power-fill-${Math.random().toString(36).slice(2, 8)}`
 .tip-value em {
   font-style: normal;
   font-size: 10px;
-  color: rgba(255, 255, 255, 0.62);
+  color: var(--tip-dim);
   margin-left: 2px;
 }
 

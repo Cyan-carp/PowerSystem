@@ -203,7 +203,7 @@ const runProbe = async () => {
   padding: 10px 12px;
   border-radius: var(--r-md);
   background: var(--bad-soft);
-  border: 1px solid #f6cccc;
+  border: 1px solid var(--bad-line);
   color: var(--bad-deep);
   font-size: 12px;
 }

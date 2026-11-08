@@ -225,8 +225,8 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onKey))
 }
 
 .approve-entry:hover:not(:disabled) {
-  background: #dbe6fd;
-  border-color: #a9c0f6;
+  background: var(--brand-soft);
+  border-color: var(--brand-line);
   color: var(--brand-deep);
 }
 

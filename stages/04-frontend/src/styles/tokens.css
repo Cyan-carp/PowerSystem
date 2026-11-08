@@ -1,6 +1,9 @@
 /**
- * 设计令牌：浅色企业控制台（对齐 C 参考稿，ui-ux-pro-max 规范化）。
+ * 设计令牌：浅色企业控制台（对齐 C 参考稿，ui-ux-pro-max 规范化）+ 夜间深色主题。
  * 只在这里写色值与圆角，组件里一律引变量。
+ *
+ * 夜间模式只覆盖本文件的变量，不改组件：由 lib/theme.ts 给 <html> 打 data-theme="dark"。
+ * 因此凡是「会当背景、边框、正文色用」的值都必须走变量，组件里不要再出现裸色值。
  */
 
 :root {
@@ -59,6 +62,64 @@
   --shadow-2: 0 2px 6px rgba(16, 24, 40, 0.06), 0 14px 30px -10px rgba(16, 24, 40, 0.18);
   --shadow-3: 0 18px 48px rgba(16, 24, 40, 0.18), 0 4px 12px rgba(16, 24, 40, 0.08);
 
+  /* ---------- 结构色：壳层与原生感控件的底色/描边 ---------- */
+  --card-border: #e7ebf3;      /* 卡片描边，比 --line 深一档，底暗时边缘才不糊 */
+  --rail-bg: #fbfcfe;          /* 左侧图标轨，与白卡同色靠细线分隔 */
+  --rail-icon: #46536a;
+  --rail-hover: #eef1f7;
+  --hover-bg: #f1f3f7;         /* 顶栏图标/搜索框/分段控件的悬停底 */
+  --field-bg: #ffffff;
+  --seg-on-bg: #ffffff;        /* 分段控件选中项 */
+  --thead-bg: #f7f8fb;
+  --row-hover: #f9faff;
+  --track-bg: #eef2f8;         /* 进度条与环图轨道 */
+  --scroll-thumb: #ccd4e2;
+  --overlay: rgba(15, 23, 42, 0.32);
+  --mask-bg: rgba(251, 252, 254, 0.94);
+
+  /* 中性点与弱文字（状态点、哑值、占位数字） */
+  --dot-idle: #98a3b3;
+  --dot-muted: #94a3b8;
+  --dot-faint: #cfd7e3;
+  --text-dim: #9aa4b4;
+  --avatar-bg: #7b8496;
+
+  /* 胶囊灰底（状态标签的 idle 档） */
+  --chip-bg: #f1f5f9;
+  --chip-ink: #64748b;
+  --chip-ok-ink: #047857;
+  --chip-info-ink: #1d4ed8;
+  --chip-violet-ink: #6d28d9;
+
+  /* 描边微调：按钮悬停、错误框、告警色边 */
+  --btn-hover-line: #cbd5e1;
+  --btn-soft-hover-bg: #e6ebff;
+  --btn-soft-hover-line: #b9c6fd;
+  --err-line: #fecaca;
+  --ok-line: #bbf7d0;
+  --violet-line: #ddd6fe;
+  --warn-line: #f3d9a8;
+  --bad-line: #f6cccc;
+  --bad-line-soft: #f7cfcf;
+  --bad-line-strong: #f2bbbb;
+  --bad-hover-bg: #fde8e8;
+  --note-line: #fde68a;
+
+  /* 图表：SVG/canvas 里的轴与网格不跟随 CSS 变量时由组件读这些值 */
+  --chart-grid: #ccd5e3;
+  --chart-axis: #2b3546;
+  --chart-probe: #93aeea;
+  --chart-fill-from: #2563eb;
+
+  /* 实心色块上的文字：深浅主题都保持白色，不随主题反转 */
+  --on-solid: #ffffff;
+  --on-solid-dim: rgba(255, 255, 255, 0.62);
+
+  /* 悬浮气泡（图表的读数提示）：浅色下是深底白字，夜间反色，保证两种主题都对比充足 */
+  --tip-bg: #0b1322;
+  --tip-ink: #ffffff;
+  --tip-dim: rgba(255, 255, 255, 0.62);
+
   /* 字号 */
   --font: "Inter", "Segoe UI Variable Text", "Segoe UI", -apple-system, BlinkMacSystemFont,
     "PingFang SC", "Microsoft YaHei", "Hiragino Sans GB", sans-serif;
@@ -69,6 +130,107 @@
   --dock-w: 420px;
   /* 域名入口注入的备案底栏高度（见 shell.css 末节与 main.ts 的 data-icp 探测） */
   --icp-h: 26px;
+}
+
+/**
+ * 夜间模式：对齐参考稿的深灰阶（#1e1e1e 卡片 / #0d0d0d 底），
+ * 不用纯黑，也不压成蓝黑——深色下蓝色只留给品牌与状态，大面积背景保持中性。
+ * 语义色统一提亮一档，否则深底上的 #059669 会被吸没。
+ */
+:root[data-theme='dark'] {
+  color-scheme: dark;
+
+  --bg: #161616;
+  --bg-deep: #101010;
+  --card: #1e1e1e;
+  --card-soft: #252525;
+  --card-hover: #2a2a2a;
+  --line: #2e2e2e;
+  --line-soft: #262626;
+  --line-strong: #3f3f3f;
+
+  --ink: #ededed;
+  --ink-2: #d4d4d4;
+  --ink-3: #a6a6a6;
+  --ink-4: #868686;
+  --ink-placeholder: #6b6b6b;
+
+  /* 深底上蓝色要抬亮，否则同一个 #2563eb 显得发闷 */
+  --brand: #4c8dff;
+  --brand-deep: #8fb8ff;
+  --brand-soft: #1b2b45;
+  --brand-line: #2f4570;
+  --brand-glow: rgba(76, 141, 255, 0.32);
+
+  --ok: #34d399;
+  --ok-deep: #6ee7b7;
+  --ok-soft: #12291f;
+  --warn: #fbbf24;
+  --warn-deep: #fcd34d;
+  --warn-soft: #2c2410;
+  --bad: #f87171;
+  --bad-deep: #fca5a5;
+  --bad-soft: #2e1616;
+  --info: #4c8dff;
+  --info-soft: #17243c;
+  --violet: #a78bfa;
+  --violet-soft: #221b36;
+
+  /* 深色下阴影几乎看不见，改用更深的黑，层次主要靠描边 */
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.5), 0 3px 6px -2px rgba(0, 0, 0, 0.42),
+    0 12px 22px -12px rgba(0, 0, 0, 0.6);
+  --shadow-2: 0 2px 6px rgba(0, 0, 0, 0.5), 0 14px 30px -10px rgba(0, 0, 0, 0.62);
+  --shadow-3: 0 18px 48px rgba(0, 0, 0, 0.68), 0 4px 12px rgba(0, 0, 0, 0.5);
+
+  --card-border: #333333;
+  /* 侧栏压到最深一档，和主内容区分开——参考稿就是「近黑侧栏 + 中灰主区」两层 */
+  --rail-bg: #0d0d0d;
+  --rail-icon: #b3b3b3;
+  --rail-hover: #262626;
+  --hover-bg: #262626;
+  --field-bg: #1a1a1a;
+  --seg-on-bg: #343434;
+  --thead-bg: #242424;
+  --row-hover: #232323;
+  --track-bg: #2b2b2b;
+  --scroll-thumb: #3f3f3f;
+  --overlay: rgba(0, 0, 0, 0.62);
+  --mask-bg: rgba(20, 20, 20, 0.94);
+
+  --dot-idle: #6b6b6b;
+  --dot-muted: #8a8a8a;
+  --dot-faint: #4a4a4a;
+  --text-dim: #7c7c7c;
+  --avatar-bg: #3f3f3f;
+
+  --chip-bg: #2a2a2a;
+  --chip-ink: #a6a6a6;
+  --chip-ok-ink: #6ee7b7;
+  --chip-info-ink: #93baff;
+  --chip-violet-ink: #c4b5fd;
+
+  --btn-hover-line: #4a4a4a;
+  --btn-soft-hover-bg: #22314d;
+  --btn-soft-hover-line: #3a5480;
+  --err-line: #4a2020;
+  --ok-line: #1e4a37;
+  --violet-line: #3b2d63;
+  --warn-line: #4a3a12;
+  --bad-line: #4a2020;
+  --bad-line-soft: #4f2222;
+  --bad-line-strong: #5c2727;
+  --bad-hover-bg: #3a1a1a;
+  --note-line: #4a3a12;
+
+  --chart-grid: #333333;
+  --chart-axis: #b8b8b8;
+  --chart-probe: #46618f;
+  --chart-fill-from: #4c8dff;
+
+  /* 夜间气泡反过来：浅底深字，才在深色页面里浮得出来 */
+  --tip-bg: #ededed;
+  --tip-ink: #141414;
+  --tip-dim: rgba(20, 20, 20, 0.58);
 }
 
 * {
@@ -94,6 +256,13 @@ body {
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
+}
+
+/* 夜间：同样的大面积渐变，但换成深灰，避免纯色平面显得死 */
+:root[data-theme='dark'] body {
+  background:
+    radial-gradient(1100px 520px at 8% -12%, #212121 0%, rgba(33, 33, 33, 0) 58%),
+    linear-gradient(180deg, #191919 0%, var(--bg) 46%, #111111 100%);
 }
 
 h1,
@@ -139,7 +308,7 @@ a {
 /* 细滚动条：控制台里滚动区多，粗条会抢视线 */
 * {
   scrollbar-width: thin;
-  scrollbar-color: #ccd4e2 transparent;
+  scrollbar-color: var(--scroll-thumb) transparent;
 }
 
 *::-webkit-scrollbar {
@@ -148,7 +317,7 @@ a {
 }
 
 *::-webkit-scrollbar-thumb {
-  background: #ccd4e2;
+  background: var(--scroll-thumb);
   border: 2px solid transparent;
   background-clip: padding-box;
   border-radius: 6px;

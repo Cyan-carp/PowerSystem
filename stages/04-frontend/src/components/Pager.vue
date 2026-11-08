@@ -182,7 +182,7 @@ const commit = () => {
   padding: 0 6px;
   border-radius: 4px;
   border: 1px solid var(--line-strong);
-  background: #fff;
+  background: var(--field-bg);
   color: var(--ink);
   font-family: inherit;
   font-size: 12px;

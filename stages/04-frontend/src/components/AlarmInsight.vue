@@ -485,7 +485,7 @@ const restFacts = computed(() => Math.max(0, view.value.factTotal - shownFacts.v
   padding: 0 10px;
   border-radius: var(--r-sm);
   border: 1px solid var(--line);
-  background: #fff;
+  background: var(--field-bg);
   font-size: 11.5px;
   color: var(--ink-3);
   text-align: left;
@@ -530,7 +530,7 @@ const restFacts = computed(() => Math.max(0, view.value.factTotal - shownFacts.v
   height: 6px;
   border-radius: 50%;
   flex: 0 0 6px;
-  background: #94a3b8;
+  background: var(--dot-muted);
 }
 
 .sev-urgent {
@@ -616,7 +616,7 @@ const restFacts = computed(() => Math.max(0, view.value.factTotal - shownFacts.v
   height: 5px;
   margin-top: 10px;
   border-radius: 3px;
-  background: #e6ebf3;
+  background: var(--track-bg);
   overflow: hidden;
 }
 
@@ -637,7 +637,7 @@ const restFacts = computed(() => Math.max(0, view.value.factTotal - shownFacts.v
   font-family: var(--font);
   padding: 1px 4px;
   border-radius: 3px;
-  background: #eef1f7;
+  background: var(--track-bg);
   color: var(--ink-3);
 }
 
@@ -684,7 +684,7 @@ const restFacts = computed(() => Math.max(0, view.value.factTotal - shownFacts.v
 }
 
 .list.is-action .idx {
-  background: #eef1f7;
+  background: var(--track-bg);
   color: var(--ink-3);
 }
 
@@ -752,7 +752,7 @@ const restFacts = computed(() => Math.max(0, view.value.factTotal - shownFacts.v
 .insight-skeleton span {
   height: 9px;
   border-radius: 4px;
-  background: linear-gradient(90deg, #eef1f7 0%, #f6f8fc 50%, #eef1f7 100%);
+  background: linear-gradient(90deg, var(--track-bg) 0%, var(--card-soft) 50%, var(--track-bg) 100%);
 }
 
 .insight-skeleton span:nth-child(2) {
@@ -880,13 +880,13 @@ const restFacts = computed(() => Math.max(0, view.value.factTotal - shownFacts.v
 .ev-status {
   text-align: center;
   border-radius: 4px;
-  background: #eaf7ee;
-  color: #0f7b34;
+  background: var(--ok-soft);
+  color: var(--ok-deep);
 }
 
 .ev-status.is-warn {
-  background: #fff3e6;
-  color: #a35b00;
+  background: var(--warn-soft);
+  color: var(--warn-deep);
 }
 
 .ev-at {

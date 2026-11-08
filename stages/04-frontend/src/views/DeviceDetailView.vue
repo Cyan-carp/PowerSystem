@@ -699,7 +699,7 @@ const alarmTone = (alarm: Alarm) => toneOf(alarm.level)
   position: relative;
   height: 8px;
   border-radius: var(--r-pill);
-  background: #e9eef7;
+  background: var(--track-bg);
 }
 
 .risk-track i {
@@ -743,7 +743,7 @@ const alarmTone = (alarm: Alarm) => toneOf(alarm.level)
 .factor-track {
   height: 6px;
   border-radius: var(--r-pill);
-  background: #e9eef7;
+  background: var(--track-bg);
   overflow: hidden;
 }
 
