@@ -722,7 +722,8 @@ onBeforeUnmount(() => {
 .chat-card {
   display: flex;
   flex-direction: column;
-  height: calc(100vh - 186px);
+  /* 除以内容缩放系数：zoom 会把视觉高度一起缩小，补偿后仍铺满视口 */
+  height: calc((100vh - 186px) / var(--content-scale, 1));
   min-height: 480px;
   overflow: hidden;
 }
@@ -1092,7 +1093,8 @@ onBeforeUnmount(() => {
   flex-direction: column;
   gap: 18px;
   min-width: 0;
-  height: calc(100vh - 186px);
+  /* 除以内容缩放系数：zoom 会把视觉高度一起缩小，补偿后仍铺满视口 */
+  height: calc((100vh - 186px) / var(--content-scale, 1));
   min-height: 480px;
   overflow: hidden;
 }
@@ -1357,11 +1359,11 @@ onBeforeUnmount(() => {
   }
 
   .chat-card {
-    height: calc(100vh - 210px);
+    height: calc((100vh - 210px) / var(--content-scale, 1));
   }
 
   .side {
-    height: calc(100vh - 210px);
+    height: calc((100vh - 210px) / var(--content-scale, 1));
   }
 }
 
@@ -1371,7 +1373,7 @@ onBeforeUnmount(() => {
   }
 
   .chat-card {
-    height: calc(100vh - 250px);
+    height: calc((100vh - 250px) / var(--content-scale, 1));
   }
 
   /* 单列堆叠：右栏回到自然高度，只给会话列表限高，避免把自己的内容裁掉 */

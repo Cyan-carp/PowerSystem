@@ -2,12 +2,16 @@
 import { computed } from 'vue'
 import type { RiskBand } from '../lib/api'
 
-const props = defineProps<{
-  bands: RiskBand[]
-  samples: number
-  faults: number
-  baselineRate: number
-}>()
+const props = withDefaults(
+  defineProps<{
+    bands: RiskBand[]
+    samples: number
+    faults: number
+    baselineRate: number
+    compact?: boolean
+  }>(),
+  { compact: false },
+)
 
 /**
  * 累积增益曲线：横轴是「抽查多少比例的设备」，纵轴是「能抓到多少比例的故障」。
@@ -18,14 +22,13 @@ const props = defineProps<{
  */
 
 const PAD = { left: 56, right: 18, top: 16, bottom: 42 }
-const BOX = { w: 520, h: 360 }
-const PLOT = {
-  w: BOX.w - PAD.left - PAD.right,
-  h: BOX.h - PAD.top - PAD.bottom,
-}
+/** 明细区紧凑档压低画布，把首屏让给结论与解读；所有坐标按当前尺寸算 */
+const box = computed(() => ({ w: 520, h: props.compact ? 210 : 360 }))
+const plotW = computed(() => box.value.w - PAD.left - PAD.right)
+const plotH = computed(() => box.value.h - PAD.top - PAD.bottom)
 
-const sx = (pct: number) => PAD.left + (pct / 100) * PLOT.w
-const sy = (gain: number) => PAD.top + (1 - gain / 100) * PLOT.h
+const sx = (pct: number) => PAD.left + (pct / 100) * plotW.value
+const sy = (gain: number) => PAD.top + (1 - gain / 100) * plotH.value
 
 /** 曲线点：从原点出发，按每个抽查比例累加已抓到的故障，最后补到 (100,100) */
 const points = computed(() => {
@@ -56,27 +59,27 @@ const ticks = [0, 25, 50, 75, 100]
 
 /** Y 轴标题逐字竖排：8 个字共 105px，垂直居中在绘图区 */
 const yLabelChars = '抓到故障比例'.split('')
-const yLabelStart = PAD.top + PLOT.h / 2 - (yLabelChars.length - 1) * 7.5 - 4
+const yLabelStart = computed(() => PAD.top + plotH.value / 2 - (yLabelChars.length - 1) * 7.5 - 4)
 </script>
 
 <template>
-  <div class="gain">
+  <div class="gain" :class="{ 'is-compact': compact }">
     <div v-if="!bands.length" class="gain-empty">暂无可统计的预测结果</div>
 
-    <svg v-else :viewBox="`0 0 ${BOX.w} ${BOX.h}`" class="gain-svg" role="img"
+    <svg v-else :viewBox="`0 0 ${box.w} ${box.h}`" class="gain-svg" role="img"
          aria-label="累积增益曲线：抽查设备比例与抓到故障比例的关系">
       <!-- 网格与刻度 -->
       <g class="grid">
-        <line v-for="t in ticks" :key="`gx${t}`" :x1="sx(t)" :y1="PAD.top" :x2="sx(t)" :y2="PAD.top + PLOT.h" />
-        <line v-for="t in ticks" :key="`gy${t}`" :x1="PAD.left" :y1="sy(t)" :x2="PAD.left + PLOT.w" :y2="sy(t)" />
+        <line v-for="t in ticks" :key="`gx${t}`" :x1="sx(t)" :y1="PAD.top" :x2="sx(t)" :y2="PAD.top + plotH" />
+        <line v-for="t in ticks" :key="`gy${t}`" :x1="PAD.left" :y1="sy(t)" :x2="PAD.left + plotW" :y2="sy(t)" />
       </g>
 
       <!-- 坐标轴 -->
-      <line class="axis" :x1="PAD.left" :y1="PAD.top + PLOT.h" :x2="PAD.left + PLOT.w" :y2="PAD.top + PLOT.h" />
-      <line class="axis" :x1="PAD.left" :y1="PAD.top" :x2="PAD.left" :y2="PAD.top + PLOT.h" />
+      <line class="axis" :x1="PAD.left" :y1="PAD.top + plotH" :x2="PAD.left + plotW" :y2="PAD.top + plotH" />
+      <line class="axis" :x1="PAD.left" :y1="PAD.top" :x2="PAD.left" :y2="PAD.top + plotH" />
 
       <!-- 刻度标签 -->
-      <text v-for="t in ticks" :key="`tx${t}`" class="tick" :x="sx(t)" :y="PAD.top + PLOT.h + 16" text-anchor="middle">
+      <text v-for="t in ticks" :key="`tx${t}`" class="tick" :x="sx(t)" :y="PAD.top + plotH + 16" text-anchor="middle">
         {{ t }}%
       </text>
       <text v-for="t in ticks" :key="`ty${t}`" class="tick" :x="PAD.left - 8" :y="sy(t) + 4" text-anchor="end">
@@ -84,7 +87,7 @@ const yLabelStart = PAD.top + PLOT.h / 2 - (yLabelChars.length - 1) * 7.5 - 4
       </text>
 
       <!-- 轴标题 -->
-      <text class="axis-label" :x="PAD.left + PLOT.w / 2" :y="BOX.h - 4" text-anchor="middle">抽查设备比例</text>
+      <text class="axis-label" :x="PAD.left + plotW / 2" :y="box.h - 4" text-anchor="middle">抽查设备比例</text>
       <!-- Y 轴标题竖排：逐字往下放，不旋转。旋转后的文字要歪头看，读起来费劲 -->
       <text v-for="(ch, i) in yLabelChars" :key="`yl${i}`" class="axis-label"
             :x="16" :y="yLabelStart + i * 15" text-anchor="middle">{{ ch }}</text>
@@ -155,6 +158,14 @@ const yLabelStart = PAD.top + PLOT.h / 2 - (yLabelChars.length - 1) * 7.5 - 4
   /* 图表不需要占满整张卡片：高度封顶后，读数和图例还在首屏内 */
   max-height: 360px;
   display: block;
+}
+
+.gain.is-compact .gain-svg {
+  max-height: 220px;
+}
+
+.gain.is-compact {
+  gap: 4px;
 }
 
 .grid line {

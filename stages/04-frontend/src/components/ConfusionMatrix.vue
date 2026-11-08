@@ -6,7 +6,10 @@ import { computed } from 'vue'
  * 用 CSS Grid 而非 SVG，格子在卡片内按高度铺满，避免卡片被相邻卡撑高后上下留白。
  * 正确判定用 --ok、错误判定用 --bad；颜色之外仍保留数值与语义文字。
  */
-const props = defineProps<{ tp: number; fp: number; fn: number; tn: number }>()
+const props = withDefaults(
+  defineProps<{ tp: number; fp: number; fn: number; tn: number; compact?: boolean }>(),
+  { compact: false },
+)
 
 const total = computed(() => props.tp + props.fp + props.fn + props.tn)
 const max = computed(() => Math.max(props.tp, props.fp, props.fn, props.tn, 1))
@@ -41,7 +44,7 @@ const pctText = (value: number) => (total.value ? `${((value / total.value) * 10
 </script>
 
 <template>
-  <div class="cm-figure" role="img" aria-label="混淆矩阵：按样本量着色的四格热力图">
+  <div class="cm-figure" :class="{ 'is-compact': compact }" role="img" aria-label="混淆矩阵：按样本量着色的四格热力图">
     <span class="cm-corner"></span>
     <span class="cm-axis">预测故障</span>
     <span class="cm-axis">预测正常</span>
@@ -85,6 +88,25 @@ const pctText = (value: number) => (total.value ? `${((value / total.value) * 10
   gap: 6px;
   flex: 1;
   min-height: 0;
+}
+
+/* 明细区用紧凑档：格子高度减半，隐藏与轴标签重复的第二行说明 */
+.cm-figure.is-compact {
+  grid-template-rows: auto 88px 88px;
+  gap: 5px;
+}
+
+.cm-figure.is-compact .cm-cell {
+  padding: 5px 6px;
+  gap: 0;
+}
+
+.cm-figure.is-compact .cm-cell b {
+  font-size: 18px;
+}
+
+.cm-figure.is-compact .cm-cell em {
+  display: none;
 }
 
 .cm-corner {

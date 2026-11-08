@@ -4,7 +4,7 @@ tags:
   - 工作区导航
 status: 现行
 scope: 跨版本
-updated: 2026-10-31
+updated: 2026-11-08
 workspace_path: "stages/04-frontend/dev/mock-server.mjs"
 relative_path: "../../stages/04-frontend/dev/mock-server.mjs"
 repository_url: null

@@ -25,6 +25,9 @@ import { useLatestRequest } from '../lib/useLatestRequest'
  * 模型质量：只看「已经到期、有真实结果」的预测，与线上故障预测分开统计。
  * 五个区块各自独立请求：任何一块失败都不该让其余区块变成空白，
  * 所以错误只汇总成一行文案 + 重试，不逐块弹 toast。
+ *
+ * 信息层级（2026-11-08 重排）：首屏只放「现在质量如何」「要不要动手」，
+ * 图表与完整台账下移；所有解释性文字收进页尾可展开的「统计口径」，不占正文。
  */
 
 const DAY = 86_400_000
@@ -45,11 +48,6 @@ const eligibilityRequest = useLatestRequest<TrainEligibility>()
 const training = ref(false)
 const eligibility = computed(() => eligibilityRequest.data.value)
 const driftRequest = useLatestRequest<DriftEvent[]>()
-
-/**
- * 运维视角单独一路请求：它只是补充口径，失败了也不该把页面顶部的错误条拉出来，
- * 更不能挡住主 KPI 的展示，所以不进 failed 汇总。
- */
 const operationsRequest = useLatestRequest<QualityOperations>()
 const operations = computed(() => operationsRequest.data.value)
 
@@ -176,56 +174,76 @@ const reload = () => {
 onMounted(reload)
 watch(days, loadCore)
 
-/* ---------------- 指标文案 ---------------- */
+/* ---------------- 指标与首屏读数 ---------------- */
 
 /** 比例一律转百分比；null 是「算不出来」，显示「—」*/
 const ratioOf = (value: number | null | undefined) => (value == null ? '—' : pct(value * 100, 1))
 
-/** 窗口口径漏报率 = 1 − 召回率，只在卡片的备注里作参考 */
+/** 窗口口径漏报率 = 1 − 召回率，只在口径说明里作参考 */
 const missRate = computed(() => {
   const recall = summary.value?.recall
   return recall == null ? null : 1 - recall
 })
 
-const kpis = computed(() => {
+const batch = computed(() => summary.value?.batch ?? null)
+const hasBatch = computed(() => Boolean(batch.value && batch.value.total > 0))
+const batchHitRate = computed(() => (hasBatch.value ? ratioOf(batch.value!.rate) : '—'))
+const batchLine = computed(() => {
+  const value = batch.value
+  if (!hasBatch.value || !value) return '区间内没有故障批次'
+  const lead = value.p50_lead_minutes
+  return `${value.total} 批中叫出 ${value.hit} 批${lead == null ? '' : ` · 中位提前 ${lead} 分钟`}`
+})
+
+/** 一句话事实摘要：只陈述已取得的数据，不做「健康/异常」档位判定 */
+const headline = computed(() => {
+  const value = batch.value
+  if (!summary.value) return '正在读取质量数据…'
+  if (!hasBatch.value || !value) return '统计区间内没有故障批次，暂无命中结论'
+  const missed = value.total - value.hit
+  const perDevice = operations.value ? `${operations.value.false_alarms_per_device_day.toFixed(1)} 次` : null
+  return `${days.value} 天内 ${value.total} 次故障，提前叫出 ${value.hit} 次${missed ? `、漏掉 ${missed} 次` : '、全部叫出'}${perDevice ? `；近 1 天每台设备日均误报约 ${perDevice}` : ''}`
+})
+
+/** 原来的四格 KPI + 三格运维视角合并成一行胶囊：结论占大数字，其余只留读数 */
+const quickFacts = computed(() => {
   const value = summary.value
-  const batch = value?.batch ?? null
-  const hasBatch = !!batch && batch.total > 0
+  const ops = operations.value
   return [
-    {
-      key: 'samples',
-      label: '样本量',
-      color: 'var(--brand)',
-      value: value ? n(value.samples) : '—',
-      note: '窗口结束后满 1 小时、按 1 小时真值规则标注的预测',
-    },
-    {
-      key: 'batch-hit',
-      label: '批次命中率',
-      color: 'var(--ok)',
-      value: hasBatch ? ratioOf(batch!.rate) : '—',
-      note: hasBatch
-        ? `1 小时内提前叫出 ${batch!.hit}/${batch!.total} 次故障，中位提前 ${batch!.p50_lead_minutes ?? 0} 分钟`
-        : '区间内没有故障批次',
-    },
-    {
-      key: 'batch-miss',
-      label: '批次漏报率',
-      color: 'var(--bad)',
-      value: hasBatch ? ratioOf(1 - (batch!.rate ?? 0)) : '—',
-      note: hasBatch ? `漏掉 ${batch!.total - batch!.hit} 次故障` : '区间内没有故障批次',
-    },
-    {
-      key: 'window',
-      label: '窗口准确率',
-      color: 'var(--ink-4)',
-      value: value ? ratioOf(value.accuracy) : '—',
-      note: value
-        ? `(TP+TN)÷全部窗口；窗口命中 ${ratioOf(value.precision)}、漏报 ${ratioOf(missRate.value)}`
-        : '(TP + TN) ÷ 全部样本',
-    },
+    { label: '漏报批次', value: hasBatch.value ? `${batch.value!.total - batch.value!.hit}/${batch.value!.total}` : '—', tone: 'bad' },
+    { label: '批次漏报率', value: hasBatch.value ? ratioOf(1 - (batch.value!.rate ?? 0)) : '—', tone: 'bad' },
+    { label: '每台设备日均误报', value: ops ? `${ops.false_alarms_per_device_day.toFixed(1)} 次` : '—', tone: '' },
+    { label: '误报事件/台·天', value: ops ? `${ops.false_alarm_events_per_device_day.toFixed(1)} 起` : '—', tone: '' },
+    { label: '中位提前量', value: ops ? `${ops.lead_minutes_p50} 分钟` : '—', tone: '' },
+    { label: '样本量', value: value ? n(value.samples) : '—', tone: '' },
+    { label: '窗口准确率', value: value ? ratioOf(value.accuracy) : '—', tone: '' },
   ]
 })
+
+/** 运行态徽标：一致 / 不一致 / 读不到，三种都写清，不静默当成一致 */
+const runtimeState = computed(() => {
+  if (versionMismatch.value) return { tone: 'bad', label: '版本不一致' }
+  if (versionUnknown.value) return { tone: 'warn', label: '运行版本待核对' }
+  if (runtimeVersion.value && ledgerActive.value) return { tone: 'ok', label: '运行一致' }
+  return { tone: 'idle', label: '待核对' }
+})
+
+const activeModel = computed(() => models.value.find((item) => item.status === 'active') ?? null)
+const trialModelRow = computed(() => models.value.find((item) => item.status === 'trial') ?? null)
+
+/** 越线触发处置的才算醒目事件；只登记观察的保持中性色 */
+const isTriggered = (item: DriftEvent) => item.action === 'triggered' || item.level === 'triggered'
+const triggeredDrift = computed(() => drift.value.filter(isTriggered))
+/** 有触发级优先只看触发级，否则退回最近三条；首屏不堆整张表 */
+const recentDrift = computed(() => (triggeredDrift.value.length ? triggeredDrift.value : drift.value).slice(0, 3))
+
+const driftSection = ref<HTMLElement | null>(null)
+const modelsSection = ref<HTMLElement | null>(null)
+const glossaryOpen = ref(false)
+const scrollTo = (target: 'drift' | 'models') => {
+  const node = target === 'drift' ? driftSection.value : modelsSection.value
+  node?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+}
 
 /* ---------------- 模型版本 ---------------- */
 
@@ -351,8 +369,6 @@ const LEVEL_HINT: Record<string, string> = {
 const signalText = (value: string) => SIGNAL_CN[value] || value
 const actionText = (value: string | null) => (value ? ACTION_CN[value] || value : '—')
 const levelHint = (value: string) => LEVEL_HINT[value] || value
-/** 越线触发处置的才算醒目事件；只登记观察的保持中性色 */
-const isTriggered = (item: DriftEvent) => item.action === 'triggered' || item.level === 'triggered'
 </script>
 
 <template>
@@ -377,69 +393,170 @@ const isTriggered = (item: DriftEvent) => item.action === 'triggered' || item.le
       <button class="btn btn-sm" @click="reload">重试</button>
     </div>
 
-    <section class="card strip">
-      <div v-for="item in kpis" :key="item.key" class="strip-cell">
-        <span class="strip-label"><i :style="{ background: item.color }"></i>{{ item.label }}</span>
-        <span class="strip-value num">{{ item.value }}</span>
-        <span class="strip-note">{{ item.note }}</span>
-      </div>
-    </section>
-
-    <section class="card">
-      <div class="card-head">
-        <span class="card-title">运维视角</span>
-        <span class="card-sub">同一批数据，按设备摊薄后的口径</span>
-      </div>
-      <div class="ov-grid">
-        <div class="ov-cell">
-          <span class="ov-label"><i :style="{ background: 'var(--brand)' }"></i>每台设备日均误报</span>
-          <span v-if="operations" class="ov-value num">
-            {{ operations.false_alarms_per_device_day.toFixed(1) }}<span class="ov-unit">次</span>
-          </span>
-          <span v-else class="ov-value num">—</span>
-          <span v-if="operations" class="ov-note">
-            {{ operations.false_alarms }} 次误报窗口 ÷ {{ operations.devices }} 台设备 ÷ {{ operations.days }} 天
+    <!-- 首屏 A：一句话结论 + 唯一主数字 + 全部次要读数胶囊 + 运行态 -->
+    <section class="card hero">
+      <div class="hero-main">
+        <div class="hero-eyebrow">质量速览 <span>按故障批次 · 近 {{ days }} 天</span></div>
+        <div class="hero-primary">
+          <span class="hero-value num">{{ batchHitRate }}</span>
+          <div class="hero-primary-text">
+            <b>故障提前叫出</b>
+            <span class="num">{{ batchLine }}</span>
+          </div>
+        </div>
+        <p class="hero-line">{{ headline }}</p>
+        <div class="hero-chips">
+          <span v-for="fact in quickFacts" :key="fact.label" class="fact" :class="{ 'is-bad': fact.tone === 'bad' }">
+            <span class="fact-label">{{ fact.label }}</span>
+            <b class="fact-value num">{{ fact.value }}</b>
           </span>
         </div>
-        <div class="ov-cell">
-          <span class="ov-label"><i :style="{ background: 'var(--warn)' }"></i>每台设备日均误报事件</span>
-          <span v-if="operations" class="ov-value num">
-            {{ operations.false_alarm_events_per_device_day.toFixed(1) }}<span class="ov-unit">起</span>
-          </span>
-          <span v-else class="ov-value num">—</span>
-          <span v-if="operations" class="ov-note">
-            合并相邻高分窗口（间隔≤10分钟记一起）：{{ operations.false_alarm_events }} 起误报事件，来自 {{ operations.false_alarm_event_windows }} 个高分窗口（含命中真实故障的窗口，非纯误报窗口）；另有 {{ operations.false_alarm_events_with_fault }} 起事件含真实故障、不计入误报（共 {{ operations.false_alarm_event_total }} 起）
-          </span>
+      </div>
+      <div class="hero-side">
+        <span class="side-label">运行态核对</span>
+        <div class="side-version">
+          <b class="num">{{ ledgerActive || '—' }}</b>
+          <StatusChip :tone="runtimeState.tone" :label="runtimeState.label" />
         </div>
-        <div class="ov-cell">
-          <span class="ov-label"><i :style="{ background: 'var(--ok)' }"></i>平均预警提前量</span>
-          <span v-if="operations" class="ov-value num">
-            {{ operations.lead_minutes_p50 }}<span class="ov-unit">分钟</span>
-          </span>
-          <span v-else class="ov-value num">—</span>
-          <span v-if="operations" class="ov-note">
-            中位数 · 90 分位 {{ operations.lead_minutes_p90 }} 分钟 · 1 小时内提前发现 {{ operations.captured }}/{{ operations.faults }} 次故障
-          </span>
+        <p v-if="versionMismatch" class="side-warn">
+          推理服务实际加载 <b class="num">{{ runtimeVersion }}</b>，与台账现役不一致，请以运行版本为准。
+        </p>
+        <p v-else-if="versionUnknown" class="side-warn is-soft">
+          推理服务运行版本暂无法核对（健康检查不可读或未返回版本），不要据此认为版本已一致。
+        </p>
+        <p v-else class="side-ok">台账现役与推理服务加载版本一致</p>
+        <div class="side-meta">
+          <span>统计窗口</span><b class="num">{{ windowLabel }}</b>
+          <span>统计版本</span><b class="num">{{ summary?.model_version || '—' }}</b>
+          <span>漂移事件</span><b>{{ drift.length }} 条 · 触发级 {{ triggeredDrift.length }} 条</b>
         </div>
       </div>
     </section>
 
-    <div class="qq-grid">
+    <!-- 首屏 B：高信息量模块。左「读完就要动手」，右「需要盯的异常」 -->
+    <div class="focus-grid">
+      <section class="card focus-card">
+        <div class="card-head">
+          <span class="card-title">AI 解读</span>
+          <span class="card-sub">漂移归因与试用对比 · 只给建议</span>
+          <div class="card-tools">
+            <button class="btn btn-sm" :disabled="analyzing !== ''" @click="runAnalysis('drift')">
+              {{ analyzing === 'drift' ? '分析中…' : '分析漂移' }}
+            </button>
+            <button class="btn btn-sm btn-quiet" :disabled="analyzing !== ''" @click="runAnalysis('trial')">
+              {{ analyzing === 'trial' ? '分析中…' : '对比试用' }}
+            </button>
+          </div>
+        </div>
+        <div class="insight">
+          <template v-if="driftAnalysis">
+            <p class="insight-conclusion">{{ driftAnalysis.conclusion }}</p>
+            <ul v-if="driftAnalysis.reasons.length" class="insight-list">
+              <li v-for="reason in driftAnalysis.reasons" :key="reason">{{ reason }}</li>
+            </ul>
+            <p v-if="driftAnalysis.suggestions.length" class="insight-suggest">建议：{{ driftAnalysis.suggestions.join('；') }}</p>
+            <p class="insight-meta">
+              {{ driftAnalysis.created_at ? stamp(driftAnalysis.created_at) : '' }} ·
+              tokens {{ driftAnalysis.prompt_tokens + driftAnalysis.completion_tokens }}
+            </p>
+          </template>
+          <p v-else class="insight-empty">还没有解读记录，点「分析漂移」让模型读一遍分时误差</p>
+          <div v-if="trialAnalysis" class="insight-trial">
+            <p class="insight-conclusion">试用对比：{{ trialAnalysis.conclusion }}</p>
+            <p v-if="trialAnalysis.suggestions.length" class="insight-suggest">建议：{{ trialAnalysis.suggestions.join('；') }}</p>
+          </div>
+        </div>
+        <div class="retrain-row">
+          <div class="retrain-text">
+            <b>用新数据重训</b>
+            <span v-if="eligibility" class="retrain-note" :class="eligibility.ready ? 'is-ok' : 'is-blocked'">
+              {{ eligibility.days }} 天 / {{ n(eligibility.samples) }} 条 / {{ n(eligibility.positives) }} 个正样本 ·
+              {{ eligibility.ready ? '已达准入门槛' : eligibility.blockers.join('；') }}
+            </span>
+            <span v-else class="retrain-note">正在读取数据量…</span>
+          </div>
+          <button
+            class="btn btn-sm"
+            :disabled="!eligibility?.ready || training"
+            :title="eligibility?.ready ? '按最近 120 天窗口模式数据重训一份候选' : (eligibility?.blockers.join('；') || '正在读取数据量')"
+            @click="startTrain"
+          >
+            {{ training ? '训练中…' : '开始重训' }}
+          </button>
+        </div>
+      </section>
+
+      <section class="card focus-card">
+        <div class="card-head">
+          <span class="card-title">版本与漂移</span>
+          <span class="card-sub">现役 / 试用 · 最近触发级事件</span>
+        </div>
+        <div class="version-panel">
+          <div v-if="activeModel" class="version-row">
+            <StatusChip :tone="statusOf(activeModel.status).tone" :label="statusOf(activeModel.status).label" />
+            <b class="version-name num">{{ activeModel.model_version }}</b>
+            <span class="version-meta num">
+              阈值 {{ activeModel.threshold == null ? '—' : pct(activeModel.threshold * 100, 0) }} ·
+              离线精确率 {{ metricOf(activeModel, 'precision') }} · 漏报率 {{ missOf(activeModel) }}
+            </span>
+          </div>
+          <div v-if="trialModelRow" class="version-row">
+            <StatusChip :tone="statusOf(trialModelRow.status).tone" :label="statusOf(trialModelRow.status).label" />
+            <b class="version-name num">{{ trialModelRow.model_version }}</b>
+            <span class="version-meta num">观察 24 小时后再决定转正或回退</span>
+          </div>
+          <p v-if="versionMismatch" class="version-warn">
+            运行版本 <b class="num">{{ runtimeVersion }}</b> 与台账现役不一致，必要时检查 /health 是否反映最新加载。
+          </p>
+          <p v-else-if="versionUnknown" class="version-warn is-soft">运行版本暂无法核对，请以推理服务实际加载为准。</p>
+          <button class="link-btn" @click="scrollTo('models')">查看模型台账（{{ models.length }} 个版本）</button>
+        </div>
+        <div class="drift-panel">
+          <div class="drift-panel-head">
+            <b>最近漂移</b>
+            <span>{{ triggeredDrift.length ? `${triggeredDrift.length} 条触发级` : '无触发级事件' }}</span>
+          </div>
+          <div v-if="recentDrift.length" class="drift-list">
+            <div v-for="item in recentDrift" :key="item.id" class="drift-item">
+              <div class="drift-main">
+                <span class="drift-title">
+                  <b class="num" :title="levelHint(item.level)">{{ item.level }}</b>
+                  {{ signalText(item.signal) }}
+                </span>
+                <span class="drift-value num">
+                  观测 {{ n(item.observed, 3) }} · 基线 {{ n(item.baseline, 3) }} · 阈值 {{ n(item.threshold, 3) }}
+                </span>
+                <span class="drift-time num">{{ stamp(item.detected_at) }}</span>
+              </div>
+              <StatusChip :tone="isTriggered(item) ? 'bad' : 'idle'" :label="actionText(item.action)" />
+            </div>
+          </div>
+          <p v-else class="drift-empty">{{ driftRequest.pending.value ? '正在读取漂移事件…' : '窗口内无漂移事件' }}</p>
+        </div>
+        <button class="link-btn focus-foot" @click="scrollTo('drift')">查看全部漂移事件（{{ drift.length }} 条）</button>
+      </section>
+    </div>
+
+    <!-- 下滑 C：明细图表。压缩并排，功能不减、不折叠 -->
+    <div class="section-title">
+      <h2>明细指标</h2>
+      <span>图表按预测窗口口径统计，与上方故障批次口径不同，仅用于核对</span>
+    </div>
+    <div class="detail-grid">
       <section class="card">
         <div class="card-head">
           <span class="card-title">混淆矩阵</span>
-          <span class="card-sub">按阈值判定 · 窗口口径（真值只看结束后 1 小时，分母含提前量窗口）</span>
+          <span class="card-sub">窗口口径 · 真值只看结束后 1 小时</span>
         </div>
         <div class="cm-wrap">
           <ConfusionMatrix
+            compact
             :tp="summary?.tp ?? 0"
             :fp="summary?.fp ?? 0"
             :fn="summary?.fn ?? 0"
             :tn="summary?.tn ?? 0"
           />
-          <p class="cm-note">
-            颜色深浅按对数刻度映射样本量。命中率与漏报率此消彼长：降低阈值可减少漏报，代价是误报增加。
-          </p>
+          <p class="cm-note">颜色深浅按对数刻度映射样本量；降低阈值可减少漏报，代价是误报增加。</p>
         </div>
       </section>
 
@@ -454,6 +571,7 @@ const isTriggered = (item: DriftEvent) => item.action === 'triggered' || item.le
         <p v-if="riskBandsRequest.pending.value && !riskBands" class="bands-loading">正在统计…</p>
         <RiskBandsChart
           v-else
+          compact
           :bands="riskBands?.items ?? []"
           :samples="riskBands?.samples ?? 0"
           :faults="riskBands?.faults ?? 0"
@@ -462,7 +580,7 @@ const isTriggered = (item: DriftEvent) => item.action === 'triggered' || item.le
       </section>
     </div>
 
-    <section class="card">
+    <section class="card trend-card">
       <div class="card-head">
         <span class="card-title">按日趋势</span>
         <span class="card-sub">
@@ -470,82 +588,20 @@ const isTriggered = (item: DriftEvent) => item.action === 'triggered' || item.le
           <template v-if="seriesVersion"> · 版本 <b class="num">{{ seriesVersion }}</b></template>
         </span>
       </div>
-      <QualityTrend :points="points" :pending="seriesRequest.pending.value" />
+      <QualityTrend :points="points" :pending="seriesRequest.pending.value" :height="156" />
     </section>
 
-    <section class="card">
-      <div class="card-head">
-        <span class="card-title">模型运营</span>
-        <span class="card-sub">重训与解读 · 只给建议，不自动执行</span>
-      </div>
-      <div class="ops">
-        <div class="ops-block">
-          <div class="ops-head">
-            <span class="ops-title">用新数据重训</span>
-            <button
-              class="btn btn-sm"
-              :disabled="!eligibility?.ready || training"
-              :title="eligibility?.ready ? '按最近 120 天窗口模式数据重训一份候选' : (eligibility?.blockers.join('；') || '正在读取数据量')"
-              @click="startTrain"
-            >
-              {{ training ? '训练中…' : '开始重训' }}
-            </button>
-          </div>
-          <p v-if="eligibility" class="ops-meta">
-            已积累 <b class="num">{{ eligibility.days }}</b> 天 ·
-            <b class="num">{{ eligibility.samples }}</b> 条样本 ·
-            <b class="num">{{ eligibility.positives }}</b> 个正样本
-          </p>
-          <p v-if="eligibility" class="ops-note-line" :class="eligibility.ready ? 'is-ok' : 'is-blocked'">
-            {{ eligibility.ready ? '已达准入门槛，可以重训' : eligibility.blockers.join('；') }}
-          </p>
-        </div>
+    <!-- 下滑 D：完整台账 -->
+    <div class="section-title">
+      <h2>台账与事件</h2>
+      <span>完整版本台账与漂移记录，操作仍需逐行确认</span>
+    </div>
 
-        <div class="ops-block">
-          <div class="ops-head">
-            <span class="ops-title">AI 解读</span>
-            <div class="ops-actions">
-              <button class="btn btn-sm" :disabled="analyzing !== ''" @click="runAnalysis('drift')">
-                {{ analyzing === 'drift' ? '分析中…' : '分析漂移' }}
-              </button>
-              <button class="btn btn-sm btn-quiet" :disabled="analyzing !== ''" @click="runAnalysis('trial')">
-                {{ analyzing === 'trial' ? '分析中…' : '对比试用' }}
-              </button>
-            </div>
-          </div>
-          <div v-if="driftAnalysis" class="ops-result">
-            <p class="ops-conclusion">{{ driftAnalysis.conclusion }}</p>
-            <ul v-if="driftAnalysis.reasons.length" class="ops-list">
-              <li v-for="reason in driftAnalysis.reasons" :key="reason">{{ reason }}</li>
-            </ul>
-            <p v-if="driftAnalysis.suggestions.length" class="ops-suggest">建议：{{ driftAnalysis.suggestions.join('；') }}</p>
-            <p class="ops-tokens">
-              {{ driftAnalysis.created_at ? stamp(driftAnalysis.created_at) : '' }} ·
-              tokens {{ driftAnalysis.prompt_tokens + driftAnalysis.completion_tokens }}
-            </p>
-          </div>
-          <p v-else class="ops-empty">还没有解读记录，点「分析漂移」让模型读一遍分时误差</p>
-          <div v-if="trialAnalysis" class="ops-result ops-result-trial">
-            <p class="ops-conclusion">试用对比：{{ trialAnalysis.conclusion }}</p>
-            <p v-if="trialAnalysis.suggestions.length" class="ops-suggest">建议：{{ trialAnalysis.suggestions.join('；') }}</p>
-          </div>
-        </div>
-      </div>
-    </section>
-
-    <section class="card">
+    <section ref="modelsSection" class="card">
       <div class="card-head">
         <span class="card-title">模型版本</span>
         <span class="card-sub">{{ models.length }} 个版本 · 候选可试用，试用期满可转正</span>
       </div>
-      <p v-if="versionMismatch" class="model-warn" role="alert">
-        台账现役为 <b class="num">{{ ledgerActive }}</b>，推理服务实际加载的是 <b class="num">{{ runtimeVersion }}</b>。
-        两者不一致，请以推理服务实际运行版本为准，必要时检查 /health 是否反映最新加载。
-      </p>
-      <p v-else-if="versionUnknown" class="model-warn model-warn-soft" role="alert">
-        台账现役为 <b class="num">{{ ledgerActive }}</b>，但推理服务运行版本暂无法核对（健康检查不可读或未返回版本）。
-        请以推理服务实际加载为准，不要据此认为版本已一致。
-      </p>
       <div class="table-wrap">
         <table class="table md-table">
           <colgroup>
@@ -647,16 +703,10 @@ const isTriggered = (item: DriftEvent) => item.action === 'triggered' || item.le
           </tbody>
         </table>
       </div>
-      <p class="md-note">
-        “离线精确率 / 离线漏报率”来自模型训练报告（多为合成数据），仅证明合成场景下的训练效果；
-        真实运行效果以页面顶部按 1 小时真值统计的线上故障批次命中率与误报事件为准，二者口径不同、不可混用，也不代表实盘已验证。
-      </p>
-      <div class="pager">
-        <span>候选只能先试用：试用会实际切换并核对推理服务运行版本，试用期满后确认转正；退役与被拒版本仅作留档，不支持回退。</span>
-      </div>
+      <div class="pager tight-pager"><span>离线指标来自训练报告，口径说明见页尾</span></div>
     </section>
 
-    <section class="card">
+    <section ref="driftSection" class="card">
       <div class="card-head">
         <span class="card-title">漂移事件</span>
         <span class="card-sub">最近 {{ drift.length }} 条 · 指标越限时自动登记</span>
@@ -701,8 +751,31 @@ const isTriggered = (item: DriftEvent) => item.action === 'triggered' || item.le
           </tbody>
         </table>
       </div>
-      <div class="pager">
-        <span>观测值与基线采用同一口径；观察级事件仅登记，处置需人工确认。</span>
+      <div class="pager tight-pager"><span>观察级事件仅登记，处置需人工确认</span></div>
+    </section>
+
+    <!-- 口径说明：原文一条不删，只是不占正文 -->
+    <section class="card glossary">
+      <button class="glossary-summary" :aria-expanded="glossaryOpen" @click="glossaryOpen = !glossaryOpen">
+        <span class="card-title">统计口径与说明</span>
+        <span class="card-sub">指标定义、分母、离线与线上差异 · 点击展开</span>
+        <span class="glossary-toggle">{{ glossaryOpen ? '收起' : '展开' }}</span>
+      </button>
+      <div v-if="glossaryOpen" class="glossary-body">
+        <p><b>样本量</b>：窗口结束后满 1 小时、按 1 小时真值规则标注的预测。</p>
+        <p><b>故障提前叫出（批次命中率）</b>：1 小时内提前叫出的故障批次 ÷ 总故障批次；同一台设备同一次故障算一批，分母含提前量窗口。中位提前量取各批次提前分钟数的中位数。</p>
+        <p><b>窗口漏报率 / 批次漏报率</b>：批次漏报率 = 1 − 批次命中率；窗口漏报率 = 1 − 召回率，两者口径不同，不可混用。</p>
+        <p><b>窗口准确率</b>：(TP + TN) ÷ 全部窗口；窗口命中 {{ ratioOf(summary?.precision) }}、窗口漏报 {{ ratioOf(missRate) }}。</p>
+        <p><b>每台设备日均误报</b>：误报窗口数 ÷ 设备数 ÷ 天数（固定取最近 1 天，与顶部统计窗口选择无关）；当前 {{ operations?.false_alarms ?? '—' }} 次误报窗口 ÷ {{ operations?.devices ?? '—' }} 台设备 ÷ {{ operations?.days ?? '—' }} 天。</p>
+        <p><b>每台设备日均误报事件</b>：合并相邻高分窗口（间隔≤10分钟记一起）：{{ operations?.false_alarm_events ?? '—' }} 起误报事件，来自 {{ operations?.false_alarm_event_windows ?? '—' }} 个高分窗口（含命中真实故障的窗口，非纯误报窗口）；另有 {{ operations?.false_alarm_events_with_fault ?? '—' }} 起事件含真实故障、不计入误报（共 {{ operations?.false_alarm_event_total ?? '—' }} 起）。</p>
+        <p><b>平均预警提前量</b>：中位数，90 分位 {{ operations?.lead_minutes_p90 ?? '—' }} 分钟，1 小时内提前发现 {{ operations?.captured ?? '—' }}/{{ operations?.faults ?? '—' }} 次故障。</p>
+        <p><b>混淆矩阵</b>：按阈值判定，窗口口径（真值只看结束后 1 小时，分母含提前量窗口）。颜色深浅按对数刻度映射样本量。命中率与漏报率此消彼长：降低阈值可减少漏报，代价是误报增加。</p>
+        <p><b>高风险组命中率</b>：累积增益曲线，横轴是抽查设备比例，纵轴是抓到故障比例；虚线为随机抽查基准。共 {{ riskBands?.samples ?? 0 }} 条样本、真实故障 {{ riskBands?.faults ?? 0 }} 次。</p>
+        <p><b>按日趋势</b>：按故障批次统计，仅看 1 小时内是否被提前叫出；缺失日期不画点，也不跨日期连线。</p>
+        <p><b>离线精确率 / 离线漏报率</b>：来自模型训练报告（多为合成数据），仅证明合成场景下的训练效果；真实运行效果以页面顶部按 1 小时真值统计的线上故障批次命中率与误报事件为准，二者口径不同、不可混用，也不代表实盘已验证。</p>
+        <p><b>模型版本操作</b>：候选只能先试用，试用会实际切换并核对推理服务运行版本，试用期满后确认转正；退役与被拒版本仅作留档，不支持回退。</p>
+        <p><b>版本一致性</b>：台账现役与推理服务实际加载版本不一致时，以推理服务实际运行版本为准，必要时检查 /health 是否反映最新加载；运行版本读不到时不作「已一致」判断。</p>
+        <p><b>漂移事件</b>：观测值与基线采用同一口径；观察级事件仅登记，处置需人工确认。L1 分布漂移、L2 校准漂移、L3 精度退化，详见表内层级提示。</p>
       </div>
     </section>
   </div>
@@ -712,7 +785,7 @@ const isTriggered = (item: DriftEvent) => item.action === 'triggered' || item.le
 .qq {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 14px;
 }
 
 .qq-bar {
@@ -744,305 +817,474 @@ const isTriggered = (item: DriftEvent) => item.action === 'triggered' || item.le
   flex-wrap: wrap;
 }
 
-/* KPI 四格：与预测排行页的 strip 同一套视觉，切页签时行高不跳 */
-.strip {
+/* ---------- 首屏 A：质量速览 ---------- */
+.hero {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: minmax(0, 1fr) 268px;
 }
 
-.strip-cell {
-  padding: 15px 20px 14px;
-  border-left: 1px solid var(--line-soft);
+.hero-main {
+  min-width: 0;
+  padding: 15px 20px 16px;
+}
+
+.hero-eyebrow {
   display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.strip-cell:first-child {
-  border-left: 0;
-}
-
-.strip-label {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
+  align-items: baseline;
+  gap: 10px;
   font-size: 12px;
-  color: var(--ink-3);
+  font-weight: 600;
+  color: var(--ink-2);
 }
 
-.strip-label i {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-}
-
-.strip-value {
-  font-size: 24px;
-  font-weight: 700;
-  letter-spacing: -0.02em;
-  color: var(--ink);
-  line-height: 1.25;
-}
-
-.strip-note {
+.hero-eyebrow span {
   font-size: 11px;
+  font-weight: 400;
   color: var(--ink-4);
 }
 
-/* 运维视角：两格并排，与 KPI 条同一套「左分隔线 + 大数字」的节奏，一眼能读 */
-.ov-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  padding: 2px 0 6px;
+.hero-primary {
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+  margin-top: 4px;
 }
 
-.ov-cell {
-  padding: 10px 20px 12px;
-  border-left: 1px solid var(--line);
+.hero-value {
+  font-size: 44px;
+  font-weight: 700;
+  letter-spacing: -0.035em;
+  line-height: 1.1;
+  color: var(--brand);
+}
+
+.hero-primary-text {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 1px;
   min-width: 0;
 }
 
-.ov-cell:first-child {
-  border-left: 0;
+.hero-primary-text b {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
 }
 
-.ov-label {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
+.hero-primary-text span {
   font-size: 11.5px;
   color: var(--ink-3);
 }
 
-.ov-label i {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
+.hero-line {
+  margin-top: 6px;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--ink-2);
 }
 
-.ov-value {
-  font-size: 22px;
-  font-weight: 700;
-  letter-spacing: -0.02em;
-  line-height: 1.3;
-  color: var(--ink);
+.hero-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 12px;
 }
 
-.ov-unit {
-  margin-left: 3px;
-  font-size: 12px;
-  font-weight: 600;
+.fact {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 4px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-pill);
+  background: var(--card-soft);
+  white-space: nowrap;
+}
+
+.fact-label {
+  font-size: 11px;
   color: var(--ink-3);
 }
 
-.ov-note {
-  font-size: 10.5px;
-  line-height: 1.6;
-  color: var(--ink-4);
+.fact-value {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink);
 }
 
-.qq-grid {
+.fact.is-bad .fact-value {
+  color: var(--bad-deep);
+}
+
+.hero-side {
+  min-width: 0;
+  padding: 15px 18px 14px;
+  border-left: 1px solid var(--line);
+  background: var(--card-soft);
+  border-radius: 0 var(--r-lg) var(--r-lg) 0;
+}
+
+.side-label {
+  font-size: 11px;
+  color: var(--ink-3);
+}
+
+.side-version {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 6px 0 8px;
+}
+
+.side-version b {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--ink);
+  word-break: break-all;
+}
+
+.side-warn,
+.side-ok {
+  margin: 0 0 10px;
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+.side-warn {
+  color: var(--bad-deep);
+}
+
+.side-warn.is-soft {
+  color: var(--warn-deep);
+}
+
+.side-ok {
+  color: var(--ok-deep);
+}
+
+.side-meta {
   display: grid;
-  /* 左列固定宽：混淆矩阵是 2x2 方阵，跟着右列等比拉宽会变成扁长条 */
-  /* 1:1 等分且等高：矩阵格子已限高，stretch 不会再把它拉成竖条，
-     两卡底部对齐后整行看起来才是一块 */
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  gap: 16px;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 3px 10px;
+  padding-top: 9px;
+  border-top: 1px solid var(--line);
+  font-size: 10.5px;
+}
+
+.side-meta span {
+  color: var(--ink-4);
+  white-space: nowrap;
+}
+
+.side-meta b {
+  min-width: 0;
+  font-weight: 500;
+  color: var(--ink-2);
+  word-break: break-all;
+}
+
+/* ---------- 首屏 B：两列高信息区 ---------- */
+.focus-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.08fr) minmax(0, 1fr);
+  gap: 14px;
   align-items: stretch;
 }
 
-/* 两张卡等高；内容在卡内垂直居中，避免底部留出大片空白 */
-.qq-grid > .card {
+.focus-card {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.focus-card .card-head {
+  padding: 12px 16px 8px;
+  gap: 8px;
+}
+
+.focus-card .card-sub {
+  white-space: normal;
+}
+
+.insight {
+  flex: 1;
+  min-width: 0;
+  padding: 0 16px 12px;
+}
+
+.insight-conclusion {
+  font-size: 12.5px;
+  font-weight: 600;
+  line-height: 1.6;
+  color: var(--ink);
+}
+
+.insight-list {
+  margin: 6px 0 0;
+  padding-left: 16px;
+  font-size: 11.5px;
+  line-height: 1.65;
+  color: var(--ink-2);
+}
+
+.insight-suggest {
+  margin-top: 6px;
+  font-size: 11.5px;
+  line-height: 1.6;
+  color: var(--brand);
+}
+
+.insight-meta {
+  margin-top: 6px;
+  font-size: 10.5px;
+  color: var(--ink-4);
+}
+
+.insight-empty {
+  font-size: 11.5px;
+  line-height: 1.7;
+  color: var(--ink-3);
+}
+
+.insight-trial {
+  margin-top: 9px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--line-strong);
+}
+
+.retrain-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 9px 16px 11px;
+  border-top: 1px solid var(--line-soft);
+}
+
+.retrain-text {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.retrain-text b {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.retrain-note {
+  font-size: 10.5px;
+  line-height: 1.5;
+  color: var(--ink-3);
+}
+
+.retrain-note.is-ok {
+  color: var(--ok-deep);
+}
+
+.retrain-note.is-blocked {
+  color: var(--warn-deep);
+}
+
+.version-panel {
+  padding: 0 16px 10px;
+}
+
+.version-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 5px 0;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.version-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.version-meta {
+  font-size: 10.5px;
+  color: var(--ink-3);
+}
+
+.version-warn {
+  margin: 8px 0 0;
+  font-size: 11px;
+  line-height: 1.55;
+  color: var(--bad-deep);
+}
+
+.version-warn.is-soft {
+  color: var(--warn-deep);
+}
+
+.link-btn {
+  margin-top: 7px;
+  padding: 0;
+  border: 0;
+  background: none;
+  font-size: 11px;
+  color: var(--brand);
+  cursor: pointer;
+}
+
+.link-btn:hover {
+  text-decoration: underline;
+}
+
+.drift-panel {
+  flex: 1;
+  padding: 9px 16px 4px;
+  border-top: 1px solid var(--line-soft);
+}
+
+.drift-panel-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.drift-panel-head b {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.drift-panel-head span {
+  font-size: 10.5px;
+  color: var(--ink-3);
+}
+
+.drift-list {
   display: flex;
   flex-direction: column;
 }
 
-/* ---- 混淆矩阵 ---- */
+.drift-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 5px 0;
+  border-bottom: 1px dashed var(--line-soft);
+}
+
+.drift-item:last-child {
+  border-bottom: 0;
+}
+
+.drift-main {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.drift-title {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.drift-title b {
+  margin-right: 5px;
+  font-size: 10.5px;
+  color: var(--ink-3);
+}
+
+.drift-value,
+.drift-time {
+  font-size: 10.5px;
+  color: var(--ink-3);
+}
+
+.drift-empty {
+  padding: 8px 0;
+  font-size: 11.5px;
+  color: var(--ink-3);
+}
+
+.focus-foot {
+  margin: 0 16px 11px;
+  text-align: left;
+}
+
+/* ---------- 下滑区 ---------- */
+.section-title {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 6px 2px 0;
+}
+
+.section-title h2 {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.section-title span {
+  font-size: 11px;
+  color: var(--ink-4);
+}
+
+.detail-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 14px;
+  align-items: stretch;
+}
+
+.detail-grid > .card,
+.trend-card {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.detail-grid .card-head,
+.trend-card .card-head {
+  padding: 11px 16px 8px;
+}
+
 .cm-wrap {
   flex: 1;
   display: flex;
   flex-direction: column;
   min-height: 0;
-  padding: 0 18px 14px;
+  padding: 0 16px 12px;
 }
 
-/* 台账与运行态不一致时必须显眼：提完不换文件会静默跑旧模型 */
-.train-hint {
-  margin: 0 18px 10px;
+.cm-note {
+  margin-top: 6px;
+  font-size: 10.5px;
+  line-height: 1.55;
+  color: var(--ink-4);
+}
+
+.bands-loading {
+  padding: 12px 16px 18px;
   font-size: 11.5px;
-  line-height: 1.6;
   color: var(--ink-3);
 }
 
-/* 操作列：试用/提升、确认/回退各一组，窄屏时会换行 */
 .row-actions {
   display: flex;
   flex-wrap: wrap;
   gap: 4px;
 }
 
-/* 模型运营：左重训、右解读 */
-.ops {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr);
-  gap: 18px;
-  padding: 14px 18px 18px;
-}
-
-.ops-block {
-  min-width: 0;
-  padding: 12px 14px;
-  border: 1px solid var(--line);
-  border-radius: var(--r-md);
-  background: var(--card-soft, var(--card));
-}
-
-.ops-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  margin-bottom: 8px;
-}
-
-.ops-title {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--ink);
-}
-
-.ops-actions {
-  display: flex;
-  gap: 6px;
-}
-
-.ops-meta {
-  margin: 0;
-  font-size: 11.5px;
-  line-height: 1.7;
-  color: var(--ink-2);
-}
-
-.ops-note-line {
-  margin: 6px 0 0;
-  font-size: 11px;
-  line-height: 1.6;
-}
-
-.ops-note-line.is-ok {
-  color: var(--ok);
-}
-
-.ops-note-line.is-blocked {
-  color: var(--warn);
-}
-
-.ops-result {
-  margin-top: 8px;
-}
-
-.ops-result-trial {
-  margin-top: 10px;
-  padding-top: 8px;
-  border-top: 1px dashed var(--line);
-}
-
-.ops-conclusion {
-  margin: 0;
-  font-size: 12px;
-  font-weight: 600;
-  line-height: 1.65;
-  color: var(--ink);
-}
-
-.ops-list {
-  margin: 6px 0 0;
-  padding-left: 16px;
-  font-size: 11.5px;
-  line-height: 1.7;
-  color: var(--ink-2);
-}
-
-.ops-suggest {
-  margin: 6px 0 0;
-  font-size: 11.5px;
-  line-height: 1.65;
-  color: var(--brand);
-}
-
-.ops-tokens {
-  margin: 6px 0 0;
-  font-size: 10.5px;
-  color: var(--ink-3);
-}
-
-.ops-empty {
-  margin: 0;
-  font-size: 11.5px;
-  line-height: 1.7;
-  color: var(--ink-3);
-}
-
-@media (max-width: 1180px) {
-  .ops {
-    grid-template-columns: minmax(0, 1fr);
-  }
-}
-
-.model-warn {
-  margin: 0 18px 10px;
-  padding: 9px 12px;
-  border: 1px solid var(--warn);
-  border-radius: var(--r-md);
-  background: var(--warn-soft);
-  font-size: 11.5px;
-  line-height: 1.6;
-  color: var(--ink);
-}
-
-.model-warn b {
-  font-weight: 700;
-}
-
-/* 运行版本读不到：提示核对，但不做强告警色，避免与真正的不一致混淆 */
-.model-warn-soft {
-  border-color: var(--ink-4);
-  background: var(--card-soft, var(--card));
-  color: var(--ink-2);
-}
-
-/* 离线指标口径说明：合成训练结果仅证明合成场景，不冒充实盘 */
-.md-note {
-  margin: 0 18px 10px;
-  font-size: 10.5px;
-  line-height: 1.6;
-  color: var(--ink-4);
-}
-
-.md-note b {
-  color: var(--ink-3);
-  font-weight: 600;
-}
-
-.cell-path {
-  display: block;
-  font-size: 10.5px;
-  line-height: 1.45;
-  color: var(--ink-3);
-  word-break: break-all;
-}
-
-.cm-note {
-  margin-top: 4px;
-  font-size: 11px;
-  line-height: 1.6;
-  color: var(--ink-3);
-}
-
-/* ---- 两张表 ---- */
 .md-table {
   table-layout: fixed;
   min-width: 900px;
@@ -1053,48 +1295,105 @@ const isTriggered = (item: DriftEvent) => item.action === 'triggered' || item.le
   min-width: 720px;
 }
 
-/* 表格里的第二行说明统一用小字，避免整列被撑高 */
 .md-table .cell-note,
 .dr-table .cell-note {
   font-size: 10.5px;
   color: var(--ink-3);
 }
 
-@media (max-width: 1240px) {
-  .qq-grid {
+.cell-path {
+  display: block;
+  font-size: 10.5px;
+  line-height: 1.45;
+  color: var(--ink-3);
+  word-break: break-all;
+}
+
+.tight-pager {
+  padding: 9px 20px;
+  font-size: 11px;
+}
+
+/* 口径说明：默认收起，长文案一条不删 */
+.glossary {
+  padding: 0;
+}
+
+.glossary-summary {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 12px 18px;
+  background: none;
+  border: 0;
+  text-align: left;
+  cursor: pointer;
+}
+
+.glossary-toggle {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--brand);
+}
+
+.glossary-body {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 24px;
+  padding: 4px 18px 16px;
+  border-top: 1px solid var(--line-soft);
+}
+
+.glossary-body p {
+  font-size: 11px;
+  line-height: 1.7;
+  color: var(--ink-3);
+}
+
+.glossary-body b {
+  font-weight: 600;
+  color: var(--ink-2);
+}
+
+@media (max-width: 1180px) {
+  .hero {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .hero-side {
+    border-left: 0;
+    border-top: 1px solid var(--line);
+    border-radius: 0 0 var(--r-lg) var(--r-lg);
+  }
+
+  .focus-grid,
+  .detail-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .glossary-body {
     grid-template-columns: minmax(0, 1fr);
   }
 }
 
 @media (max-width: 760px) {
-  .strip {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+  .hero-value {
+    font-size: 36px;
   }
 
-  .strip-cell:nth-child(3) {
-    border-left: 0;
-    border-top: 1px solid var(--line-soft);
-  }
-
-  .strip-cell:nth-child(4) {
-    border-top: 1px solid var(--line-soft);
-  }
-
-  /* 窄屏两格改成上下排，分隔线从左侧换成上方 */
-  .ov-grid {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .ov-cell {
-    border-left: 0;
-  }
-
-  .ov-cell + .ov-cell {
-    border-top: 1px solid var(--line-soft);
+  .hero-main,
+  .hero-side {
+    padding: 13px 14px;
   }
 
   .qq-refresh {
     margin-left: 0;
+  }
+
+  .fact {
+    white-space: normal;
   }
 }
 </style>
