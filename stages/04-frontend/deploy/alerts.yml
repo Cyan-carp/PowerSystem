@@ -81,3 +81,27 @@ groups:
           component: telemetry
         annotations:
           summary: Telemetry queue has no recent successful Redis writes
+  - name: inbox-expiry
+    rules:
+      - alert: PowerSystemInboxExpiryBurst
+        expr: increase(powersystem_telemetry_expiry_rows_total{job="api"}[15m]) - increase(powersystem_telemetry_expiry_probe_rows_total{job="api"}[15m]) >= 10
+        labels:
+          severity: critical
+          component: inbox
+        annotations:
+          summary: 15 分钟内至少 10 条样本超过 7 天仍未正常入库，已过期留档；请排查持续故障或处理能力
+      - alert: PowerSystemInboxExpiryProbeBurst
+        expr: increase(powersystem_telemetry_expiry_probe_rows_total{job="api"}[15m]) >= 10
+        labels:
+          severity: warning
+          component: inbox
+        annotations:
+          summary: 受控演练：15 分钟内至少 10 条标记样本已由 S02 过期留档；这是试验通知，不代表正式模拟数据故障
+      - alert: PowerSystemInboxExpiryStalled
+        expr: powersystem_telemetry_inbox_pending_rows_outside_window{job="api"} > 0 and on(instance) powersystem_telemetry_inbox_queue_stats_known{job="api"} == 1
+        for: 2m
+        labels:
+          severity: critical
+          component: inbox
+        annotations:
+          summary: 超过 7 天的样本仍留在待处理队列超过 2 分钟；请检查 S02 过期收尾是否停摆

@@ -166,6 +166,48 @@
   .fact span { display: block; color: var(--ink-3); font-size: 11px; }
   .fact b { font-weight: 600; font-size: 13px; }
 
+  /* ---------- 入库运行状态 ---------- */
+  .ops-body { display: grid; grid-template-columns: minmax(260px, .9fr) minmax(0, 1.6fr); gap: 18px; padding: 18px; }
+  .ops-summary { display: flex; flex-direction: column; gap: 12px; }
+  .ops-total { padding: 17px 18px; background: #f3f7ff; border: 1px solid #dbe7ff; border-radius: 10px; }
+  .ops-total-label { display: block; color: #35527f; font-size: 12px; font-weight: 600; }
+  .ops-total strong { display: block; color: #1743a1; font-size: clamp(34px, 4vw, 46px); line-height: 1.1; letter-spacing: -1.2px; margin: 7px 0 4px; }
+  .ops-total small { color: #536b91; font-size: 12px; }
+  .ops-verdict { padding: 13px 15px; background: var(--green-soft); border: 1px solid #bbf7d0; border-radius: 9px; color: #065f46; }
+  .ops-verdict.warn { background: var(--amber-soft); border-color: #fcd34d; color: #92400e; }
+  .ops-verdict.unknown { background: #f9fafb; border-color: var(--line); color: var(--ink-3); }
+  .ops-verdict strong { display: block; font-size: 13px; }
+  .ops-verdict span { display: block; font-size: 12px; margin-top: 2px; }
+  .ops-visuals { min-width: 0; display: grid; gap: 15px; }
+  .ops-chart-card { padding: 14px 15px; border: 1px solid var(--line); border-radius: 9px; min-width: 0; }
+  .ops-chart-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin-bottom: 10px; }
+  .ops-chart-head strong { font-size: 13px; }
+  .ops-chart-head span { font-size: 11px; color: var(--ink-3); text-align: right; }
+  .ops-bar { display: flex; height: 15px; overflow: hidden; border-radius: 999px; background: #edf0f4; }
+  .ops-bar-in { background: var(--brand); transition: width .25s ease; }
+  .ops-bar-out { background: var(--amber); transition: width .25s ease; }
+  .ops-breakdown { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 12px; }
+  .ops-breakdown-item { display: flex; align-items: center; gap: 8px; min-width: 0; }
+  .ops-swatch { width: 9px; height: 9px; flex: 0 0 9px; border-radius: 2px; background: var(--brand); }
+  .ops-swatch.out { background: var(--amber); }
+  .ops-breakdown-item span { color: var(--ink-3); font-size: 12px; }
+  .ops-breakdown-item b { margin-left: auto; font-size: 18px; line-height: 1; font-weight: 650; }
+  .ops-trend { height: 112px; position: relative; background: #f8faff; border-radius: 7px; overflow: hidden; }
+  .ops-trend svg { width: 100%; height: 100%; display: block; }
+  .ops-trend [hidden] { display: none; }
+  .ops-trend-grid { stroke: #e5ecf7; stroke-width: 1; }
+  .ops-trend-area { fill: rgba(37, 99, 235, .10); }
+  .ops-trend-line { fill: none; stroke: var(--brand); stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
+  .ops-trend-dot { fill: #fff; stroke: var(--brand); stroke-width: 2.5; vector-effect: non-scaling-stroke; }
+  .ops-trend-empty { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; padding: 12px; color: var(--ink-3); font-size: 12px; text-align: center; }
+  .ops-trend-caption { display: flex; justify-content: space-between; gap: 8px; margin-top: 7px; color: var(--ink-3); font-size: 11px; }
+  .ops-footer { display: flex; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; gap: 7px 14px; padding: 0 18px 17px; color: var(--ink-3); font-size: 12px; }
+  .ops-footer p { margin: 0; }
+  .ops-error { color: var(--red); }
+  @media (max-width: 760px) { .ops-body { grid-template-columns: 1fr; } .ops-summary { display: grid; grid-template-columns: 1fr 1fr; } }
+  @media (max-width: 540px) { .ops-body { padding: 13px; gap: 12px; } .ops-summary { grid-template-columns: 1fr; } .ops-breakdown { grid-template-columns: 1fr; } .ops-footer { padding: 0 13px 14px; } }
+  @media (prefers-reduced-motion: reduce) { .ops-bar-in, .ops-bar-out { transition: none; } }
+
   /* ---------- 列表 ---------- */
   table { width: 100%; border-collapse: collapse; }
   th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid #f3f4f6; font-size: 13px; }
@@ -270,6 +312,64 @@
     <div id="currentBody"><div class="skeleton">还没有演示告警。左侧选设备、点「创建演示告警」即可。</div></div>
   </section>
 
+  <!-- 入库运行状态：仅展示只读队列聚合，不列出测试样本 -->
+  <section class="card" style="grid-column:1/-1" aria-labelledby="opsTitle">
+    <div class="card-head">
+      <h2 id="opsTitle">入库队列</h2><span class="hint">只读 · 每分钟更新</span>
+      <span style="flex:1"></span>
+      <button class="link-btn" id="opsRefresh" title="刷新入库状态">刷新</button>
+    </div>
+    <div class="ops-body">
+      <div class="ops-summary" aria-live="polite">
+        <div class="ops-total">
+          <span class="ops-total-label">当前待处理</span>
+          <strong class="num" id="opsTotal">—</strong>
+          <small>条样本还在队列中</small>
+        </div>
+        <div class="ops-verdict unknown" id="opsVerdict">
+          <strong id="opsVerdictTitle">等待运行数据</strong>
+          <span id="opsVerdictDetail">登录后查看当前队列</span>
+        </div>
+      </div>
+      <div class="ops-visuals">
+        <div class="ops-chart-card">
+          <div class="ops-chart-head"><strong>待处理构成</strong><span>按是否超过 7 天分开</span></div>
+          <div class="ops-bar" id="opsBar" role="img" aria-label="待处理构成等待读取">
+            <div class="ops-bar-in" id="opsBarIn"></div><div class="ops-bar-out" id="opsBarOut"></div>
+          </div>
+          <div class="ops-breakdown">
+            <div class="ops-breakdown-item"><i class="ops-swatch" aria-hidden="true"></i><span>7 天内</span><b class="num" id="opsInWindow">—</b></div>
+            <div class="ops-breakdown-item"><i class="ops-swatch out" aria-hidden="true"></i><span>7 天外滞留</span><b class="num" id="opsOutsideWindow">—</b></div>
+          </div>
+        </div>
+        <div class="ops-chart-card">
+          <div class="ops-chart-head"><strong>7 天内待处理走势</strong><span>仅记录本次登录期间的观测</span></div>
+          <div class="ops-trend" id="opsTrend">
+            <svg id="opsTrendSvg" viewBox="0 0 600 112" preserveAspectRatio="none" role="img" aria-label="等待至少两次观测形成走势" hidden>
+              <line class="ops-trend-grid" x1="0" y1="28" x2="600" y2="28"></line>
+              <line class="ops-trend-grid" x1="0" y1="56" x2="600" y2="56"></line>
+              <line class="ops-trend-grid" x1="0" y1="84" x2="600" y2="84"></line>
+              <path class="ops-trend-area" id="opsTrendArea"></path>
+              <path class="ops-trend-line" id="opsTrendLine"></path>
+              <circle class="ops-trend-dot" id="opsTrendDot" r="4"></circle>
+            </svg>
+            <div class="ops-trend-empty" id="opsTrendEmpty">再获得一次观测后显示走势</div>
+          </div>
+          <div class="ops-trend-caption"><span id="opsTrendTimes">—</span><span id="opsTrendRange">—</span></div>
+        </div>
+      </div>
+    </div>
+    <div class="ops-footer"><p id="opsObserved">等待运行数据…</p><p>窗外滞留会另行告警；留档不等于入库成功。</p></div>
+  </section>
+
+  <!-- S04 处理能力预留界面：暂不挂载，不请求尚未签收的容量接口。 -->
+  <template id="s04CapacityDeferred">
+    <section class="ops-chart-card" data-feature="s04-capacity">
+      <div class="ops-chart-head"><strong>处理能力</strong><span>待后端数据核实后接入</span></div>
+      <div class="ops-trend"></div>
+    </section>
+  </template>
+
   <!-- 近期 -->
   <section class="card" style="grid-column:1/-1">
     <div class="card-head"><h2>最近的演示告警</h2><span class="hint">点一行可载入到上方</span></div>
@@ -316,6 +416,10 @@
     requestId: newId(),
     current: null,
     timer: null,
+    opsTimer: null,
+    opsBusy: false,
+    opsRequestId: 0,
+    opsHistory: [],
     busy: false
   };
 
@@ -381,6 +485,152 @@
     return body.data;
   }
 
+  /* ---------------- 入库队列（只读） ---------------- */
+
+  function opsCount(value) {
+    return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0
+      ? value.toLocaleString('zh-CN') : '—';
+  }
+
+  function resetInboxOperations() {
+    state.opsHistory = [];
+    $('opsTotal').textContent = '—';
+    $('opsInWindow').textContent = '—';
+    $('opsOutsideWindow').textContent = '—';
+    $('opsBarIn').style.width = '0%';
+    $('opsBarOut').style.width = '0%';
+    $('opsBar').setAttribute('aria-label', '待处理构成等待读取');
+    $('opsVerdict').className = 'ops-verdict unknown';
+    $('opsVerdictTitle').textContent = '等待运行数据';
+    $('opsVerdictDetail').textContent = '登录后查看当前队列';
+    $('opsObserved').textContent = '登录后读取运行状态';
+    $('opsObserved').classList.remove('ops-error');
+    renderOpsTrend();
+  }
+
+  function stopOpsPolling() {
+    if (state.opsTimer) { clearTimeout(state.opsTimer); state.opsTimer = null; }
+  }
+
+  function startOpsPolling() {
+    stopOpsPolling();
+    if (state.token) state.opsTimer = setTimeout(loadInboxOperations, 60000);
+  }
+
+  function renderOpsTrend() {
+    var points = state.opsHistory;
+    var svg = $('opsTrendSvg');
+    var empty = $('opsTrendEmpty');
+    if (points.length < 2) {
+      svg.setAttribute('hidden', '');
+      empty.hidden = false;
+      empty.textContent = points.length ? '再获得一次观测后显示走势' : '等待运行数据';
+      $('opsTrendTimes').textContent = points.length ? '首个观测：' + clock(points[0].at) : '—';
+      $('opsTrendRange').textContent = '—';
+      return;
+    }
+    var values = points.map(function (point) { return point.value; });
+    var min = Math.min.apply(null, values);
+    var max = Math.max.apply(null, values);
+    var padding = Math.max(2, (max - min) * .15);
+    var low = Math.max(0, min - padding);
+    var high = max + padding;
+    if (high === low) high = low + 1;
+    var coords = points.map(function (point, index) {
+      return [12 + index * 576 / (points.length - 1), 98 - (point.value - low) * 84 / (high - low)];
+    });
+    var line = coords.map(function (point, index) {
+      return (index ? 'L' : 'M') + point[0].toFixed(1) + ' ' + point[1].toFixed(1);
+    }).join(' ');
+    var last = coords[coords.length - 1];
+    $('opsTrendLine').setAttribute('d', line);
+    $('opsTrendArea').setAttribute('d', line + ' L' + last[0].toFixed(1) + ' 112 L12 112 Z');
+    $('opsTrendDot').setAttribute('cx', last[0].toFixed(1));
+    $('opsTrendDot').setAttribute('cy', last[1].toFixed(1));
+    svg.setAttribute('aria-label', '7 天内待处理从 ' + opsCount(values[0]) + ' 条变化到 ' + opsCount(values[values.length - 1]) + ' 条');
+    svg.removeAttribute('hidden');
+    empty.hidden = true;
+    $('opsTrendTimes').textContent = clock(points[0].at) + ' — ' + clock(points[points.length - 1].at);
+    $('opsTrendRange').textContent = '范围 ' + opsCount(min) + '–' + opsCount(max) + ' 条';
+  }
+
+  function showOpsUnavailable(title, detail) {
+    $('opsTotal').textContent = '—';
+    $('opsInWindow').textContent = '—';
+    $('opsOutsideWindow').textContent = '—';
+    $('opsBarIn').style.width = '0%';
+    $('opsBarOut').style.width = '0%';
+    $('opsBar').setAttribute('aria-label', '当前队列观测不可用');
+    $('opsVerdict').className = 'ops-verdict unknown';
+    $('opsVerdictTitle').textContent = title;
+    $('opsVerdictDetail').textContent = detail;
+    $('opsTrendSvg').setAttribute('hidden', '');
+    $('opsTrendEmpty').hidden = false;
+    $('opsTrendEmpty').textContent = '当前观测不可用，走势已暂停';
+    $('opsObserved').textContent = detail;
+    $('opsObserved').classList.add('ops-error');
+  }
+
+  function renderInboxOperations(data) {
+    var known = data && data.known === true && Number.isSafeInteger(data.pending_in_window)
+      && data.pending_in_window >= 0 && Number.isSafeInteger(data.pending_outside_window)
+      && data.pending_outside_window >= 0;
+    if (!known) {
+      showOpsUnavailable('暂时无法判断', '队列观测暂不可用，请稍后刷新');
+      return;
+    }
+    var inside = data.pending_in_window;
+    var outside = data.pending_outside_window;
+    var total = inside + outside;
+    if (!Number.isSafeInteger(total)) {
+      showOpsUnavailable('暂时无法判断', '队列数量超出页面可展示范围');
+      return;
+    }
+    $('opsTotal').textContent = opsCount(total);
+    $('opsInWindow').textContent = opsCount(inside);
+    $('opsOutsideWindow').textContent = opsCount(outside);
+    $('opsBarIn').style.width = total ? (inside / total * 100) + '%' : '0%';
+    $('opsBarOut').style.width = total ? (outside / total * 100) + '%' : '0%';
+    $('opsBar').setAttribute('aria-label', '待处理共 ' + opsCount(total) + ' 条，其中 7 天内 ' + opsCount(inside) + ' 条，7 天外滞留 ' + opsCount(outside) + ' 条');
+    $('opsVerdict').className = 'ops-verdict' + (outside ? ' warn' : '');
+    $('opsVerdictTitle').textContent = outside ? '发现窗外滞留' : total ? '暂无窗外滞留' : '本次观测队列为空';
+    $('opsVerdictDetail').textContent = outside ? '有 ' + opsCount(outside) + ' 条超过 7 天仍待处理，请排查。'
+      : total ? '待处理样本都在 7 天处理窗口内。' : '本次观测没有待处理样本。';
+    $('opsObserved').textContent = '观测时间：' + beijing(data.observed_at) + ' · 数据每分钟更新';
+    $('opsObserved').classList.remove('ops-error');
+    var at = Date.parse(data.observed_at);
+    if (Number.isFinite(at)) {
+      var last = state.opsHistory[state.opsHistory.length - 1];
+      if (!last || at > last.at) state.opsHistory.push({ at: at, value: inside });
+      else if (at === last.at) last.value = inside;
+      if (state.opsHistory.length > 30) state.opsHistory.shift();
+    }
+    renderOpsTrend();
+  }
+
+  async function loadInboxOperations() {
+    if (!state.token || state.opsBusy) return;
+    stopOpsPolling();
+    state.opsBusy = true;
+    var requestId = ++state.opsRequestId;
+    var token = state.token;
+    try {
+      var data = await api('/inbox-operations');
+      if (state.token === token && state.opsRequestId === requestId) renderInboxOperations(data);
+    } catch (e) {
+      if (state.token === token && state.opsRequestId === requestId && e.message !== 'unauthorized') {
+        showOpsUnavailable('读取失败', '运行状态读取失败，请稍后刷新');
+      }
+    } finally {
+      if (state.opsRequestId === requestId) {
+        state.opsBusy = false;
+        startOpsPolling();
+      }
+    }
+  }
+
+  $('opsRefresh').addEventListener('click', loadInboxOperations);
+
   /* ---------------- 登录 ---------------- */
 
   function showGate(message) {
@@ -398,6 +648,10 @@
     $('who').textContent = '';
     $('logout').hidden = true;
     stopPolling();
+    stopOpsPolling();
+    state.opsRequestId++;
+    state.opsBusy = false;
+    resetInboxOperations();
     if (message) showGate(message); else showGate('');
   }
 
@@ -779,6 +1033,7 @@
     } else {
       renderCurrent();
     }
+    if (state.token) loadInboxOperations();
   }
 
   if (state.token) {

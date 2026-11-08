@@ -62,6 +62,37 @@ class AdapterTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             business_message(event)
 
+    def test_inbox_expiry_notice_is_bounded_and_not_a_recovery(self):
+        event = {"event_id": "inbox-expiry:202611071400", "category": "inbox_expiry",
+                 "state": "quarantined", "rows": 3, "first_inbox_id": 100,
+                 "last_inbox_id": 105, "occurred_at": "2026-11-07T14:07:17.759748Z", "test_only": False}
+        card = business_message(event)
+        body = json.dumps(card, ensure_ascii=False)
+        self.assertIn("入库样本过期留档", body)
+        self.assertIn("至少 3 条", body)
+        self.assertIn("15 分钟合并", body)
+        self.assertIn("不是处理成功，也没有自动补回", body)
+        self.assertIn("2026-11-07 22:07:17", body)
+        self.assertNotIn("已恢复", body)
+        self.assertNotIn("private", body)
+        probe = {**event, "event_id": "inbox-expiry-test:202611071400", "test_only": True}
+        probe_body = json.dumps(business_message(probe), ensure_ascii=False)
+        self.assertIn("受控演练", probe_body)
+        self.assertIn("未进入正常业务处理", probe_body)
+        self.assertNotIn("入库样本过期留档", probe_body)
+        for change in (
+            {"event_id": "inbox-expiry:202611071405"},
+            {"event_id": "inbox-expiry:100:105"},
+            {"rows": 0}, {"rows": True}, {"rows": 7},
+            {"first_inbox_id": 0}, {"last_inbox_id": 99},
+            {"occurred_at": "2026-11-07T14:07:17"},
+            {"occurred_at": "invalid"}, {"state": "success"},
+            {"payload": "private"},
+            {"test_only": "true"},
+        ):
+            with self.subTest(change=change), self.assertRaises(ValueError):
+                business_message({**event, **change})
+
     def test_business_endpoint_requires_private_token(self):
         event = {"event_id": "alarm:5:triggered", "category": "device_alarm", "state": "triggered",
                  "alarm_id": 5, "device_code": "INV-1001", "station_code": "ST-01",

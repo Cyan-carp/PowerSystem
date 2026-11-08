@@ -5,6 +5,10 @@ route:
   group_interval: 1m
   repeat_interval: 4h
   routes:
+    - receiver: feishu-expiry
+      matchers:
+        - 'alertname=~"PowerSystemInboxExpiry.*"'
+      repeat_interval: 30m
     - receiver: agent
       matchers:
         - 'alertname=~"PowerSystemAPIDown|PowerSystemDiskHigh"'
@@ -15,6 +19,10 @@ receivers:
     webhook_configs:
       - url: http://feishu-adapter:8091/alertmanager
         send_resolved: true
+  - name: feishu-expiry
+    webhook_configs:
+      - url: http://feishu-adapter:8091/alertmanager
+        send_resolved: false
   - name: agent
     webhook_configs:
       - url: http://agent:8092/internal/agent/monitor-events

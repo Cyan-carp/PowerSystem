@@ -72,9 +72,53 @@ def field(label: str, value: str) -> dict:
     return {"is_short": True, "text": {"tag": "lark_md", "content": f"**{label}**\n{value}"}}
 
 
+def inbox_expiry_message(payload: dict) -> dict:
+    expected = {"event_id", "category", "state", "rows", "first_inbox_id", "last_inbox_id", "occurred_at", "test_only"}
+    if set(payload) != expected or payload.get("category") != "inbox_expiry" or payload.get("state") != "quarantined":
+        raise ValueError("invalid inbox expiry event")
+    if not isinstance(payload["test_only"], bool):
+        raise ValueError("invalid inbox expiry test marker")
+    first, last, rows = (payload[key] for key in ("first_inbox_id", "last_inbox_id", "rows"))
+    if any(isinstance(value, bool) or not isinstance(value, int) for value in (first, last, rows)):
+        raise ValueError("invalid inbox expiry numbers")
+    if first < 1 or last < first or rows < 1 or rows > last - first + 1:
+        raise ValueError("invalid inbox expiry range")
+    occurred = payload["occurred_at"]
+    if not isinstance(occurred, str) or len(occurred) > 40:
+        raise ValueError("invalid inbox expiry time")
+    try:
+        moment = datetime.fromisoformat(occurred.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError("invalid inbox expiry time") from exc
+    if moment.tzinfo is None:
+        raise ValueError("inbox expiry time requires timezone")
+    utc = moment.astimezone(timezone.utc)
+    bucket = utc.replace(minute=utc.minute - utc.minute % 15, second=0, microsecond=0)
+    event_id = ("inbox-expiry-test:" if payload["test_only"] else "inbox-expiry:") + bucket.strftime("%Y%m%d%H%M")
+    if payload["event_id"] != event_id:
+        raise ValueError("invalid inbox expiry event id")
+    return {
+        "config": {"wide_screen_mode": True},
+        "header": {"template": "red", "title": {"tag": "plain_text", "content":
+            "PowerSystem · 入库过期受控演练" if payload["test_only"] else "PowerSystem · 入库样本过期留档"}},
+        "elements": [
+            {"tag": "div", "fields": [field("本时段已发现", f"至少 {rows} 条"), field("首批队列编号", f"{first}–{last}")]},
+            {"tag": "div", "text": {"tag": "lark_md", "content":
+                ("这些是带独立标记的受控演练样本，未进入正常业务处理；原行只作隔离试验记录。"
+                 if payload["test_only"] else "这些样本超过 7 天仍未正常入库，已移出待处理队列并保留原记录；**不是处理成功，也没有自动补回**。")
+                + "通知按 15 分钟合并，后续数量请看监控，并排查入库故障或处理能力。"}},
+            {"tag": "hr"},
+            {"tag": "note", "elements": [{"tag": "plain_text", "content":
+                f"事件 {event_id} · {beijing_time(occurred)}（北京时间）"}]},
+        ],
+    }
+
+
 def business_message(payload: dict) -> dict:
     if not isinstance(payload, dict):
         raise ValueError("invalid business event")
+    if payload.get("category") == "inbox_expiry":
+        return inbox_expiry_message(payload)
     event_id = payload.get("event_id")
     category = payload.get("category")
     state = payload.get("state")
