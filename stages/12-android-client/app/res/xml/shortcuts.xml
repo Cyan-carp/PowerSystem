@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  静态快捷方式（API 25+）：长按桌面图标可直接进「服务器设置」，
+  省得为了改地址先清应用数据。旧系统忽略该资源，不影响启动。
+-->
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut
+        android:enabled="true"
+        android:icon="@mipmap/ic_launcher"
+        android:shortcutId="settings"
+        android:shortcutLongLabel="@string/shortcut_settings"
+        android:shortcutShortLabel="@string/shortcut_settings">
+        <intent
+            android:action="com.powersystem.mobile.SETTINGS"
+            android:targetClass="com.powersystem.mobile.MainActivity"
+            android:targetPackage="com.powersystem.mobile" />
+    </shortcut>
+</shortcuts>

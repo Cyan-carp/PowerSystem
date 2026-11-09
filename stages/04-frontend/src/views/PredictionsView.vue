@@ -9,6 +9,7 @@ import { api } from '../lib/api'
 import type { Prediction, PredictionRow, StationRow } from '../lib/api'
 import { FEATURE_CN, FEATURE_UNIT } from '../lib/data'
 import { n, pct, stamp, timeOf } from '../lib/format'
+import { shortVersion } from '../lib/version'
 
 const route = useRoute()
 const router = useRouter()
@@ -347,7 +348,7 @@ watch(
           <span class="card-title">模型与口径</span>
         </div>
         <div class="note-body">
-          <p>模型版本 <b class="num">{{ modelVersion }}</b>，阈值 <b class="num">{{ pct(threshold * 100, 0) }}</b>。</p>
+          <p>模型版本 <b class="num" :title="modelVersion" :data-version-full="modelVersion">{{ shortVersion(modelVersion) }}</b>，阈值 <b class="num">{{ pct(threshold * 100, 0) }}</b>。</p>
           <p>只对抽样设备给出预测；无预测不等于无风险，可能是该设备尚未进入计算窗口。</p>
           <p v-if="isStale" class="warn-line">存在过期预测，结果可能滞后于最新遥测。</p>
           <p v-else>本轮预测均基于最新窗口。</p>
@@ -400,7 +401,7 @@ watch(
       </div>
       <div class="pred-meta-cell">
         <span>模型版本</span>
-        <b class="num">{{ selected.model_version || '—' }}</b>
+        <b class="num" :title="selected.model_version || undefined" :data-version-full="selected.model_version || undefined">{{ shortVersion(selected.model_version) }}</b>
       </div>
       <div class="pred-meta-cell">
         <span>模型来源</span>

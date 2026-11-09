@@ -3,7 +3,7 @@ import json
 import re
 from .energy import finish_energy
 from uuid import UUID
-from .business_quality import BUSINESS, tool_name, guard_answer, text, answer_time, valid_quality, stamp, positive_id, number
+from .business_quality import BUSINESS, tool_name, guard_answer, text, answer_time, valid_quality, stamp, positive_id, number, health_score_below_limit, oldest_unhandled_request, station_decline_request, overview_scope, alarm_count_status
 
 
 def intent(question):
@@ -25,10 +25,24 @@ def intent(question):
 
 def needs_current_evidence(question):
     return intent(question) == 'conversation' and not re.search(r'导出', question) and bool(
-        re.search(r'第[一二三四五六七八九十\d]+台.*(?:状态|如何|怎么样|发电量)|最新(?:的)?(?:一|1)条.*告警|告警.*最新(?:的)?(?:一|1)条', question))
+        re.search(r'第[一二三四五六七八九十\d]+台.*(?:状态|如何|怎么样|发电量)|最新(?:的)?(?:一|1)条.*告警|告警.*最新(?:的)?(?:一|1)条', question) or
+        health_score_below_limit(question) is not None)
+
+
+def auto_dispatch_current(question):
+    """Route clear platform fact requests before a model can end the turn empty."""
+    if intent(question) != 'conversation' or action_request(question) or re.search(r'导出|生成.{0,8}报表', question):
+        return False
+    if oldest_unhandled_request(question) or station_decline_request(question) or overview_scope(question) is not None or alarm_count_status(question):
+        return True
+    if needs_current_evidence(question):
+        return False  # Existing bounded routing retains its own checks.
+    return bool(re.search(r'设备|场站|电站|逆变器|遥测|告警|台账', question) and
+                re.search(r'当前|现在|今天|昨天|最近|近.?\d+天|多少|哪个|哪些|哪一|查询|查一下|查下|查查|最久|最早', question) and
+                not re.search(r'是什么意思|什么含义|原理|怎么计算|如何计算', question))
 
 def action_request(question):
-    return intent(question) not in ('explanation','capabilities','task_explanation') and not re.search(r'不要确认|禁止确认|不确认|不要修改|禁止修改|不修改',question) and bool(re.search(r'确认.{0,12}告警|告警.{0,24}确认|修改.{0,12}备注|更新.{0,12}备注|备注.{0,12}改为',question))
+    return intent(question) not in ('explanation','capabilities','task_explanation') and not re.search(r'不要确认|禁止确认|不确认|不要修改|禁止修改|不修改|已确认|未确认|待确认|确认.{0,12}(?:多少|几条|哪些|哪条|查询|查一下|统计|数量|列表)',question) and bool(re.search(r'确认.{0,12}告警|告警.{0,24}确认|修改.{0,12}备注|更新.{0,12}备注|备注.{0,12}改为',question))
 
 def explicit_action_target(question):
     """Route clear ID-bound proposals; the controller still validates all facts."""
@@ -108,7 +122,7 @@ def prompt(schemas):
     if 'business_report' in names:
         base=base.replace('平台页面已有报表导出，不代表助手能生成附件。当前助手尚无产物/定期任务/业务修改工具，不能声称已导出、已安排或已修复。',
             '已登记business_report可直接调用普通业务查询和真实CSV/XLSX交付，本人文件无需审批。报表/发电量/告警调查使用此工具；旧可用率和时效scope=all，station_code/device_id交集筛选。不把附件正文发送给模型。只有返回真实artifacts才可说生成。未登记调度/业务修改，不能声称已安排或已修复。')
-        base=base.replace('七天发电量必须使用对应设备和日期窗口的energy_daily聚合；', '报表日期按当前时间和用户明确范围确定；今天为北京时间当天00:00至当前时间，近7天为北京时间最近7个已结束自然日，不含今天。发电量使用business_report(kind=energy)，指定start_date/end_date、group_by，不自行重算。energy_daily 只覆盖已结束的自然日：用户问「今天发电量/今天出力」时不要查当天窗口，直接说明当天尚未结算，并建议改看最近7个已结束自然日或实时功率曲线。七天发电量必须使用对应设备和日期窗口的energy_daily聚合；')
+        base=base.replace('七天发电量必须使用对应设备和日期窗口的energy_daily聚合；', '报表日期按当前时间和用户明确范围确定；近7天为北京时间最近7个已结束自然日，不含今天。已结束自然日的发电量使用business_report(kind=energy)，指定start_date/end_date、group_by，不自行重算。今天发电量使用get_dashboard_overview的today_energy_kwh暂计值，注明数据更新时间、provisional和观测完整性；不得把暂计值写成已结算全天电量。七天发电量必须使用对应设备和日期窗口的energy_daily聚合；')
         base=base.replace('不得用状态查询代替电量，不声称生成文件。','不得用状态查询代替电量；文件交付以business_report实际返回为准。')
     if 'business_action' in names:
         base=base.replace('未登记调度/业务修改，不能声称已安排或已修复。','已登记business_action支持单条告警确认、单台设备备注修改及受审查备注读取。R1提议后等待用户本人批准，不调用任何批准工具，不表示故障修复。调度和运维写未登记。')
@@ -293,6 +307,48 @@ def finish(question, result, previous):
             if not code and not failures: lines.append('该记录未提供具体失败原因，不能推测。')
         result.update(answer_markdown='\n\n'.join(lines), status='answered')
         return True
+    if (alarm_status := alarm_count_status(question)) and any(c.get('status') == 'succeeded' and not c.get('historical') for c in cards):
+        calls = [c for c in result.get('tool_calls', []) if tool_name(c) == 'list_alarms' and c.get('status') == 'ok' and
+            c.get('arguments', {}).get('status') == alarm_status and c.get('arguments', {}).get('page') == 1 and c.get('arguments', {}).get('page_size') == 1]
+        data = calls[-1].get('result', {}) if calls else {}
+        total, rows = data.get('total'), data.get('list')
+        if type(total) is int and total >= 0 and isinstance(rows, list) and len(rows) == min(1, total):
+            guard_answer(question, result, previous)
+            label = '未处理（未确认且未恢复）' if alarm_status == 'unhandled' else '已确认但未恢复'
+            result.update(answer_markdown='当前全平台' + label + '告警共 ' + str(total) + ' 条；已恢复记录不计入。',
+                status='answered', objective_quality={'kind':'alarm_count','complete':True,'status':alarm_status,'total':total})
+            return True
+    if oldest_unhandled_request(question) and any(c.get('status') == 'succeeded' and not c.get('historical') for c in cards):
+        calls = [c for c in result.get('tool_calls', []) if tool_name(c) == 'list_alarms' and c.get('status') == 'ok' and c.get('arguments', {}).get('status') == 'unhandled']
+        first = next((c for c in calls if c.get('arguments', {}).get('page') == 1), None)
+        if first:
+            total = first.get('result', {}).get('total')
+            last_page = max(1, (total + 19) // 20) if type(total) is int and total >= 0 else None
+            last = next((c for c in reversed(calls) if c.get('arguments', {}).get('page') == last_page and c.get('arguments', {}).get('page_size') == 20 and c.get('result', {}).get('total') == total), None)
+            rows = last.get('result', {}).get('list') if last else None
+            if last and isinstance(rows, list) and len(rows) == total - (last_page-1)*20 and (not rows or isinstance(rows[-1], dict) and positive_id(rows[-1].get('id')) and positive_id(rows[-1].get('device_id')) and stamp(rows[-1].get('triggered_at')) and rows[-1].get('status') == 'unhandled'):
+                guard_answer(question, result, previous)
+                answer = ('当前筛选范围内没有未处理告警。' if total == 0 else
+                    '当前未处理告警中最早的一条：告警 ID ' + str(rows[-1]['id']) + '，设备 ID ' + str(rows[-1]['device_id']) +
+                    '，触发时间 ' + answer_time(rows[-1]['triggered_at']) + '。本次筛选共 ' + str(total) + ' 条；按触发时间升序、同时间按 ID 升序定位。')
+                result.update(answer_markdown=answer, status='answered', objective_quality={'kind':'oldest_unhandled','complete':True,'reported_total':total})
+                return True
+    if station_decline_request(question) and any(c.get('status') == 'succeeded' and not c.get('historical') for c in cards):
+        calls = [c for c in result.get('tool_calls', []) if tool_name(c) == 'get_dashboard_overview' and c.get('status') == 'ok' and c.get('arguments', {}).get('scope') == 'business']
+        data = calls[-1].get('result', {}) if calls else {}
+        rows = data.get('stations') if isinstance(data, dict) else None
+        if stamp(data.get('computed_at')) and isinstance(rows, list) and rows:
+            guard_answer(question, result, previous)
+            lines = ['现有总览只提供各场站当前出力快照，没有今天较早时刻的可比出力，无法判断“今天下降最明显”的场站。',
+                '当前出力（查询时间 ' + answer_time(data['computed_at']) + '）：']
+            for row in rows:
+                if not isinstance(row, dict) or not row.get('station_code') or not isinstance(row.get('current_power_kw'), (int,float,type(None))):
+                    continue
+                value = number(row['current_power_kw'])
+                lines.append('- ' + text(row['station_code']) + '：' + (str(value) + ' kW' if value is not None else '当前功率缺失') + ('；观测不完整' if row.get('partial') else '') + '。')
+            lines.append('若要比较下降幅度，请指定对比基准（例如一小时前或昨天同一时刻）；当前功率最低不等于下降最多。')
+            result.update(answer_markdown='\n'.join(lines), status='answered', objective_quality={'kind':'station_decline','complete':False,'reason':'baseline_unavailable'})
+            return True
     # Latest one is a bounded objective, never a request to enumerate all pages.
     if not any(c.get('historical') or sensitive(c) or c.get('business_quality') and not valid_quality(c['business_quality']) for c in cards) and re.search(r'最新(?:的)?(?:一|1)条.*告警|告警.*最新(?:的)?(?:一|1)条', question):
         calls = list(result.get('tool_calls', []))

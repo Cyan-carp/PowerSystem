@@ -5,6 +5,7 @@ import { authToken, setUnauthorizedHandler } from './lib/auth'
 import { toast } from './lib/toast'
 import { watchDensity } from './lib/density'
 import { watchTheme } from './lib/theme'
+import { captureIcpNotice } from './lib/site'
 import './styles/tokens.css'
 import './styles/shell.css'
 
@@ -33,6 +34,7 @@ const router = createRouter({
     { path: '/reports', name: 'reports', component: () => import('./views/ReportsView.vue'), meta: { label: '统计报表' } },
     { path: '/schedules', name: 'schedules', component: () => import('./views/SchedulesView.vue'), meta: { label: '定期任务' } },
     { path: '/assistant', name: 'assistant', component: () => import('./views/AssistantView.vue'), meta: { label: '智能助手' } },
+    { path: '/about', name: 'about', component: () => import('./views/AboutView.vue'), meta: { label: '关于' } },
     { path: '/:pathMatch(.*)*', redirect: '/' },
   ],
 })
@@ -71,10 +73,8 @@ setUnauthorizedHandler(() => {
   void router.replace({ path: '/login', query: here === '/' ? {} : { redirect: here } })
 })
 
-/* 域名入口会在 HTML 末尾注入备案页脚；识别到才给根节点打标记，
-   布局据此让出 --icp-h，避免整页多出一条滚动（IP 入口无页脚，不受影响）。 */
-if (document.querySelector('.icp-footer')) {
-  document.documentElement.dataset.icp = '1'
-}
+/* 域名入口会在 HTML 末尾注入备案页脚：启动时把它从文档流摘出来、内容留进 icpNotice，
+   再由页面在滚动到底时渲染成普通页脚（IP 入口无页脚，不受影响）。 */
+captureIcpNotice()
 
 createApp(App).use(router).mount('#app')

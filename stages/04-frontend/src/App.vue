@@ -21,6 +21,7 @@ import {
 } from './lib/auth'
 import { resetModelBoard, startModelPolling, topbarBalance, topbarTone } from './lib/model-usage'
 import { theme, toggleTheme } from './lib/theme'
+import { icpNotice } from './lib/site'
 import { toast } from './lib/toast'
 
 import { LEVEL_CN, METRIC_CN, across } from './lib/format'
@@ -44,6 +45,19 @@ const nav = [
 ]
 
 const pageLabel = computed(() => (route.meta.label as string) || '总览')
+
+/**
+ * 手机端底栏只放日常四件事，其余进「更多」面板。
+ * 九枚图标平铺在 390px 的屏上每枚只剩 43px，既难点也认不出；按使用频次分两处之后，
+ * 底栏每格都有图标 + 文字，桌面端仍走左侧图标轨，互不影响。
+ */
+const M_PRIMARY = ['/', '/alarms', '/devices', '/assistant']
+const mobilePrimary = computed(() => nav.filter((item) => M_PRIMARY.includes(item.path)))
+const mobileMore = computed(() => nav.filter((item) => !M_PRIMARY.includes(item.path)))
+
+const isOn = (path: string) => route.path === path || route.path.startsWith(`${path}/`)
+const moreOn = computed(() => mobileMore.value.some((item) => isOn(item.path)))
+const moreOpen = ref(false)
 
 const clockText = computed(() =>
   shell.now.toLocaleTimeString('zh-CN', {
@@ -96,6 +110,7 @@ const onDocClick = (event: MouseEvent) => {
 
 watch(() => route.path, () => {
   open.value = null
+  moreOpen.value = false
   keyword.value = ''
 })
 
@@ -399,6 +414,10 @@ onBeforeUnmount(() => {
                 <span>会话</span>
                 <b>JWT · 8 小时有效</b>
               </div>
+              <RouterLink to="/about" class="user-link" @click="open = null">
+                <Icon name="help" :size="15" />
+                关于
+              </RouterLink>
               <button class="user-out" @click="logout">
                 <Icon name="logout" :size="15" />
                 退出登录
@@ -413,11 +432,78 @@ onBeforeUnmount(() => {
         <div class="page-inner">
           <RouterView />
         </div>
+
+        <!-- 备案信息随内容流：滚到底看得到，往上滚自然滑出视口（助手页与关于页不重复挂） -->
+        <footer v-if="icpNotice && route.path !== '/assistant' && route.path !== '/about'" class="site-foot">
+          <span v-html="icpNotice.html"></span>
+          <span class="site-foot-sep">·</span>
+          <RouterLink to="/about">关于</RouterLink>
+        </footer>
       </main>
     </div>
 
     <AlarmInsight v-if="insight" @close="insight = false" @read="refreshUnread" />
     <ModelPanel v-if="modelOpen" @close="modelOpen = false" />
+
+    <!-- 手机端导航：左侧图标轨在 ≤900px 隐藏，改由底栏四格 + 「更多」面板承担。
+         fixed 定位不受 .app 的 overflow 影响（祖先没有 transform），所以放在壳层内部。 -->
+    <nav class="mnav" aria-label="主导航">
+      <RouterLink
+        v-for="item in mobilePrimary"
+        :key="item.path"
+        :to="item.path"
+        class="mnav-btn"
+        :class="{ 'is-on': isOn(item.path) }"
+      >
+        <Icon :name="item.icon" :size="20" :stroke="1.9" />
+        <span>{{ item.label }}</span>
+      </RouterLink>
+      <button
+        class="mnav-btn"
+        :class="{ 'is-on': moreOn || moreOpen }"
+        :aria-expanded="moreOpen"
+        aria-haspopup="dialog"
+        @click="moreOpen = true"
+      >
+        <Icon name="more" :size="20" :stroke="1.9" />
+        <span>更多</span>
+      </button>
+    </nav>
+
+    <Teleport to="body">
+      <template v-if="moreOpen">
+        <div class="msheet-scrim" @click="moreOpen = false"></div>
+        <div class="msheet" role="dialog" aria-modal="true" aria-label="更多页面">
+          <div class="msheet-head">
+            <h4>全部页面</h4>
+            <button class="icon-btn" title="关闭" @click="moreOpen = false">
+              <Icon name="close" :size="16" />
+            </button>
+          </div>
+          <div class="msheet-grid">
+            <RouterLink
+              v-for="item in mobileMore"
+              :key="item.path"
+              :to="item.path"
+              class="msheet-item"
+              :class="{ 'is-on': isOn(item.path) }"
+              @click="moreOpen = false"
+            >
+              <Icon :name="item.icon" :size="20" :stroke="1.9" />
+              <span>{{ item.label }}</span>
+            </RouterLink>
+            <a href="/demo/" class="msheet-item">
+              <Icon name="bolt" :size="20" :stroke="1.9" />
+              <span>演示台</span>
+            </a>
+            <RouterLink to="/about" class="msheet-item" @click="moreOpen = false">
+              <Icon name="help" :size="20" :stroke="1.9" />
+              <span>关于</span>
+            </RouterLink>
+          </div>
+        </div>
+      </template>
+    </Teleport>
   </div>
 
   <!-- 登录页：不套侧栏与顶栏，直接渲染视图 -->
@@ -513,6 +599,24 @@ onBeforeUnmount(() => {
   font-weight: 600;
   color: var(--ink-2);
   font-variant-numeric: tabular-nums;
+}
+
+/* 账号菜单里的「关于」：与退出登录同一行高，但不上色、不加分隔线 */
+.user-link {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: calc(100% - 12px);
+  margin: 4px 6px 0;
+  padding: 7px 8px;
+  border-radius: var(--r-sm);
+  font-size: 12px;
+  font-weight: 550;
+  color: var(--ink-2);
+}
+
+.user-link:hover {
+  background: var(--hover-bg);
 }
 
 .user-out {

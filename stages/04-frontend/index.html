@@ -2,13 +2,23 @@
 <html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- viewport-fit=cover：手机端让出刘海/手势区，底部导航据此读 env(safe-area-inset-*) -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <title>源网智联 · 新能源设备智能运维平台</title>
     <link
       rel="icon"
       href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%232f6bff'/%3E%3Cpath d='M16 7 26 12.2 16 17.4 6 12.2z' fill='%23ffffff'/%3E%3Cpath d='m6 17.6 10 5.2 10-5.2' fill='none' stroke='%23ffffff' stroke-opacity='.65' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E"
     />
     <meta name="description" content="新能源场站云边协同智能运维平台 — 功率趋势、边节点状态、告警与设备台账" />
+    <!-- 手机端：地址栏配色跟随主题；装到桌面后全屏打开、状态栏透明 -->
+    <meta name="theme-color" content="#eef1f7" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#161616" media="(prefers-color-scheme: dark)" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="源网智联" />
+    <!-- 设备编码形如 PV-01-01，不能被系统识别成电话号码加下划线 -->
+    <meta name="format-detection" content="telephone=no,email=no,address=no" />
   </head>
   <body>
     <div id="app"></div>

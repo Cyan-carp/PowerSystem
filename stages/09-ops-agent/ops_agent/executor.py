@@ -75,6 +75,14 @@ class Executor:
                         elif envelope.get("code") != 0: raise ValueError("invalid_platform_response")
                         else: data = envelope["data"]
                         if raw_name == "list_devices": data = {**data, "order": "id ASC"}
+                        if raw_name == "get_health_devices":
+                            # Keep the full device set within the tool payload
+                            # budget; station aggregates and unused fields are
+                            # available from the original backend endpoint.
+                            data = {"rule_version": data.get("rule_version"), "computed_at": data.get("computed_at"),
+                                "complete": data.get("complete"), "devices": [
+                                    {k: row.get(k) for k in ("device_id", "device_code", "name", "station_code", "score", "state", "rule_version")}
+                                    for row in data["devices"]]}
                         encoded = self.cfg.redact(json.dumps(data, ensure_ascii=False), (jwt,))
                         data = json.loads(encoded) if len(encoded) <= self.cfg.tool_chars else {"truncated": True, "preview": encoded[:self.cfg.tool_chars]}
                         trace.update(status="ok", result=data)

@@ -87,8 +87,9 @@ class Rules(Page):
 MODELS = {"search_knowledge": KnowledgeQuery, "web_search": WebQuery, "list_devices": Devices, "get_device": Device,
     "get_telemetry": Telemetry, "get_prediction": Device, "list_alarms": Alarms,
     "get_alarm_statistics": Statistics, "get_alarm_detail": Alarm, "get_dashboard_summary": Args,
-    "list_stations": Stations, "get_dashboard_overview": Overview, "get_alarm_rules": Rules}
+    "list_stations": Stations, "get_dashboard_overview": Overview, "get_alarm_rules": Rules, "get_health_devices": Args}
 DESCRIPTIONS = {
+    "get_health_devices": "读取当前全平台逐台健康评分，含分数、未知状态、计算时间与规则版本。按用户阈值筛选必须使用返回的score原值；null未知不算0分。",
     "search_knowledge": "语义向量检索内部项目资料，返回相关章节与来源。",
     "web_search": "博查联网搜索普通问题、最新信息和技术资料，返回网页摘要、发布时间与URL。",
     "list_devices": "查询平台设备台账，按ID升序分页（page/page_size，单页最多100条）；第二台指ID升序第二项。名称或编码可以用keyword检索。scope=all|business|baseline，station_code可限定单个场站。返回含total：只取一页时仅覆盖该页，不能声称已检查全部设备；要全量结论必须按total继续翻页。",
@@ -107,6 +108,7 @@ DESCRIPTIONS = {
 
 def business_route(name, args):
     args = dict(args)
+    if name == "get_health_devices": return "/api/v1/health/devices", {}
     if name == "list_devices": return "/api/v1/devices", args
     if name == "list_alarms": return "/api/v1/alarms", args
     if name == "get_alarm_statistics": return "/api/v1/alarms/statistics", args

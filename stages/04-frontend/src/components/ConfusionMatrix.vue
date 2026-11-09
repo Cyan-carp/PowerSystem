@@ -121,19 +121,25 @@ const metrics = computed(() => {
 </template>
 
 <style scoped>
+/**
+ * 所有尺寸都乘 --cm-scale，方便「等比」放大而不改结构：
+ * 手机端保持 1（当前观感），宽屏桌面把紧凑档整体放大一档，吃掉卡片里的空白。
+ * 媒体查询按视口判断，不受手机 .page-inner 的 zoom 影响。
+ */
 .cm {
+  --cm-scale: 1;
   display: flex;
   align-items: center;
-  gap: 26px;
+  gap: calc(26px * var(--cm-scale));
   min-width: 0;
 }
 
 /* 固定方块 + 行列轴标签：矩阵本来就该是方的，铺满宽度就变成了四张卡片 */
 .cm-grid {
   display: grid;
-  grid-template-columns: 40px auto auto;
+  grid-template-columns: calc(40px * var(--cm-scale)) auto auto;
   grid-template-rows: auto auto auto;
-  gap: 5px;
+  gap: calc(5px * var(--cm-scale));
   flex: 0 0 auto;
 }
 
@@ -145,15 +151,15 @@ const metrics = computed(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 10.5px;
+  font-size: calc(10.5px * var(--cm-scale));
   color: var(--ink-3);
   white-space: nowrap;
-  padding-bottom: 1px;
+  padding-bottom: calc(1px * var(--cm-scale));
 }
 
 .cm-axis.is-side {
   justify-content: flex-end;
-  padding-right: 6px;
+  padding-right: calc(6px * var(--cm-scale));
   line-height: 1.35;
   text-align: right;
 }
@@ -163,31 +169,31 @@ const metrics = computed(() => {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 1px;
-  width: 84px;
-  height: 84px;
-  padding: 4px;
-  border-radius: var(--r-md);
+  gap: calc(1px * var(--cm-scale));
+  width: calc(84px * var(--cm-scale));
+  height: calc(84px * var(--cm-scale));
+  padding: calc(4px * var(--cm-scale));
+  border-radius: calc(var(--r-md) * var(--cm-scale));
   border: 1px solid var(--line-soft);
   text-align: center;
   transition: background 0.2s ease;
 }
 
 .cm-cell b {
-  font-size: 17px;
+  font-size: calc(17px * var(--cm-scale));
   font-weight: 700;
   line-height: 1.15;
   color: var(--ink);
 }
 
 .cm-share {
-  font-size: 10px;
+  font-size: calc(10px * var(--cm-scale));
   color: var(--ink-3);
 }
 
 .cm-name {
   font-style: normal;
-  font-size: 10.5px;
+  font-size: calc(10.5px * var(--cm-scale));
   color: var(--ink-2);
   line-height: 1.3;
 }
@@ -205,27 +211,27 @@ const metrics = computed(() => {
 .cm-metrics {
   display: flex;
   flex-direction: column;
-  gap: 9px;
+  gap: calc(9px * var(--cm-scale));
   flex: 1;
-  min-width: 180px;
-  max-width: 320px;
+  min-width: calc(180px * var(--cm-scale));
+  max-width: calc(320px * var(--cm-scale));
 }
 
 .cm-metric {
   display: grid;
-  grid-template-columns: 48px minmax(0, 1fr) 52px;
+  grid-template-columns: calc(48px * var(--cm-scale)) minmax(0, 1fr) calc(52px * var(--cm-scale));
   align-items: center;
-  gap: 9px;
+  gap: calc(9px * var(--cm-scale));
 }
 
 .cm-metric-label {
-  font-size: 11px;
+  font-size: calc(11px * var(--cm-scale));
   color: var(--ink-3);
   white-space: nowrap;
 }
 
 .cm-track {
-  height: 6px;
+  height: calc(6px * var(--cm-scale));
   border-radius: 999px;
   background: var(--track-bg);
   overflow: hidden;
@@ -239,24 +245,32 @@ const metrics = computed(() => {
 }
 
 .cm-metric b {
-  font-size: 11.5px;
+  font-size: calc(11.5px * var(--cm-scale));
   font-weight: 650;
   color: var(--ink);
   text-align: right;
   white-space: nowrap;
 }
 
-/* 明细区紧凑档：方块缩到 70px，指标条不变 */
+/* 明细区紧凑档：方块缩到 70px，指标条不变（手机端 --cm-scale 恒为 1） */
 .cm.is-compact .cm-cell {
-  width: 70px;
-  height: 70px;
+  width: calc(70px * var(--cm-scale));
+  height: calc(70px * var(--cm-scale));
 }
 
 .cm.is-compact .cm-cell b {
-  font-size: 15px;
+  font-size: calc(15px * var(--cm-scale));
 }
 
 .cm.is-compact .cm-name {
-  font-size: 10px;
+  font-size: calc(10px * var(--cm-scale));
+}
+
+/* 宽屏桌面：两列卡片里矩阵偏小、四周留白多，整体等比放大 1.25 档。
+   手机端（≤900px）不进入这个分支，保持现在"刚刚好"的密度。 */
+@media (min-width: 901px) {
+  .cm.is-compact {
+    --cm-scale: 1.25;
+  }
 }
 </style>

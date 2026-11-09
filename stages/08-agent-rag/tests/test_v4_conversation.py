@@ -121,6 +121,84 @@ def test_context_targets_and_capabilities_are_explicit():
     assert v4.intent('现在第二台设备的状态如何')!='explanation'
 
 
+@pytest.mark.asyncio
+async def test_health_suggestion_dispatches_without_model_and_renders_actual_scores():
+    from rag_agent.business_quality import build_quality
+    at='2026-11-08T06:00:00Z'
+    board={'rule_version':'rule-health-v1','computed_at':at,'complete':True,'devices':[
+        {'device_id':1,'device_code':'INV-1','name':'甲','station_code':'PV-01','score':70,'state':'online','rule_version':'rule-health-v1'},
+        {'device_id':2,'device_code':'INV-2','name':'乙','station_code':'PV-01','score':80,'state':'online','rule_version':'rule-health-v1'}]}
+    health={'name':'get_health_devices','status':'ok','arguments':{},'collected_at':at,'result':board}
+    class NoModel:
+        async def complete(self,*args):raise AssertionError('health threshold must not call model')
+    class Tools:
+        schemas=[{'function':{'name':'dispatch_ops_task'}}]
+        async def execute(self,name,args,jwt,result):
+            assert name=='dispatch_ops_task' and json.loads(args)['intent']=='哪些设备的健康分低于 80？'
+            result['tool_calls'].extend([{'name':name,'status':'ok','arguments':json.loads(args)},health])
+            result['task_cards']=[{'task_id':str(uuid4()),'status':'succeeded','business_quality':build_quality([health])}]
+            return result['task_cards'][0]
+    result=output()
+    await Engine(cfg(),NoModel(),Tools()).run('哪些设备的健康分低于 80？',[],'jwt',result)
+    assert result['status']=='answered' and 'INV-1' in result['answer_markdown'] and 'INV-2' not in result['answer_markdown']
+    assert result.get('model_called') is not True and result['business_quality']['state']=='queried'
+
+
+@pytest.mark.asyncio
+async def test_current_overview_question_dispatches_without_model_and_answers_counts():
+    from rag_agent.business_quality import build_quality
+    at='2026-11-08T06:00:00Z'
+    call={'name':'get_dashboard_overview','status':'ok','arguments':{'scope':'all'},'collected_at':at,
+        'result':{'scope':'all','partial':False,'computed_at':at,'summary':{'device_total':2,'online':1,'offline':1},
+            'stations':[{'station_code':'PV-01','current_power_kw':12.5,'partial':False}]}}
+    class NoModel:
+        async def complete(self,*args):raise AssertionError('current overview must not call model')
+    class Tools:
+        schemas=[{'function':{'name':'dispatch_ops_task'}}]
+        async def execute(self,name,args,jwt,result):
+            assert name=='dispatch_ops_task'
+            result['tool_calls'].extend([{'name':name,'status':'ok','arguments':json.loads(args)},call])
+            result['task_cards']=[{'task_id':str(uuid4()),'status':'succeeded','business_quality':build_quality([call])}]
+            return result['task_cards'][0]
+    result=output()
+    await Engine(cfg(),NoModel(),Tools()).run('现在有多少台设备在线？',[],'jwt',result)
+    assert result['status']=='answered' and '在线 1' in result['answer_markdown']
+    assert result.get('model_called') is not True
+
+
+def test_oldest_unhandled_and_station_decline_use_current_evidence():
+    from rag_agent.business_quality import build_quality
+    at='2026-11-08T06:00:00Z'
+    oldest={'id':7,'device_id':2,'status':'unhandled','triggered_at':'2026-11-07T01:00:00Z'}
+    newest={'id':8,'device_id':2,'status':'unhandled','triggered_at':'2026-11-08T01:00:00Z'}
+    alarms={'name':'list_alarms','status':'ok','arguments':{'status':'unhandled','scope':'all','page':1,'page_size':20},
+        'collected_at':at,'result':{'list':[newest,oldest],'total':2,'page':1}}
+    result=output();result['tool_calls']=[alarms]
+    result['task_cards']=[{'status':'succeeded','business_quality':build_quality([alarms])}]
+    assert v4.finish('未处理告警里最久的是哪一条？',result,[])
+    assert '告警 ID 7' in result['answer_markdown'] and result['objective_quality']['complete']
+    board={'name':'get_dashboard_overview','status':'ok','arguments':{'scope':'business'},'collected_at':at,
+        'result':{'scope':'business','computed_at':at,'partial':False,'summary':{},
+            'stations':[{'station_code':'PV-01','current_power_kw':31.5,'partial':False}]}}
+    result=output();result['tool_calls']=[board]
+    result['task_cards']=[{'status':'succeeded','business_quality':build_quality([board])}]
+    assert v4.finish('哪个场站今天出力下降最明显？',result,[])
+    assert 'PV-01' in result['answer_markdown'] and '无法判断' in result['answer_markdown']
+    assert result['objective_quality']['complete'] is False
+
+
+def test_acknowledged_alarm_count_is_a_read_not_an_action():
+    from rag_agent.business_quality import build_quality
+    at='2026-11-08T06:00:00Z'
+    alarms={'name':'list_alarms','status':'ok','arguments':{'status':'acked','scope':'all','page':1,'page_size':1},
+        'collected_at':at,'result':{'list':[{'id':8,'device_id':2,'status':'acked','triggered_at':at}],'total':3,'page':1}}
+    result=output();result['tool_calls']=[alarms]
+    result['task_cards']=[{'status':'succeeded','business_quality':build_quality([alarms])}]
+    assert not v4.action_request('已确认告警有多少条？')
+    assert v4.finish('已确认告警有多少条？',result,[])
+    assert '已确认但未恢复告警共 3 条' in result['answer_markdown']
+
+
 def test_availability_export_reports_actual_adapter_gap():
     result=output();result['answer_markdown']='可用率就是在线率，已导出'
     v4.finish('导出今天设备可用率报表',result,[])

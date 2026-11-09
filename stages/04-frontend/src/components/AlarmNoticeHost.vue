@@ -32,5 +32,6 @@ import { LEVEL_CN, METRIC_CN } from '../lib/format'
 .alarm-notice p { margin: 10px 0 0; }
 .alarm-notice .notice-value { margin-top: 6px; color: var(--ink-3); }
 .alarm-notice a { display: inline-block; margin-top: 14px; color: var(--brand); font-weight: 600; }
-@media (max-width: 600px) { .alarm-notices { right: 16px; bottom: 16px; } }
+/* 手机上让出底部导航条与手势区，否则提醒卡片会被导航挡住半截 */
+@media (max-width: 900px) { .alarm-notices { right: 12px; left: 12px; width: auto; bottom: calc(var(--mnav-h) + var(--safe-b) + 12px); max-height: calc(100dvh - 200px); } }
 </style>

@@ -213,6 +213,11 @@ const gradientId = `power-fill-${Math.random().toString(36).slice(2, 8)}`
   display: block;
   width: 100%;
   overflow: visible;
+  /**
+   * 手机上横向拖动＝移动读数探针，交给脚本处理；纵向仍交给浏览器滚动页面。
+   * 不加这句时浏览器会把整个手势判成滚动，pointermove 直接被 pointercancel 掐断。
+   */
+  touch-action: pan-y;
 }
 
 .stop-top {

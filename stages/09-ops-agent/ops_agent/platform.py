@@ -115,8 +115,9 @@ MODELS = {"search_knowledge": KnowledgeQuery, "web_search": WebQuery, "list_devi
     "get_telemetry": Telemetry, "get_prediction": Device, "list_alarms": Alarms,
     "get_alarm_statistics": Statistics, "get_alarm_detail": Alarm, "get_dashboard_summary": Args,
     "list_stations": Stations, "get_dashboard_overview": Overview, "get_alarm_rules": Rules,
-    "get_energy_report": Energy}
+    "get_energy_report": Energy, "get_health_devices": Args}
 DESCRIPTIONS = {
+    "get_health_devices": "读取当前全平台逐台健康评分（GET /api/v1/health/devices），含分数、未知状态、计算时间与规则版本。按用户阈值筛选必须使用返回的score原值；null未知不算0分。",
     "get_energy_report": "读取energy_daily逐日发电量及汇总kWh。start_date含/end_date不含，北京时间，最多31自然日；近7天默认最近7个已结束自然日，不含今天，并说明窗口。scope/station_code/device_id筛选取交集。序号设备先list_devices按id ASC定位。缺测/无有效段不是零，complete=false不得声称全窗口完成。禁止用功率或24小时遥测代偿。",
     "search_knowledge": "语义向量检索内部项目资料，返回相关章节与来源。",
     "web_search": "博查联网搜索普通问题、最新信息和技术资料，返回网页摘要、发布时间与URL。",
@@ -136,6 +137,7 @@ DESCRIPTIONS = {
 
 def business_route(name, args):
     args = dict(args)
+    if name == "get_health_devices": return "/api/v1/health/devices", {}
     if name == "get_energy_report": return "/api/v1/reports/energy", args
     if name == "list_devices": return "/api/v1/devices", args
     if name == "list_alarms": return "/api/v1/alarms", args

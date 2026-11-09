@@ -36,4 +36,6 @@ backups/*
 stages/04-frontend/dev/
 # 本机个人工具脚本（积分插件等本机辅助脚本），不入库
 /local-scripts/
+# 安卓外壳构建产物与签名密钥（密钥丢失后无法覆盖升级，只留本机）
+/stages/12-android-client/build/
 

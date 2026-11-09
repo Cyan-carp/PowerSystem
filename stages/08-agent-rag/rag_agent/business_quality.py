@@ -11,7 +11,7 @@ from datetime import datetime, timezone, timedelta
 from decimal import Decimal, InvalidOperation
 
 VERSION = 'bnd-business-v1'
-BUSINESS = frozenset({'list_devices', 'get_device', 'get_telemetry', 'get_prediction', 'list_alarms', 'get_alarm_detail', 'get_alarm_statistics', 'get_dashboard_summary', 'list_stations', 'get_dashboard_overview', 'get_alarm_rules'})
+BUSINESS = frozenset({'list_devices', 'get_device', 'get_telemetry', 'get_prediction', 'list_alarms', 'get_alarm_detail', 'get_alarm_statistics', 'get_dashboard_summary', 'list_stations', 'get_dashboard_overview', 'get_alarm_rules', 'get_health_devices'})
 UNITS = {'voltage': 'V', 'current': 'A', 'temperature': '°C', 'power': 'kW', 'ai_failure_risk': '1'}
 EXPLANATIONS = {
     'facts_only': '',
@@ -59,13 +59,66 @@ def business_request(question, calls=(), previous=()):
     if any(tool_name(c) in BUSINESS for c in calls):
         return True
     target = re.search(r'\b[A-Z]{1,8}-\d[\w-]*|SUN\d[\w-]+|第[一二三四五六七八九十\d]+台|这台|该设备|这台设备', question, re.I)
-    read = re.search(r'查|现在|当前|最新|状态|健康|告警|现场|适用|手册|阈值', question)
+    read = re.search(r'查|现在|当前|最新|状态|健康|告警|现场|适用|手册|阈值|哪个|哪些|多少|几台|最久|最早|功率|出力|发电量|在线|离线', question)
     technical = re.search(r'原理|是什么|如何实现|怎么计算|如何比较|含义|区别', question)
     if target or read and not technical and re.search(r'设备|场站|电站|逆变器|遥测|告警|台账', question):
         return True
     if re.search(r'现在|刚刚|它|确定|真的吗|再查|还有|继续|状态', question):
         return any(t.get('response', {}).get('business_quality') or business_request(t.get('question','')) or any(tool_name(c) in BUSINESS for c in t.get('response', {}).get('tool_calls', [])) for t in previous)
     return False
+
+
+def health_score_below_limit(question):
+    if not re.search(r'哪些|哪几|查询|查|有.*(?:台|设备)|设备.*(?:哪些|有)', question):
+        return None
+    match = re.search(r'健康(?:评)?分.{0,12}(?:低于|小于|不到|<|＜)\s*(\d{1,3})(?:\s*分)?', question)
+    limit = int(match.group(1)) if match else None
+    return limit if limit is not None and 0 <= limit <= 100 else None
+
+
+def oldest_unhandled_request(question):
+    return bool(re.search(r'(?:未处理|未确认)(?:的)?告警|告警.{0,8}(?:未处理|未确认)', question) and
+                re.search(r'最久|最早|第一条|最老', question))
+
+
+def alarm_count_status(question):
+    if not re.search(r'告警', question) or not re.search(r'多少|几条|数量|总数|有几', question):
+        return None
+    if re.search(r'已确认', question):
+        return 'acked'
+    if re.search(r'未处理|未确认', question):
+        return 'unhandled'
+    return None
+
+
+def station_decline_request(question):
+    return bool('场站' in question and '出力' in question and '今天' in question and
+                re.search(r'下降|降低|跌幅|减少', question))
+
+
+def overview_scope(question):
+    if not re.search(r'当前|现在|此刻|今天|今日', question):
+        return None
+    count = '设备' in question and re.search(r'在线|离线', question) and re.search(r'多少|几台', question)
+    station_power = '场站' in question and re.search(r'功率|出力', question) and re.search(r'多少|哪|各|最低|最高|排名', question)
+    today_energy = re.search(r'今天|今日', question) and re.search(r'发电量|电量', question)
+    if not count and not station_power and not today_energy:
+        return None
+    return 'business' if re.search(r'业务场站|业务设备|业务范围', question) else 'all'
+
+
+def valid_health_board(data):
+    if not isinstance(data, dict) or not stamp(data.get('computed_at')) or not isinstance(data.get('rule_version'), str) or not data['rule_version'] or type(data.get('complete')) is not bool or not isinstance(data.get('devices'), list):
+        return False
+    ids = set()
+    for row in data['devices']:
+        if not isinstance(row, dict) or not positive_id(row.get('device_id')) or row['device_id'] in ids or not isinstance(row.get('device_code'), str) or not row['device_code'] or row.get('rule_version') != data['rule_version']:
+            return False
+        ids.add(row['device_id'])
+        score = number(row.get('score')) if row.get('score') is not None else None
+        if row.get('state') not in ('online', 'offline', 'fault', 'unknown') or (row.get('score') is not None and (score is None or score < 0 or score > 100)) or (row.get('state') == 'unknown') != (score is None):
+            return False
+    return data['complete'] == all(row['score'] is not None for row in data['devices'])
 
 
 def applicability(device, meta):
@@ -136,7 +189,17 @@ def build_quality(calls, historical=False):
             missing.append(name + ' 缺少有效查询时间')
             continue
         evidence.append({'ref': ref, 'tool': name, 'queried_at': collected, 'arguments': args})
-        if name in ('get_device', 'list_devices'):
+        if name == 'get_health_devices':
+            if not valid_health_board(data):
+                missing.append('设备健康评分结果格式或完整性无效'); continue
+            rows = data['devices']
+            unknown = sum(row['score'] is None for row in rows)
+            add('health_scope', {'device_total': len(rows), 'unknown_count': unknown, 'complete': data['complete'], 'computed_at': data['computed_at'], 'rule_version': data['rule_version']},
+                '全平台设备健康评分共 ' + str(len(rows)) + ' 台；计算时间 ' + text(data['computed_at']) + '；规则 ' + text(data['rule_version']) + '。', [ref])
+            for row in rows:
+                values = {k: row.get(k) for k in ('device_id', 'device_code', 'name', 'station_code', 'score', 'state', 'matched_by', 'sampled_at_ms', 'received_at')}
+                add('health_score', values, '设备 ' + text(row['device_code']) + '（ID ' + str(row['device_id']) + '）健康分 ' + ('未知' if row['score'] is None else str(row['score'])) + '；状态 ' + text(row['state']) + '。', [ref], row['device_id'])
+        elif name in ('get_device', 'list_devices'):
             for device in data.get('list', []) if name == 'list_devices' else [data]:
                 if not isinstance(device, dict) or not positive_id(device.get('id')):
                     continue
@@ -157,9 +220,11 @@ def build_quality(calls, historical=False):
         elif name == 'get_dashboard_overview':
             summary = data.get('summary') if isinstance(data.get('summary'), dict) else {}
             values = {k:data.get(k) for k in ('scope', 'station_code', 'partial', 'expected_device_count', 'registered_device_count', 'observed_device_count', 'computed_at')}
-            values['summary'] = {k:summary.get(k) for k in ('device_total', 'online', 'offline', 'fault', 'active_alarms', 'current_power_kw', 'today_energy_kwh', 'health_score_percent')}
+            values['summary'] = {k:summary.get(k) for k in ('device_total', 'online', 'offline', 'fault', 'active_alarms', 'current_power_kw', 'today_energy_kwh', 'energy_provisional', 'energy_updated_at', 'health_score_percent')}
+            values['stations'] = [{k:row.get(k) for k in ('station_code', 'station_name', 'partial', 'registered_device_count', 'observed_device_count', 'current_power_kw', 'today_energy_kwh', 'energy_provisional', 'energy_updated_at')}
+                for row in data.get('stations', []) if isinstance(row, dict) and row.get('station_code')]
             add('aggregate', {'values':values, 'filters':args},
-                '当前总览聚合（仅限本次筛选范围）：' + text(json.dumps(values, ensure_ascii=False)) + '。', [ref])
+                '当前总览聚合（仅限本次筛选范围）。', [ref])
         elif name == 'get_telemetry':
             device_id = positive_id(args.get('device_id'))
             if not device_id or data.get('device_id') != device_id or args.get('mode', 'latest') != 'latest':
@@ -244,8 +309,9 @@ def build_quality(calls, historical=False):
             data = {'source_id':row.get('id'), 'source_version':row.get('version'), 'applicability':row.get('applicability'), 'state':state}
             refs = [ref] + ([device_refs[device_id]] if device_id in device_refs else [])
             add('applicability', data, '资料 ' + text(row.get('id', '?')) + '（来源版本 ' + text(row.get('version')) + '）：' + reason + '。', refs, device_id)
-    if len(facts) > 160:
-        facts = facts[:160]; missing.append('业务事实超过输出预算，结果不完整')
+    fact_limit = 256 if any(f['kind'] == 'health_scope' for f in facts) else 160
+    if len(facts) > fact_limit:
+        facts = facts[:fact_limit]; missing.append('业务事实超过输出预算，结果不完整')
     state = 'not_queried' if success+failed == 0 else 'failed' if success == 0 else 'partial_failed' if failed else 'queried'
     payload = {'version': VERSION, 'state': state, 'scope': 'historical' if historical else 'current_round', 'facts': facts, 'missing': list(dict.fromkeys(missing)), 'evidence': evidence}
     payload['digest'] = digest(payload)
@@ -385,6 +451,9 @@ def answer_fact_lines(quality, facts, question):
             seen_devices.add(device_id)
         if fact['id'] in summaries:
             append_line(summaries[fact['id']])
+        if fact['kind'] == 'aggregate':
+            for line in aggregate_lines(fact): append_line(line)
+            continue
         if fact['id'] in list_ids:
             if fact['id'] in shown:
                 append_line(alarm_line(fact))
@@ -399,6 +468,50 @@ def answer_fact_lines(quality, facts, question):
     return lines
 
 
+def health_score_lines(facts, limit):
+    scopes = [f for f in facts if f['kind'] == 'health_scope' and not f.get('historical')]
+    if not scopes:
+        return ['本轮未取得完整的逐台健康评分列表，无法判断哪些设备低于 ' + str(limit) + ' 分。']
+    selected = scopes[-1]
+    scores = [f for f in facts if f['kind'] == 'health_score' and not f.get('historical') and f['call_refs'] == selected['call_refs']]
+    if selected['data']['device_total'] != len(scores):
+        return ['本轮未取得完整的逐台健康评分列表，无法判断哪些设备低于 ' + str(limit) + ' 分。']
+    scope = selected['data']
+    matched = sorted((f['data'] for f in scores if (value := number(f['data'].get('score'))) is not None and value < limit), key=lambda row: (number(row['score']), row['device_code']))
+    lines = ['全平台 ' + str(scope['device_total']) + ' 台设备中，' + str(len(matched)) + ' 台有效健康分低于 ' + str(limit) + '；计算时间 ' + answer_time(scope['computed_at']) + '；规则 ' + text(scope['rule_version']) + '。']
+    for row in matched:
+        label = text(row.get('name') or row['device_code'])
+        lines.append('- ' + label + '（' + text(row['device_code']) + '，' + text(row.get('station_code') or '场站未知') + '，ID ' + str(row['device_id']) + '）：' + str(row['score']) + ' 分；' + {'online':'在线', 'offline':'离线', 'fault':'遥测故障状态'}.get(row['state'], '状态未知') + '。')
+    if scope['unknown_count']:
+        lines.append('另有 ' + str(scope['unknown_count']) + ' 台评分未知，未计入低分设备；未知不等于 0 分。')
+    lines.append('评分是平台规则结果；离线记 0 分不等于已证实硬件故障。')
+    return lines
+
+
+def aggregate_lines(fact):
+    values = fact['data'].get('values', {})
+    summary = values.get('summary') if isinstance(values.get('summary'), dict) else values
+    labels = {'device_total':'设备总数', 'online':'在线', 'offline':'离线', 'fault':'遥测故障状态',
+        'active_alarms':'活动告警', 'current_power_kw':'当前功率 kW', 'today_energy_kwh':'当日电量 kWh',
+        'health_score_percent':'平均健康分'}
+    parts = [label + ' ' + str(summary[key]) for key,label in labels.items() if summary.get(key) is not None]
+    lines = ['- ' + ('；'.join(parts) if parts else '本次聚合没有有效数值') +
+        ('；计算时间 ' + answer_time(values['computed_at']) if stamp(values.get('computed_at')) else '') +
+        ('；观测不完整' if values.get('partial') else '') + '。']
+    if summary.get('today_energy_kwh') is not None:
+        lines.append('- 当日电量为平台截至当前的暂计值' +
+            ('，数据更新时间 ' + answer_time(summary['energy_updated_at']) if stamp(summary.get('energy_updated_at')) else '') +
+            ('；统计尚不完整' if summary.get('energy_provisional') else '') + '，不能当作已结算全天电量。')
+    for row in values.get('stations', []):
+        power = number(row.get('current_power_kw'))
+        energy = number(row.get('today_energy_kwh'))
+        lines.append('- 场站 ' + text(row['station_code']) + ' 当前功率 ' + (str(power) + ' kW' if power is not None else '缺失') +
+            ('；当日电量暂计 ' + str(energy) + ' kWh' if energy is not None else '') +
+            ('；当日电量不完整' if row.get('energy_provisional') else '') +
+            ('；观测不完整' if row.get('partial') else '') + '。')
+    return lines
+
+
 def render_quality(quality, selection=None, historical=False, question=''):
     """Unrecognized model fields/prose never pass through to business conclusions."""
     allowed = {f['id'] for f in quality['facts']}
@@ -408,7 +521,8 @@ def render_quality(quality, selection=None, historical=False, question=''):
     refs = selection['fact_refs'] if valid else []
     facts = sorted(quality['facts'], key=lambda f: (refs.index(f['id']) if f['id'] in refs else len(refs)))
     header = '历史任务事实（仅说明当时记录，不能代表当前）' if historical or quality['scope'] == 'historical' else {'not_queried':'本轮未取得平台业务证据，不能报告当前设备状态', 'failed':'本轮业务查询失败，不能声称已查到当前状态', 'partial_failed':'本轮业务查询部分失败，结论仅限已取得事实', 'queried':''}[quality['state']]
-    lines = ([header + '。'] if header else []) + answer_fact_lines(quality, facts, question)
+    limit = health_score_below_limit(question)
+    lines = ([header + '。'] if header else []) + (health_score_lines(facts, limit) if limit is not None and not historical else answer_fact_lines(quality, facts, question))
     lines += ['- 证据不足：' + m for m in quality['missing']]
     if valid and EXPLANATIONS[selection['explanation_type']]: lines.append(EXPLANATIONS[selection['explanation_type']])
     # Validation state is already exposed in business_quality. Keep technical
@@ -463,8 +577,9 @@ def guard_answer(question, result, previous=()):
     current_states = [c['business_quality']['state'] for c in stored if not c.get('historical')]
     if quality['facts'] and current_states:
         quality['state'] = 'partial_failed' if quality['state'] in ('failed', 'partial_failed') or any(s in ('failed', 'partial_failed') for s in current_states) else 'queried'
-    if len(quality['facts']) > 160:
-        quality['facts'] = quality['facts'][:160]; quality['missing'].append('业务事实超过输出预算，结果不完整')
+    fact_limit = 256 if any(f['kind'] == 'health_scope' for f in quality['facts']) else 160
+    if len(quality['facts']) > fact_limit:
+        quality['facts'] = quality['facts'][:fact_limit]; quality['missing'].append('业务事实超过输出预算，结果不完整')
     quality['source_digests'] = [c['business_quality']['digest'] for c in stored]
     historical = bool(stored) and all(c.get('historical') for c in stored) and not any(tool_name(c) in BUSINESS for c in result.get('tool_calls', []))
     if historical: quality['scope'] = 'historical'

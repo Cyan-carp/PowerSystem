@@ -131,6 +131,38 @@ def test_ordinary_technical_explanation_remains_free():
     assert out['business_quality']['state']=='failed'
 
 
+def test_common_current_questions_have_bounded_read_objectives():
+    from rag_agent.business_quality import oldest_unhandled_request, station_decline_request, overview_scope, alarm_count_status
+    assert oldest_unhandled_request('未处理告警里最久的是哪一条？')
+    assert station_decline_request('哪个场站今天出力下降最明显？')
+    assert overview_scope('现在有多少台设备在线？') == 'all'
+    assert overview_scope('当前业务场站功率是多少？') == 'business'
+    assert overview_scope('今天发电量是多少？') == 'all'
+    assert alarm_count_status('已确认告警有多少条？') == 'acked'
+    assert alarm_count_status('未处理告警有多少条？') == 'unhandled'
+    assert overview_scope('设备在线是什么意思？') is None
+
+
+def test_overview_evidence_renders_numbers_and_station_power_without_json_truncation():
+    from rag_agent.business_quality import render_quality
+    board={'scope':'all','partial':False,'computed_at':AT,'expected_device_count':2,'registered_device_count':2,'observed_device_count':2,
+        'summary':{'device_total':2,'online':1,'offline':1,'fault':0,'active_alarms':0,'current_power_kw':31.5},
+        'stations':[{'station_code':'PV-01','current_power_kw':31.5,'partial':False}]}
+    quality=build_quality([call('get_dashboard_overview',board,{'scope':'all'})])
+    answer,_=render_quality(quality,question='当前各场站功率是多少？')
+    assert '在线 1' in answer and '场站 PV-01 当前功率 31.5 kW' in answer
+    assert '"summary"' not in answer
+
+
+def test_today_energy_is_a_provisional_overview_reading():
+    from rag_agent.business_quality import render_quality
+    board={'scope':'all','partial':False,'computed_at':AT,'summary':{'today_energy_kwh':42.5,
+        'energy_provisional':True,'energy_updated_at':AT},'stations':[]}
+    quality=build_quality([call('get_dashboard_overview',board,{'scope':'all'})])
+    answer,_=render_quality(quality,question='今天发电量是多少？')
+    assert '42.5' in answer and '暂计值' in answer and '不能当作已结算全天电量' in answer
+
+
 def test_fleet_overview_and_station_tools_are_business_evidence():
     overview = {'scope':'business', 'partial':True, 'expected_device_count':140,
         'registered_device_count':120, 'observed_device_count':110, 'computed_at':AT,
@@ -146,6 +178,37 @@ def test_fleet_overview_and_station_tools_are_business_evidence():
     aggregate = next(fact for fact in q['facts'] if fact['kind'] == 'aggregate')
     assert aggregate['data']['values']['partial'] is True
     assert aggregate['data']['values']['summary']['current_power_kw'] is None
+
+
+def test_health_score_threshold_uses_complete_board_and_excludes_unknown():
+    from rag_agent.business_quality import health_score_below_limit, valid_health_board
+    rows = [
+        {'device_id':1,'device_code':'A','name':'甲','station_code':'PV-01','score':70,'state':'online','rule_version':'rule-health-v1'},
+        {'device_id':2,'device_code':'B','name':'乙','station_code':'PV-02','score':80,'state':'online','rule_version':'rule-health-v1'},
+        {'device_id':3,'device_code':'C','name':'丙','station_code':'PV-02','score':None,'state':'unknown','rule_version':'rule-health-v1'},
+        {'device_id':4,'device_code':'D','name':'丁','station_code':'PV-01','score':0,'state':'offline','rule_version':'rule-health-v1'},
+    ]
+    board={'rule_version':'rule-health-v1','computed_at':AT,'complete':False,'devices':rows}
+    assert health_score_below_limit('哪些设备的健康分低于 80？') == 80
+    assert health_score_below_limit('健康分低于80是什么意思？') is None
+    assert valid_health_board(board)
+    q=build_quality([call('get_health_devices',board)])
+    assert valid_quality(q) and q['state']=='queried'
+    answer,_=render_quality(q,question='哪些设备的健康分低于 80？')
+    assert '甲' in answer and '丁' in answer and '乙' not in answer and '丙' not in answer
+    assert '2 台有效健康分低于 80' in answer and '1 台评分未知' in answer
+    bad=copy.deepcopy(board);bad['devices'][2]['score']=0
+    assert not valid_health_board(bad)
+    assert '无法判断' in render_quality(build_quality([call('get_health_devices',bad)]),question='哪些设备的健康分低于 80？')[0]
+
+
+def test_health_board_covers_capacity_fleet_without_fact_truncation():
+    board={'rule_version':'rule-health-v1','computed_at':AT,'complete':True,
+        'devices':[{'device_id':i,'device_code':f'INV-{i}','name':f'设备{i}','station_code':'PV-01','score':70 if i==200 else 100,'state':'online','rule_version':'rule-health-v1'} for i in range(1,201)]}
+    q=build_quality([call('get_health_devices',board)])
+    assert len(q['facts'])==201 and not q['missing']
+    answer,_=render_quality(q,question='哪些设备的健康分低于80？')
+    assert 'INV-200' in answer and 'INV-199' not in answer
 
 
 def test_legacy_history_explanation_uses_recorded_calls_not_old_prose():

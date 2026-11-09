@@ -128,8 +128,17 @@
   --rail-w: 64px;
   --top-h: 60px;
   --dock-w: 420px;
-  /* 域名入口注入的备案底栏高度（见 shell.css 末节与 main.ts 的 data-icp 探测） */
-  --icp-h: 26px;
+  /* 备案信息已改为随内容流渲染（见 lib/site.ts 与 shell.css 的 .site-foot），不再预留固定高度 */
+
+  /* ---------- 手机端壳层 ---------- */
+  /* 底部导航条高度：与触控最小热区（48px）对齐，再加一行文字 */
+  --mnav-h: 56px;
+  /* 刘海/手势区。桌面恒为 0；手机浏览器与 WebView 由 viewport-fit=cover 打开 */
+  --safe-t: env(safe-area-inset-top, 0px);
+  --safe-b: env(safe-area-inset-bottom, 0px);
+  /* 底部固定元素的额外下移量：备案固定底栏已取消，底部导航直接贴底；
+     保留变量名以免其它规则断链（旧 data-icp 分支同步删除） */
+  --icp-offset: 0px;
 }
 
 /**
@@ -243,6 +252,19 @@ body,
   height: 100%;
 }
 
+/**
+ * 手机浏览器与 WebView 的地址栏/工具栏会伸缩，100vh 取的是「最大视口」，
+ * 结果底部内容被顶出可视区；dvh 跟随可视高度变化。桌面浏览器两者等价，
+ * 所以只在支持 dvh 时覆盖，不影响旧内核。
+ */
+@supports (height: 100dvh) {
+  html,
+  body,
+  #app {
+    height: 100dvh;
+  }
+}
+
 body {
   margin: 0;
   /* 底色压暗一档后不再叠大块白，避免上半页和下半页割裂 */
@@ -256,6 +278,11 @@ body {
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
+  /* 手机端：去掉点击时的蓝色高亮块，避免整片卡片闪一下 */
+  -webkit-tap-highlight-color: transparent;
+  /* 横屏时不要自动放大字号，保持信息密度一致 */
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
 }
 
 /* 夜间：同样的大面积渐变，但换成深灰，避免纯色平面显得死 */

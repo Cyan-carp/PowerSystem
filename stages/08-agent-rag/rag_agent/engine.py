@@ -1,10 +1,11 @@
 import asyncio
 import json
 from datetime import datetime, timezone
+from uuid import uuid4
 from typing import TypedDict
 from langgraph.graph import StateGraph, START, END
 from .provider import ModelError
-from .business_quality import BUSINESS, tool_name, business_request, build_quality, guard_answer
+from .business_quality import BUSINESS, tool_name, business_request, build_quality, guard_answer, health_score_below_limit
 from . import v4
 
 
@@ -70,6 +71,13 @@ class Engine:
                 runtime.restore_tools(self.tools,result)
                 await runtime.check()
             state['needs_repair'] = False
+            if enabled and (health_score_below_limit(question) is not None or v4.auto_dispatch_current(question)) and not any(c.get('name') == 'dispatch_ops_task' for c in result.get('tool_calls', [])) and any(s['function']['name'] == 'dispatch_ops_task' for s in self.tools.schemas):
+                # A score threshold is answered from the existing authoritative
+                # health board, without relying on a model to choose the tool.
+                state['messages'].append({'role':'assistant','content':None,'tool_calls':[{'id':str(uuid4()),'type':'function','function':{'name':'dispatch_ops_task','arguments':json.dumps({'intent':question,'target_description':'全平台逐台健康评分','operation':'read_only'},ensure_ascii=False)}}]})
+                state['rounds'] += 1
+                if runtime:state['result_state']=result.copy()
+                return state
             schemas = self.tools.schemas if state["rounds"] < cfg.max_rounds and state["calls"] < cfg.max_calls else None
             if enabled and schemas and v4.needs_current_evidence(question) and not any(c.get('name')=='dispatch_ops_task' for c in result.get('tool_calls', [])):
                 # Fetch the explicitly requested current evidence before offering
@@ -157,6 +165,10 @@ class Engine:
                 state['messages'].append({'role':'assistant','content':result['answer_markdown']})
             elif result.get('response_mode') == 'task_dispatched' and any(t['status'] not in ('succeeded','failed','cancelled','timeout') for t in result.get('task_cards', [])):
                 result['answer_markdown'] = '运维任务已受理，正在排队或执行。请查看任务卡；受理成功不代表查询完成。'
+                result['status'] = 'answered'
+                state['messages'].append({'role':'assistant','content':result['answer_markdown']})
+            elif enabled and (health_score_below_limit(question) is not None or v4.oldest_unhandled_request(question) or v4.station_decline_request(question) or v4.overview_scope(question) is not None or v4.alarm_count_status(question)) and result.get('task_cards'):
+                result['answer_markdown'] = '业务查询已返回，按实际证据生成回答。'
                 result['status'] = 'answered'
                 state['messages'].append({'role':'assistant','content':result['answer_markdown']})
             if runtime:state['result_state']=result.copy()

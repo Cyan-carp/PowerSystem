@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+      无 ActionBar 的浅色主题：界面全部由页面自带，外壳只留状态栏配色。
+      windowLightStatusBar 需要 API 23，本工程 minSdk 24，直接写在基础档即可。
+      windowLightNavigationBar 需要 API 27，旧系统会忽略未知属性，不影响启动。
+    -->
+    <style name="AppTheme" parent="@android:style/Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@color/app_bg</item>
+        <item name="android:statusBarColor">@color/app_bg</item>
+        <item name="android:navigationBarColor">@color/app_bg</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:windowLightNavigationBar">true</item>
+    </style>
+</resources>

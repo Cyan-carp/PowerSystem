@@ -1372,8 +1372,15 @@ onBeforeUnmount(() => {
     grid-template-columns: minmax(0, 1fr);
   }
 
+  /**
+   * 手机端会话卡要铺满「顶栏下方到导航条上方」这一段：
+   * 250px 是页头 + 卡片头 + 输入区的实测高度，再减去底部导航（含手势区）。
+   * 用 dvh 而不是 vh，否则地址栏收起时会多出一截空白。
+   */
   .chat-card {
-    height: calc((100vh - 250px) / var(--content-scale, 1));
+    /* 手机端 .page-inner 有 zoom，视觉高度会一起缩小；除以缩放系数补回可视高度 */
+    height: calc((100dvh - 250px - var(--mnav-h) - var(--safe-b)) / var(--content-scale, 1));
+    min-height: calc(360px / var(--content-scale, 1));
   }
 
   /* 单列堆叠：右栏回到自然高度，只给会话列表限高，避免把自己的内容裁掉 */

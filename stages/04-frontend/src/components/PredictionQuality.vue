@@ -7,6 +7,7 @@ import ConfusionMatrix from './ConfusionMatrix.vue'
 import QualityTrend from './QualityTrend.vue'
 import Pager from './Pager.vue'
 import { api } from '../lib/api'
+import { shortVersion } from '../lib/version'
 import type {
   DriftEvent,
   PredictionModelVersion,
@@ -213,7 +214,7 @@ const startTrain = async () => {
   try {
     const result = await api.predictionQualityTrain()
     if (result.eligible) {
-      toast('ok', `训练完成，候选 ${result.model_version ?? ''} 已登记`)
+      toast('ok', `训练完成，候选 ${shortVersion(result.model_version)} 已登记`)
       void loadModels()
     } else {
       const reason = result.rejection_reason || '未达准入'
@@ -394,7 +395,7 @@ const trialModel = async (item: PredictionModelVersion) => {
   promoting.value = target
   try {
     const result = await api.trialModel(target)
-    toast('ok', `已切到试用：${result.model_version}，观察 24 小时`)
+    toast('ok', `已切到试用：${shortVersion(result.model_version)}，观察 24 小时`)
     await loadModels()
   } catch (error) {
     toast('bad', `试用失败：${error instanceof Error ? error.message : String(error)}`)
@@ -406,7 +407,7 @@ const trialModel = async (item: PredictionModelVersion) => {
 const confirmTrial = async (item: PredictionModelVersion) => {
   const target = item.model_version
   const ok = await askConfirm({
-    title: `确认 ${target} 转正`,
+    title: `确认 ${shortVersion(target)} 转正`,
     body: '确认后该版本成为现役，原现役改为已退役。建议先看试用期的命中率再决定。',
     confirmText: '确认转正',
   })
@@ -414,7 +415,7 @@ const confirmTrial = async (item: PredictionModelVersion) => {
   promoting.value = target
   try {
     const result = await api.confirmModel(target)
-    toast('ok', `${result.model_version} 已转正`)
+    toast('ok', `${shortVersion(result.model_version)} 已转正`)
     await loadModels()
   } catch (error) {
     toast('bad', `转正失败：${error instanceof Error ? error.message : String(error)}`)
@@ -426,15 +427,15 @@ const confirmTrial = async (item: PredictionModelVersion) => {
 const rollbackTrial = async (item: PredictionModelVersion) => {
   const target = item.model_version
   const ok = await askConfirm({
-    title: `回退 ${target}`,
-    body: `将恢复到 ${item.previous_version ?? '上一版本'}，该版本回到候选状态。回退不重启服务。`,
+    title: `回退 ${shortVersion(target)}`,
+    body: `将恢复到 ${item.previous_version ? shortVersion(item.previous_version) : '上一版本'}，该版本回到候选状态。回退不重启服务。`,
     confirmText: '回退',
   })
   if (!ok) return
   promoting.value = target
   try {
     const result = await api.rollbackModel(target)
-    toast('ok', `已回退到 ${result.rolled_back_to}`)
+    toast('ok', `已回退到 ${shortVersion(result.rolled_back_to)}`)
     await loadModels()
   } catch (error) {
     toast('bad', `回退失败：${error instanceof Error ? error.message : String(error)}`)
@@ -488,7 +489,9 @@ const levelHint = (value: string) => LEVEL_HINT[value] || value
       </div>
       <span class="qq-window">
         统计窗口 {{ windowLabel }}
-        <template v-if="summary?.model_version"> · 统计版本 <b class="num">{{ summary.model_version }}</b></template>
+        <template v-if="summary?.model_version">
+          · 统计版本 <b class="num" :title="summary.model_version" :data-version-full="summary.model_version">{{ shortVersion(summary.model_version) }}</b>
+        </template>
       </span>
       <button class="btn btn-sm qq-refresh" :disabled="loading" @click="reload">
         <Icon name="refresh" :size="13" />刷新
@@ -527,11 +530,11 @@ const levelHint = (value: string) => LEVEL_HINT[value] || value
       <div class="hero-side">
         <span class="side-label">运行态核对</span>
         <div class="side-version">
-          <b class="num">{{ ledgerActive || '—' }}</b>
+          <b class="num" :title="ledgerActive || undefined" :data-version-full="ledgerActive || undefined">{{ ledgerActive ? shortVersion(ledgerActive) : '—' }}</b>
           <StatusChip :tone="runtimeState.tone" :label="runtimeState.label" />
         </div>
         <p v-if="versionMismatch" class="side-warn">
-          推理服务实际加载 <b class="num">{{ runtimeVersion }}</b>，与台账现役不一致，请以运行版本为准。
+          推理服务实际加载 <b class="num" :title="runtimeVersion" :data-version-full="runtimeVersion">{{ shortVersion(runtimeVersion) }}</b>，与台账现役不一致，请以运行版本为准。
         </p>
         <p v-else-if="versionUnknown" class="side-warn is-soft">
           推理服务运行版本暂无法核对（健康检查不可读或未返回版本），不要据此认为版本已一致。
@@ -604,7 +607,7 @@ const levelHint = (value: string) => LEVEL_HINT[value] || value
         <div class="version-panel">
           <div v-if="activeModel" class="version-row">
             <StatusChip :tone="statusOf(activeModel.status).tone" :label="statusOf(activeModel.status).label" />
-            <b class="version-name num">{{ activeModel.model_version }}</b>
+            <b class="version-name num" :title="activeModel.model_version" :data-version-full="activeModel.model_version">{{ shortVersion(activeModel.model_version) }}</b>
             <span class="version-meta num">
               阈值 {{ activeModel.threshold == null ? '—' : pct(activeModel.threshold * 100, 0) }} ·
               离线精确率 {{ metricOf(activeModel, 'precision') }} · 漏报率 {{ missOf(activeModel) }}
@@ -612,11 +615,11 @@ const levelHint = (value: string) => LEVEL_HINT[value] || value
           </div>
           <div v-if="trialModelRow" class="version-row">
             <StatusChip :tone="statusOf(trialModelRow.status).tone" :label="statusOf(trialModelRow.status).label" />
-            <b class="version-name num">{{ trialModelRow.model_version }}</b>
+            <b class="version-name num" :title="trialModelRow.model_version" :data-version-full="trialModelRow.model_version">{{ shortVersion(trialModelRow.model_version) }}</b>
             <span class="version-meta num">观察 24 小时后再决定转正或回退</span>
           </div>
           <p v-if="versionMismatch" class="version-warn">
-            运行版本 <b class="num">{{ runtimeVersion }}</b> 与台账现役不一致，必要时检查 /health 是否反映最新加载。
+            运行版本 <b class="num" :title="runtimeVersion" :data-version-full="runtimeVersion">{{ shortVersion(runtimeVersion) }}</b> 与台账现役不一致，必要时检查 /health 是否反映最新加载。
           </p>
           <p v-else-if="versionUnknown" class="version-warn is-soft">运行版本暂无法核对，请以推理服务实际加载为准。</p>
           <button class="link-btn" @click="scrollTo('models')">查看模型台账（{{ models.length }} 个版本）</button>
@@ -695,7 +698,9 @@ const levelHint = (value: string) => LEVEL_HINT[value] || value
         <span class="card-title">按日趋势</span>
         <span class="card-sub">
           近 {{ days }} 天 · 按故障批次（仅 1 小时内是否被提前叫出）
-          <template v-if="seriesVersion"> · 版本 <b class="num">{{ seriesVersion }}</b></template>
+          <template v-if="seriesVersion">
+            · 版本 <b class="num" :title="seriesVersion" :data-version-full="seriesVersion">{{ shortVersion(seriesVersion) }}</b>
+          </template>
         </span>
       </div>
       <QualityTrend :points="points" :pending="seriesRequest.pending.value" :height="156" />
@@ -742,7 +747,7 @@ const levelHint = (value: string) => LEVEL_HINT[value] || value
             <tr v-for="item in models" :key="item.model_version">
               <td>
                 <div class="cell-stack">
-                  <span class="cell-name num">{{ item.model_version }}</span>
+                  <span class="cell-name num" :title="item.model_version" :data-version-full="item.model_version">{{ shortVersion(item.model_version) }}</span>
                   <span class="cell-note">阈值 {{ item.threshold == null ? '—' : pct(item.threshold * 100, 0) }}</span>
                 </div>
               </td>

@@ -8,6 +8,8 @@
 .app {
   display: flex;
   height: 100vh;
+  /* 手机地址栏伸缩时 100vh 会把底部顶出屏幕，dvh 跟随可视区 */
+  height: 100dvh;
   overflow: hidden;
   background: var(--bg);
 }
@@ -1151,13 +1153,14 @@ html[data-density='compact'] .page-inner {
     --rail-w: 56px;
   }
 
-  /* 窄屏由既有断点接管，不叠加内容缩放，高度补偿也要一并关掉 */
+  /* 窄屏由既有断点接管，不叠加桌面档的内容缩放；
+     zoom 仍读 --content-scale，≤900px 的手机档会把它设为 0.75。 */
   html[data-density='compact'] {
     --content-scale: 1;
   }
 
   html[data-density='compact'] .page-inner {
-    zoom: 1;
+    zoom: var(--content-scale, 1);
   }
 
   .topbar {
@@ -1236,40 +1239,297 @@ html[data-density='compact'] .page-inner {
   }
 }
 
-/* ================= 备案页脚 ================= */
+/* ================= 手机端壳层 ================= */
 
 /**
- * 域名入口会在返回的 HTML 末尾注入 <footer class="icp-footer">：它带内联样式、又参与文档流，
- * 高度 45px 叠在 100vh 的壳层下面，文档比视口高 45px，滚轮到底时整页跟着上移半格。
- * 这里把它收编成一条 26px 的固定底栏，内容区由 data-icp 让出同样高度，文档高度回到视口高。
- * 覆盖必须带 !important：内联样式优先级高于单条类选择器。
+ * ≤900px 是「手机 + 竖屏平板」档：左侧九枚图标的竖条在这里既难点也读不出含义，
+ * 改为底部四格主入口 + 「更多」面板。桌面端 .mnav 恒为 display:none，不参与布局。
+ * 断点与各页面既有的 760/900 收紧档衔接，不新增第三套栅格。
  */
-.icp-footer {
-  position: fixed !important;
-  inset: auto 0 0 0 !important;
-  z-index: 35;
-  height: var(--icp-h) !important;
-  margin: 0 !important;
-  padding: 0 !important;
-  display: flex !important;
-  align-items: center;
-  justify-content: center;
-  background: var(--mask-bg) !important;
-  border-top: 1px solid var(--line) !important;
-  font-size: 10.5px !important;
-  line-height: var(--icp-h) !important;
-  letter-spacing: 0.02em;
-  color: var(--ink-placeholder) !important;
+.mnav {
+  display: none;
 }
 
-.icp-footer a {
-  color: inherit !important;
-  text-decoration: none !important;
+/* 「更多」面板：手机端底部抽屉，与 .mnav 共用一套层级 */
+.msheet-scrim,
+.msheet {
+  display: none;
+}
+
+@media (max-width: 900px) {
+  :root {
+    /* 手机上顶栏收紧一档：页名 + 常用图标即可，搜索与时钟让位给内容 */
+    --top-h: 54px;
+    /* 手机端内容整体缩到 75%；桌面（>900px）不读这一档，保持原观感 */
+    --content-scale: 0.75;
+  }
+
+  /* 低分屏档也走手机档的 0.75，不叠加桌面 0.9 */
+  html[data-density='compact'] {
+    --content-scale: 0.75;
+  }
+
+  /* 只缩放页面内容：顶栏、底栏、抽屉、提醒与备案行保持原生尺寸，触控热区不被缩小 */
+  .page-inner {
+    zoom: var(--content-scale, 1);
+  }
+
+  .rail {
+    display: none;
+  }
+
+  .topbar {
+    padding: 0 8px 0 14px;
+    gap: 6px;
+  }
+
+  /* 顶栏搜索在手机上隐藏：设备台账页自带搜索框，重复入口不如把宽度还给数据 */
+  .tb-search {
+    display: none;
+  }
+
+  /* 页名可能偏长（「模型质量」「统计报表」），窄屏截断而不是把右侧图标挤走 */
+  .tb-tab {
+    display: block;
+    max-width: 34vw;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    line-height: var(--top-h);
+  }
+
+  /* 内容区让出底部导航与手势区 */
+  .page {
+    padding: 12px 12px calc(var(--mnav-h) + var(--safe-b) + 18px);
+  }
+
+  .page-inner {
+    gap: 12px;
+  }
+
+  /**
+   * 顶栏弹层：桌面端挂在触发按钮右侧（right:0 相对按钮），手机上按钮离右边太近，
+   * 340px 的浮层会整块溢出到屏幕左外侧。这里改成贴视口右上角，宽度按屏宽收敛。
+   */
+  .popover {
+    position: fixed;
+    top: calc(var(--top-h) + 6px);
+    right: 8px;
+    left: auto;
+    width: min(340px, calc(100vw - 16px));
+  }
+
+  /* 触控热区：分页与图标按钮小于 34px 就不好点 */
+  .pager-btn,
+  .icon-btn {
+    width: 34px;
+    height: 34px;
+  }
+
+  .btn {
+    height: 36px;
+  }
+
+  .btn-sm {
+    height: 30px;
+  }
+
+  /* 表格横向滑动：加惯性、并在滑到头时不要带动整页 */
+  .table-wrap {
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-x: contain;
+  }
+
+  /* 窄屏卡片内边距收一档，把宽度留给数据 */
+  .card-head {
+    padding: 13px 14px 10px;
+  }
+
+  .card-body {
+    padding: 0 14px 16px;
+  }
+
+  .card-foot,
+  .pager {
+    padding-left: 14px;
+    padding-right: 14px;
+  }
+
+  .table thead th:first-child,
+  .table tbody td:first-child {
+    padding-left: 14px;
+  }
+
+  .table thead th:last-child,
+  .table tbody td:last-child {
+    padding-right: 14px;
+  }
+
+  /* ---------- 底部导航 ---------- */
+
+  .mnav {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: var(--icp-offset);
+    z-index: 70;
+    display: grid;
+    grid-auto-flow: column;
+    grid-auto-columns: 1fr;
+    height: calc(var(--mnav-h) + var(--safe-b));
+    padding-bottom: var(--safe-b);
+    background: var(--mask-bg);
+    border-top: 1px solid var(--line);
+    -webkit-backdrop-filter: blur(14px);
+    backdrop-filter: blur(14px);
+  }
+
+  .mnav-btn {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 3px;
+    height: var(--mnav-h);
+    color: var(--ink-3);
+    font-size: 10.5px;
+    font-weight: 550;
+    letter-spacing: 0.01em;
+    transition: color 0.16s ease;
+  }
+
+  .mnav-btn.is-on {
+    color: var(--brand);
+  }
+
+  /* stroke-width 是指示属性，CSS 声明可以压过它 */
+  .mnav-btn.is-on svg {
+    stroke-width: 2.2;
+  }
+
+  /* ---------- 「更多」面板 ---------- */
+
+  .msheet-scrim {
+    position: fixed;
+    inset: 0;
+    display: block;
+    z-index: 95;
+    background: var(--overlay);
+    animation: fade-in 0.16s ease;
+  }
+
+  .msheet {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: var(--icp-offset);
+    display: block;
+    z-index: 96;
+    padding: 8px 12px calc(var(--safe-b) + 22px);
+    background: var(--card);
+    border-top: 1px solid var(--line);
+    border-radius: 14px 14px 0 0;
+    box-shadow: var(--shadow-3);
+    animation: sheet-up 0.22s cubic-bezier(0.22, 0.8, 0.32, 1);
+  }
+
+  .msheet-head {
+    display: flex;
+    align-items: center;
+    padding: 4px 4px 8px;
+  }
+
+  .msheet-head h4 {
+    font-size: 12.5px;
+    font-weight: 650;
+    color: var(--ink);
+  }
+
+  .msheet-head .icon-btn {
+    margin-left: auto;
+  }
+
+  .msheet-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(76px, 1fr));
+    gap: 6px;
+  }
+
+  .msheet-item {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+    min-height: 74px;
+    padding: 10px 4px;
+    border-radius: var(--r-md);
+    border: 1px solid var(--line-soft);
+    background: var(--card-soft);
+    color: var(--ink-2);
+    font-size: 11.5px;
+    font-weight: 550;
+  }
+
+  .msheet-item:active {
+    background: var(--brand-soft);
+    border-color: var(--brand-line);
+  }
+
+  .msheet-item.is-on {
+    color: var(--brand);
+    border-color: var(--brand-line);
+    background: var(--brand-soft);
+  }
+}
+
+@keyframes sheet-up {
+  from {
+    transform: translateY(100%);
+  }
+}
+
+/* ================= 备案信息 ================= */
+
+/**
+ * 域名入口在返回的 HTML 末尾注入 `<footer class="icp-footer">`（带内联样式、参与文档流）。
+ * 以前把它收成一条常驻 26px 固定底栏，手机底部导航还要为它让位。
+ * 现在由 lib/site.ts 在启动时把该节点摘出文档流、内容保留在 icpNotice 里，
+ * 再由 App.vue 在**页面滚动容器的末尾**渲染成 .site-foot：滚到底看得到，往上滚自然滑出视口。
+ *
+ * 保留这条兜底：万一注入节点没被摘掉（脚本异常），也不要在页面里露出一条陌生的黑条。
+ */
+.icp-footer {
+  display: none !important;
+}
+
+.site-foot {
+  max-width: 1440px;
+  margin: 18px auto 0;
+  padding: 12px 2px 4px;
+  border-top: 1px solid var(--line-soft);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  font-size: 11px;
+  line-height: 1.6;
+  letter-spacing: 0.02em;
+  color: var(--ink-placeholder);
+}
+
+.site-foot a {
+  color: inherit;
+  text-decoration: none;
   transition: color 0.16s ease;
 }
 
-.icp-footer a:hover {
-  color: var(--brand) !important;
+.site-foot a:hover {
+  color: var(--brand);
+}
+
+.site-foot-sep {
+  color: var(--dot-faint);
 }
 
 /* ================= 夜间模式补充 ================= */
@@ -1301,11 +1561,4 @@ html[data-density='compact'] .page-inner {
   box-shadow: 0 6px 14px -5px rgba(76, 141, 255, 0.5);
 }
 
-/* 只在页面确实带备案页脚时收窄（IP 入口没有，不能平白少 26px） */
-html[data-icp] #app {
-  height: calc(100% - var(--icp-h));
-}
-
-html[data-icp] .app {
-  height: 100%;
-}
+/* 备案信息已进入页面内容流，不再为固定底栏让出高度 */

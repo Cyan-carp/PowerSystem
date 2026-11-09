@@ -7,6 +7,7 @@ import StatusChip from '../components/StatusChip.vue'
 import { api } from '../lib/api'
 import type { Alarm, Device, HealthRow, Metric, Prediction, Telemetry } from '../lib/api'
 import { FEATURE_CN, FEATURE_UNIT } from '../lib/data'
+import { shortVersion } from '../lib/version'
 import { shell } from '../lib/store'
 import { across, HEALTH_STATE_CN, healthBasis, LEVEL_CN, METRIC_CN, METRIC_DIGITS, METRIC_UNIT, n, pct, stamp, TELEMETRY_STATE_CN, toneOf } from '../lib/format'
 
@@ -411,7 +412,7 @@ const alarmTone = (alarm: Alarm) => toneOf(alarm.level)
       <section class="card">
         <div class="card-head">
           <span class="card-title">失效风险</span>
-          <span class="card-sub">{{ prediction?.model_version || '暂无模型结果' }}</span>
+          <span class="card-sub" :title="prediction?.model_version || undefined" :data-version-full="prediction?.model_version || undefined">{{ prediction?.model_version ? shortVersion(prediction.model_version) : '暂无模型结果' }}</span>
           <span class="card-sub right">{{ prediction?.stale ? '结果已过期' : '' }}</span>
         </div>
         <div class="card-body">

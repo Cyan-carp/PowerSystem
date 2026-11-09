@@ -6,6 +6,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 from uuid import UUID, uuid4
+from types import SimpleNamespace
 import httpx
 import pytest
 import pytest_asyncio
@@ -65,6 +66,9 @@ def backend(cfg, paths, many=False):
         elif p=="/api/v1/alarms/statistics": data={"complete":True,"total_events":100}
         elif p=="/api/v1/alarms/1": data={"id":1,"status":"recovered"}
         elif p=="/api/v1/dashboard/summary": data={"device_total":2}
+        elif p=="/api/v1/health/devices": data={"rule_version":"rule-health-v1","computed_at":"2026-11-08T06:00:00Z","complete":True,
+            "devices":[{"device_id":10,"device_code":"A","name":"甲","station_code":"PV-01","score":70,"state":"online","rule_version":"rule-health-v1"},
+                       {"device_id":30,"device_code":"B","name":"乙","station_code":"PV-01","score":80,"state":"online","rule_version":"rule-health-v1"}],"stations":[]}
         elif p.endswith("/telemetry"): data={"points":[[1000,1.2]]}
         else: data={"id":30,"device_code":"B","name":"fixture"}
         return httpx.Response(200,json={"code":0,"data":data})
@@ -83,6 +87,102 @@ async def execute(env, body=None, provider=None, verification=None, many=False):
 
 def call(name,args,cid="c1"):
     return {"role":"assistant","content":None,"tool_calls":[{"id":cid,"function":{"name":name,"arguments":json.dumps(args)}}]}
+
+
+def test_health_score_tool_is_registered_as_read_only_route():
+    from ops_agent.platform import MODELS, business_route
+    assert 'get_health_devices' in MODELS
+    assert business_route('get_health_devices',{})==('/api/v1/health/devices',{})
+    assert MANIFEST['platform.get_health_devices']['risk_class']=='R0'
+
+
+@pytest.mark.asyncio
+async def test_common_read_objectives_do_not_depend_on_ops_model_or_database(tmp_path):
+    class FakeStore:
+        def __init__(self):self.status=None;self.result=None
+        async def approved_plan(self,*args):return None
+        async def check(self,*args):pass
+        async def transition(self,tid,epoch,status,result,*args):self.status=status;self.result=result
+        async def report(self,*args):return {'status':self.status}
+    class FakeExecutor:
+        def __init__(self, pages):self.pages=pages;self.calls=[]
+        async def call(self,row,epoch,step,name,args,jwt,result):
+            self.calls.append((name,args))
+            data=self.pages.pop(0)
+            result['tool_calls'].append({'name':name.removeprefix('platform.'),'arguments':args,'status':'ok',
+                'collected_at':'2026-11-08T06:00:00Z','result':data,'call_id':str(step),'step_no':step})
+            return data
+    async def run(question,pages):
+        store=FakeStore();tid=uuid4()
+        cfg=SimpleNamespace(security_enabled=False,infra_enabled=False,enabled=True,write_enabled=False,
+            acceptance_drill_only=False,heartbeat_seconds=60,runtime_profile='fixture',max_rounds=8,
+            model_timeout=60,audit_dir=tmp_path,redact=lambda value:value)
+        async def no_model(*args):raise AssertionError('bounded read must not call model')
+        worker=Worker(cfg,store,None,None,{tid:{'jwt':'fixture'}},provider=no_model)
+        worker.executor=FakeExecutor(list(pages))
+        row={'task_id':tid,'execution_epoch':1,'user_id':1,'deadline':datetime.now(timezone.utc).replace(year=2099),
+            'envelope':json.dumps({'user_request':question,'intent':question})}
+        await worker.run_task(row)
+        return store,worker.executor.calls
+    alerts=[{'id':25-i,'device_id':2,'status':'unhandled','triggered_at':f'2026-11-08T{23-i:02d}:00:00Z'} for i in range(20)]
+    older=[{'id':5-i,'device_id':2,'status':'unhandled','triggered_at':f'2026-11-07T{4-i:02d}:00:00Z'} for i in range(5)]
+    store,calls=await run('未处理告警里最久的是哪一条？',[{'list':alerts,'total':25,'page':1},{'list':older,'total':25,'page':2}])
+    assert store.status=='succeeded' and calls[1][1]['page']==2 and older[-1]['id']==1
+    board={'scope':'all','computed_at':'2026-11-08T06:00:00Z','summary':{'online':1,'device_total':2},'stations':[]}
+    store,calls=await run('现在有多少台设备在线？',[board])
+    assert store.status=='succeeded' and calls==[('platform.get_dashboard_overview',{'scope':'all'})]
+    store,calls=await run('今天发电量是多少？',[board])
+    assert store.status=='succeeded' and calls==[('platform.get_dashboard_overview',{'scope':'all'})]
+    acked={'list':[{'id':3,'device_id':2,'status':'acked','triggered_at':'2026-11-08T01:00:00Z'}],'total':3,'page':1}
+    store,calls=await run('已确认告警有多少条？',[acked])
+    assert store.status=='succeeded' and calls==[('platform.list_alarms',{'status':'acked','scope':'all','page':1,'page_size':1})]
+
+
+@pytest.mark.asyncio
+async def test_ops_model_gets_one_read_repair_and_never_succeeds_without_evidence(tmp_path):
+    class FakeStore:
+        def __init__(self):self.status=None;self.result=None;self.models=0;self.security_gates=None
+        async def approved_plan(self,*args):return None
+        async def check(self,*args):pass
+        async def model_called(self,*args):self.models+=1
+        async def transition(self,tid,epoch,status,result,*args):self.status=status;self.result=result
+        async def report(self,*args):return {'status':self.status}
+    class FakeExecutor:
+        async def call(self,row,epoch,step,name,args,jwt,result):
+            data={'scope':'all','computed_at':'2026-11-08T06:00:00Z','summary':{'online':1,'device_total':2},'stations':[]}
+            result['tool_calls'].append({'name':'get_dashboard_overview','arguments':args,'status':'ok',
+                'collected_at':'2026-11-08T06:00:00Z','result':data,'call_id':str(step),'step_no':step})
+            return data
+    async def run(replies):
+        store=FakeStore();tid=uuid4()
+        cfg=SimpleNamespace(security_enabled=False,infra_enabled=False,enabled=True,write_enabled=False,
+            acceptance_drill_only=False,heartbeat_seconds=60,runtime_profile='fixture',max_rounds=8,
+            model_timeout=60,audit_dir=tmp_path,redact=lambda value:value)
+        async def provider(*args):return replies.pop(0)
+        worker=Worker(cfg,store,None,None,{tid:{'jwt':'fixture'}},provider=provider)
+        worker.executor=FakeExecutor()
+        question='查询各场站设备数量'
+        row={'task_id':tid,'execution_epoch':1,'user_id':1,'deadline':datetime.now(timezone.utc).replace(year=2099),
+            'envelope':json.dumps({'user_request':question,'intent':question,'targets':[]})}
+        await worker.run_task(row)
+        return store
+    no_read={'role':'assistant','content':'{"summary":"已经查询"}'}
+    tool=call('platform__get_dashboard_overview',{'scope':'all'})
+    repaired=await run([no_read,tool,{'role':'assistant','content':'{"fact_refs":[],"explanation_type":"facts_only"}'}])
+    assert repaired.status=='succeeded' and repaired.models==3, repaired.result
+    failed=await run([no_read,no_read])
+    assert failed.status=='failed' and failed.models==2 and failed.result['error']['code']=='required_tool_failed'
+
+
+@pytest.mark.asyncio
+async def test_health_threshold_task_reads_board_without_model(env):
+    original=task();body=Task.model_validate({**original.model_dump(mode='json'),
+        'intent':'哪些设备的健康分低于 80？','user_request':'哪些设备的健康分低于 80？'})
+    async def provider(*args):raise AssertionError('health threshold must not call model')
+    report,paths=await execute(env,body=body,provider=provider)
+    assert report['status']=='succeeded' and report['model_calls']==0
+    assert ('GET','/api/v1/health/devices') in paths
+    assert '甲' in report['diagnosis']['summary'] and '乙' not in report['diagnosis']['summary']
 
 
 @pytest.mark.asyncio

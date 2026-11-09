@@ -14,7 +14,7 @@ def test_investigation_cannot_fulfil_explicit_acknowledgement_request():
     assert '未执行业务修改' in result['answer_markdown']
 
 def test_explanation_and_explicit_no_action_do_not_force_a_write_proposal():
-    for q in ('解释确认告警是什么意思','不要确认告警60618，只解释它','告警确认如何操作'):
+    for q in ('解释确认告警是什么意思','不要确认告警60618，只解释它','告警确认如何操作','已确认告警有多少条？','查询已确认告警列表'):
         assert not v4.action_request(q),q
     assert v4.explicit_action_target('请确认告警ID 60618')
     assert v4.explicit_action_target('请将设备ID 619的备注改为合成，当前版本为0')

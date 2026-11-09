@@ -2,7 +2,7 @@
 
 在本仓库开始新的对话或任务时，必须先遵守以下约定：
 
-1. 先读 `notes/00-当前系统状态.md`：生产指针、阶段状态、设备口径与已知限制的**唯一事实源**。README 与各手册只保留指针，不得把 README 的状态描述当作部署基线。
+1. 先读 `notes/00-当前系统状态.md`：生产指针、阶段状态、设备口径与已知限制的**唯一事实源入口**（摘要 + 分卷索引）；明细分卷在 `notes/06-当前系统状态/`，按生产快照、阶段与模块、运行能力、已知限制、口径、开发环境各一页。README 与各手册只保留指针，不得把 README 的状态描述当作部署基线。
 2. 阅读 `shared-memory/README.md` 和 `shared-memory/workbuddy-collaboration.md`。
 3. 阅读 `shared-memory/project-memory.md`，获取跨对话共享的项目长期记忆。
 4. 每个新对话都在 `shared-memory/conversations/<YYYY-MM-DD>/` 新建独立的 Markdown 记忆文件（按天建文件夹，同一天的放一起，不跨天混放）；不得复用其他对话文件。文件名使用 `YYYY-MM-DD-<简短主题>.md`，同日重名时追加 `-02`、`-03`。

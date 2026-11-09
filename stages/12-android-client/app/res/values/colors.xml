@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 与前端 tokens.css 的浅色底一致：启动瞬间不会闪一块白 -->
+    <color name="app_bg">#EEF1F7</color>
+    <color name="app_brand">#2563EB</color>
+</resources>
