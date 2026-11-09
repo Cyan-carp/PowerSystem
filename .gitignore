@@ -38,4 +38,6 @@ stages/04-frontend/dev/
 /local-scripts/
 # 安卓外壳构建产物与签名密钥（密钥丢失后无法覆盖升级，只留本机）
 /stages/12-android-client/build/
+# 个人简历与联系方式等隐私数据：GitHub 仓库是公开的，只留本机，不入库
+/resume/
 
