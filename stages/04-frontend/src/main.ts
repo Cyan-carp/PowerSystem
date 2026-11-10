@@ -35,6 +35,7 @@ const router = createRouter({
     { path: '/schedules', name: 'schedules', component: () => import('./views/SchedulesView.vue'), meta: { label: '定期任务' } },
     { path: '/assistant', name: 'assistant', component: () => import('./views/AssistantView.vue'), meta: { label: '智能助手' } },
     { path: '/about', name: 'about', component: () => import('./views/AboutView.vue'), meta: { label: '关于' } },
+    { path: '/settings/account', name: 'account-settings', component: () => import('./views/AccountSettingsView.vue'), meta: { label: '账号与安全' } },
     { path: '/:pathMatch(.*)*', redirect: '/' },
   ],
 })

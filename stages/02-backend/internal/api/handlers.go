@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"math"
+	"net/http"
 	"strconv"
 	"strings"
 	"time"
@@ -14,6 +15,7 @@ import (
 	"go.uber.org/zap"
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 
 	"powersystem/backend/internal/energy"
 	"powersystem/backend/internal/model"
@@ -21,13 +23,15 @@ import (
 )
 
 func (s *Server) register(c *gin.Context) {
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 4096)
 	var body struct {
 		Username string `json:"username"`
 		Password string `json:"password"`
 		RealName string `json:"real_name"`
+		Role     string `json:"role"`
 	}
-	if c.ShouldBindJSON(&body) != nil || len(body.Username) < 3 || !telemetry.Code.MatchString(body.Username) || len(body.Password) < 8 || len(body.Password) > 72 || len(body.RealName) > 64 {
-		fail(c, 400, 40001, "invalid username or password")
+	if c.ShouldBindJSON(&body) != nil || len(body.Username) < 3 || len(body.Username) > 64 || !telemetry.Code.MatchString(body.Username) || len(body.Password) < 8 || len(body.Password) > 72 || len(body.RealName) > 64 || (body.Role != "admin" && body.Role != "operator") {
+		fail(c, 400, 40001, "invalid account details")
 		return
 	}
 	hash, err := bcrypt.GenerateFromPassword([]byte(body.Password), bcrypt.DefaultCost)
@@ -35,12 +39,87 @@ func (s *Server) register(c *gin.Context) {
 		fail(c, 500, 50000, "registration failed")
 		return
 	}
-	user := model.User{Username: body.Username, PasswordHash: string(hash), RealName: body.RealName, Role: "operator"}
-	if err = s.requestDB(c).Create(&user).Error; err != nil {
-		fail(c, 409, 40001, "username already exists")
+	user := model.User{Username: body.Username, PasswordHash: string(hash), RealName: strings.TrimSpace(body.RealName), Role: body.Role}
+	err = s.requestDB(c).Transaction(func(tx *gorm.DB) error {
+		var actor model.User
+		if err := tx.Clauses(clause.Locking{Strength: "SHARE"}).Select("id", "role", "disabled_at").First(&actor, c.GetInt64("user_id")).Error; err != nil || actor.DisabledAt != nil || actor.Role != "admin" {
+			return errAccountForbidden
+		}
+		return tx.Create(&user).Error
+	})
+	if err != nil {
+		if errors.Is(err, errAccountForbidden) {
+			fail(c, 403, 40301, "admin role required")
+		} else {
+			fail(c, 409, 40901, "username unavailable or registration failed")
+		}
 		return
 	}
-	c.JSON(201, response{0, "success", user})
+	c.JSON(201, response{0, "success", gin.H{"id": user.ID, "username": user.Username, "real_name": user.RealName, "role": user.Role}})
+}
+
+// The original owner account is the only account allowed to disable administrators.
+// Historical users stay in place so business records keep their actor references.
+func (s *Server) listUsers(c *gin.Context) {
+	var actor model.User
+	if err := s.requestDB(c).Select("id", "username", "role", "disabled_at").First(&actor, c.GetInt64("user_id")).Error; err != nil || actor.DisabledAt != nil || actor.Role != "admin" {
+		fail(c, 403, 40301, "admin role required")
+		return
+	}
+	var users []model.User
+	if err := s.requestDB(c).Select("id", "username", "real_name", "role", "created_at").Where("disabled_at IS NULL").Order("id ASC").Find(&users).Error; err != nil {
+		fail(c, 500, 50000, "user list unavailable")
+		return
+	}
+	ok(c, gin.H{"list": users, "can_delete_admin": actor.Username == "user"})
+}
+
+var errAccountForbidden = errors.New("account deletion forbidden")
+
+func (s *Server) deleteUser(c *gin.Context) {
+	targetID, valid := id(c)
+	if !valid {
+		return
+	}
+	err := s.requestDB(c).Transaction(func(tx *gorm.DB) error {
+		var actor, target model.User
+		if err := tx.Clauses(clause.Locking{Strength: "SHARE"}).Select("id", "username", "role", "disabled_at").First(&actor, c.GetInt64("user_id")).Error; err != nil {
+			return err
+		}
+		if actor.DisabledAt != nil || actor.Role != "admin" || actor.ID == targetID {
+			return errAccountForbidden
+		}
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Select("id", "username", "role", "disabled_at").First(&target, targetID).Error; err != nil {
+			return err
+		}
+		if target.DisabledAt != nil {
+			return gorm.ErrRecordNotFound
+		}
+		if target.Username == "user" || (target.Role == "admin" && actor.Username != "user") || (target.Role != "admin" && target.Role != "operator") {
+			return errAccountForbidden
+		}
+		result := tx.Model(&model.User{}).Where("id = ? AND disabled_at IS NULL", targetID).Updates(map[string]any{"disabled_at": time.Now().UTC(), "session_version": gorm.Expr("session_version + 1"), "updated_at": time.Now().UTC()})
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected != 1 {
+			return gorm.ErrRecordNotFound
+		}
+		return nil
+	})
+	if err != nil {
+		switch {
+		case errors.Is(err, errAccountForbidden):
+			fail(c, 403, 40301, "account deletion forbidden")
+		case errors.Is(err, gorm.ErrRecordNotFound):
+			fail(c, 404, 40401, "account unavailable")
+		default:
+			fail(c, 500, 50000, "account deletion failed")
+		}
+		return
+	}
+	s.closeUserRealtimeClients(targetID)
+	ok(c, gin.H{"deleted": true})
 }
 func (s *Server) login(c *gin.Context) {
 	var body struct {
@@ -52,7 +131,7 @@ func (s *Server) login(c *gin.Context) {
 		return
 	}
 	var user model.User
-	if err := s.requestDB(c).Where("username=?", body.Username).First(&user).Error; err != nil || bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(body.Password)) != nil {
+	if err := s.requestDB(c).Where("username=? AND disabled_at IS NULL", body.Username).First(&user).Error; err != nil || bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(body.Password)) != nil {
 		fail(c, 401, 40101, "invalid credentials")
 		return
 	}
@@ -64,6 +143,71 @@ func (s *Server) login(c *gin.Context) {
 	ok(c, gin.H{"token": token, "token_type": "Bearer", "expires_in": int(configTokenSeconds()), "user": user})
 }
 func configTokenSeconds() int64 { return int64((8 * time.Hour).Seconds()) }
+
+func (s *Server) me(c *gin.Context) {
+	var user model.User
+	if err := s.requestDB(c).Select("id", "username", "real_name", "role").First(&user, c.GetInt64("user_id")).Error; err != nil {
+		fail(c, 500, 50000, "account unavailable")
+		return
+	}
+	ok(c, gin.H{"id": user.ID, "username": user.Username, "real_name": user.RealName, "role": user.Role})
+}
+
+var errCurrentPassword = errors.New("current password incorrect")
+var errPasswordChanged = errors.New("password changed concurrently")
+var errSamePassword = errors.New("new password matches current password")
+
+func (s *Server) changePassword(c *gin.Context) {
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 4096)
+	var body struct {
+		CurrentPassword string `json:"current_password"`
+		NewPassword     string `json:"new_password"`
+	}
+	if c.ShouldBindJSON(&body) != nil || body.CurrentPassword == "" || len(body.NewPassword) < 8 || len(body.NewPassword) > 72 || body.CurrentPassword == body.NewPassword {
+		fail(c, 400, 40001, "invalid password change")
+		return
+	}
+	err := s.requestDB(c).Transaction(func(tx *gorm.DB) error {
+		var user model.User
+		if err := tx.First(&user, c.GetInt64("user_id")).Error; err != nil {
+			return err
+		}
+		if bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(body.CurrentPassword)) != nil {
+			return errCurrentPassword
+		}
+		if bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(body.NewPassword)) == nil {
+			return errSamePassword
+		}
+		hash, err := bcrypt.GenerateFromPassword([]byte(body.NewPassword), bcrypt.DefaultCost)
+		if err != nil {
+			return err
+		}
+		result := tx.Model(&model.User{}).Where("id = ? AND session_version = ? AND password_hash = ?", user.ID, user.SessionVersion, user.PasswordHash).
+			Updates(map[string]any{"password_hash": string(hash), "session_version": gorm.Expr("session_version + 1"), "updated_at": time.Now().UTC()})
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected != 1 {
+			return errPasswordChanged
+		}
+		return nil
+	})
+	if err != nil {
+		switch {
+		case errors.Is(err, errCurrentPassword):
+			fail(c, 400, 40002, "current password incorrect")
+		case errors.Is(err, errPasswordChanged):
+			fail(c, 409, 40901, "password already changed; sign in again")
+		case errors.Is(err, errSamePassword):
+			fail(c, 400, 40003, "new password must differ from current password")
+		default:
+			fail(c, 500, 50000, "password change failed")
+		}
+		return
+	}
+	s.closeUserRealtimeClients(c.GetInt64("user_id"))
+	ok(c, gin.H{"changed": true})
+}
 
 type deviceInput struct {
 	DeviceCode  string `json:"device_code"`

@@ -70,6 +70,8 @@ var MigrationPaths = []string{
 	"deploy/postgres/019_prediction_outcome_label_rule.sql",
 	"deploy/postgres/020_prediction_quality_daily_label_rule.sql",
 	"deploy/postgres/021_prediction_drift_archive.sql",
+	"deploy/postgres/022_user_session_version.sql",
+	"deploy/postgres/023_user_disabled_at.sql",
 }
 
 // atomicMigrations 是必须在单个事务里整体生效的迁移。

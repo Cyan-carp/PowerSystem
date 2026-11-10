@@ -125,7 +125,6 @@ func New(cfg config.Config, db *gorm.DB, redis *redis.Client, td *tdengine.Clien
 	})
 	r.GET("/live", func(c *gin.Context) { ok(c, gin.H{"status": "alive"}) })
 	r.GET("/ready", s.telemetryReady)
-	r.POST("/api/v1/auth/register", s.register)
 	r.POST("/api/v1/auth/login", s.login)
 	a := r.Group("/api/v1", s.authorize)
 	a.Use(func(c *gin.Context) {
@@ -139,6 +138,11 @@ func New(cfg config.Config, db *gorm.DB, redis *redis.Client, td *tdengine.Clien
 		}
 	})
 	a.Use(s.alarmMaintenanceGuard)
+	a.GET("/auth/me", s.me)
+	a.POST("/auth/change-password", s.changePassword)
+	a.POST("/auth/register", requireAdmin, s.register)
+	a.GET("/auth/users", requireAdmin, s.listUsers)
+	a.DELETE("/auth/users/:id", requireAdmin, s.deleteUser)
 	a.GET("/devices", s.listDevices)
 	a.GET("/stations", s.listStations)
 	a.POST("/devices", requireAdmin, s.createDevice)
@@ -771,12 +775,26 @@ func (s *Server) authorize(c *gin.Context) {
 		return
 	}
 	var user model.User
-	if err := s.db.Select("id", "role").First(&user, userID).Error; err != nil || (user.Role != "admin" && user.Role != "operator") {
+	if err := s.db.Select("id", "role", "session_version", "disabled_at").First(&user, userID).Error; err != nil || user.DisabledAt != nil || (user.Role != "admin" && user.Role != "operator") {
 		fail(c, 401, 40101, "user unavailable")
+		return
+	}
+	version := int64(0)
+	if raw, exists := claims["ver"]; exists {
+		parsed, ok := raw.(float64)
+		if !ok || parsed < 0 || parsed != float64(int64(parsed)) {
+			fail(c, 401, 40101, "invalid token version")
+			return
+		}
+		version = int64(parsed)
+	}
+	if version != user.SessionVersion {
+		fail(c, 401, 40101, "session expired")
 		return
 	}
 	c.Set("user_id", userID)
 	c.Set("user_role", user.Role)
+	c.Set("user_version", version)
 	c.Next()
 }
 func (s *Server) energyWorker(ctx context.Context) {
@@ -825,7 +843,7 @@ func requireAdmin(c *gin.Context) {
 	c.Next()
 }
 func (s *Server) sign(user model.User) (string, error) {
-	return jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{"sub": strconv.FormatInt(user.ID, 10), "role": user.Role, "exp": time.Now().Add(config.TokenTTL).Unix(), "iat": time.Now().Unix()}).SignedString([]byte(s.cfg.JWTSecret))
+	return jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{"sub": strconv.FormatInt(user.ID, 10), "role": user.Role, "ver": user.SessionVersion, "exp": time.Now().Add(config.TokenTTL).Unix(), "iat": time.Now().Unix()}).SignedString([]byte(s.cfg.JWTSecret))
 }
 func randomTicket() (string, error) {
 	b := make([]byte, 24)

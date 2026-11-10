@@ -99,7 +99,9 @@ def main() -> int:
         raise SystemExit("usage: snapshot_queues.py OUTPUT_DIRECTORY")
     output = Path(sys.argv[1])
     output.mkdir(parents=True, exist_ok=False)
-    deadline = time.monotonic()+600
+    # The simulator queue can exceed 12 GiB. Keep one bounded snapshot window
+    # long enough for both the copy and SQLite's integrity check.
+    deadline = time.monotonic()+2400
     for name, root in ROOTS.items():
         source = locate(name, root)
         result = snapshot_one(source, output/name, deadline)

@@ -58,7 +58,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\stages\02-backend\scri
 
 ## 二、接口
 
-公共接口：`GET /api/v1/ping`、`POST /api/v1/auth/register`、`POST /api/v1/auth/login`。注册账号为 `operator`，密码至少 8 位；登录返回 8 小时 JWT。所有业务 REST 接口使用 `Authorization: Bearer <token>`。阶段四 P0 起设备与告警规则写接口要求数据库当前角色为 `admin`，无令牌返回 401、越权返回 403；告警确认仍允许 `operator`。仅在服务器内使用 `stages/04-frontend/deploy/bootstrap-admin.sh` 创建独立管理员。
+公共接口：`GET /api/v1/ping`、`POST /api/v1/auth/register`、`POST /api/v1/auth/login`。注册账号为 `operator`，密码至少 8 位；登录返回 8 小时 JWT。本人设置接口 `GET /api/v1/auth/me` 返回账号、姓名、角色，`POST /api/v1/auth/change-password` 接收 `current_password`、`new_password`（8–72 字节，不得与旧密码相同）；成功后该账号所有旧 JWT 的后续请求返回 401，并关闭当前 API 实例上的该账号实时连接。新签发的 WebSocket 票据绑定会话版本；部署切换前的旧格式票据最多保留原 60 秒有效期。旧密码错误返回 400/40002，不使当前会话失效。迁移 `022_user_session_version.sql` 为旧账号补默认版本 0，旧令牌未携带版本时按 0 兼容至首次改密。所有业务 REST 接口使用 `Authorization: Bearer <token>`。阶段四 P0 起设备与告警规则写接口要求数据库当前角色为 `admin`，无令牌返回 401、越权返回 403；告警确认仍允许 `operator`。仅在服务器内使用 `stages/04-frontend/deploy/bootstrap-admin.sh` 创建独立管理员。
 
 | 模块 | 路径 | 行为 |
 | --- | --- | --- |

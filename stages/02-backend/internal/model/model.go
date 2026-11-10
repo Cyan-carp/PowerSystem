@@ -6,13 +6,15 @@ import (
 )
 
 type User struct {
-	ID           int64     `json:"id"`
-	Username     string    `json:"username"`
-	PasswordHash string    `json:"-"`
-	Role         string    `json:"role"`
-	RealName     string    `json:"real_name"`
-	CreatedAt    time.Time `json:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at"`
+	ID             int64      `json:"id"`
+	Username       string     `json:"username"`
+	PasswordHash   string     `json:"-"`
+	SessionVersion int64      `json:"-" gorm:"default:0"`
+	DisabledAt     *time.Time `json:"-"`
+	Role           string     `json:"role"`
+	RealName       string     `json:"real_name"`
+	CreatedAt      time.Time  `json:"created_at"`
+	UpdatedAt      time.Time  `json:"updated_at"`
 }
 type Device struct {
 	ID              int64      `json:"id"`

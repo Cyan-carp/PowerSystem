@@ -307,7 +307,7 @@ func (s *Server) executeBusinessAction(c *gin.Context) {
 			return err
 		}
 		var user model.User
-		if tx.Clauses(clause.Locking{Strength: "SHARE"}).First(&user, g.Owner).Error != nil || (user.Role != "operator" && user.Role != "admin") {
+		if tx.Clauses(clause.Locking{Strength: "SHARE"}).First(&user, g.Owner).Error != nil || user.DisabledAt != nil || (user.Role != "operator" && user.Role != "admin") {
 			return conflict
 		}
 		if g.Expires <= time.Now().Unix() {

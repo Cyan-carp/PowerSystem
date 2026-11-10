@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -22,7 +23,8 @@ func (s *Server) ticket(c *gin.Context) {
 		return
 	}
 	userID := c.GetInt64("user_id")
-	if err = s.redis.Set(c.Request.Context(), "ws-ticket:"+ticket, strconv.FormatInt(userID, 10), 60*time.Second).Err(); err != nil {
+	value := strconv.FormatInt(userID, 10) + ":" + strconv.FormatInt(c.GetInt64("user_version"), 10)
+	if err = s.redis.Set(c.Request.Context(), "ws-ticket:"+ticket, value, 60*time.Second).Err(); err != nil {
 		fail(c, 503, 50000, "ticket store unavailable")
 		return
 	}
@@ -39,6 +41,11 @@ func (s *Server) websocket(c *gin.Context) {
 		fail(c, 401, 40101, "expired ticket")
 		return
 	}
+	userID, err := s.ticketUser(value)
+	if err != nil {
+		fail(c, 401, 40101, "session expired")
+		return
+	}
 	origin := c.GetHeader("Origin")
 	if !originAllowed(origin, c.Request.Host, s.cfg.WSAllowedOrigins) {
 		fail(c, 403, 40301, "origin not allowed")
@@ -50,7 +57,7 @@ func (s *Server) websocket(c *gin.Context) {
 		return
 	}
 	s.ensureRealtime()
-	client := &realtimeClient{conn: conn, send: make(chan []byte, realtimeClientQueue), done: make(chan struct{})}
+	client := &realtimeClient{conn: conn, userID: userID, send: make(chan []byte, realtimeClientQueue), done: make(chan struct{})}
 	s.clientsMu.Lock()
 	select {
 	case <-s.realtime.done:
@@ -84,6 +91,29 @@ func (s *Server) websocket(c *gin.Context) {
 	}
 }
 
+func (s *Server) ticketUser(value string) (int64, error) {
+	if parts := strings.Split(value, ":"); len(parts) == 2 {
+		id, idErr := strconv.ParseInt(parts[0], 10, 64)
+		version, versionErr := strconv.ParseInt(parts[1], 10, 64)
+		if idErr != nil || versionErr != nil || id < 1 || version < 0 {
+			return 0, errors.New("invalid ticket owner")
+		}
+		var current struct{ SessionVersion int64 }
+		lookupErr := s.db.Table("users").Select("session_version").Where("id = ? AND disabled_at IS NULL", id).Take(&current).Error
+		if lookupErr != nil || current.SessionVersion != version {
+			return 0, errors.New("session expired")
+		}
+		return id, nil
+	} else if id, parseErr := strconv.ParseInt(value, 10, 64); parseErr == nil && id > 0 {
+		// 部署切换前签发的票据最多再存活 60 秒，保持旧票据兼容。
+		var active struct{ ID int64 }
+		if s.db.Table("users").Select("id").Where("id = ? AND disabled_at IS NULL", id).Take(&active).Error == nil {
+			return id, nil
+		}
+	}
+	return 0, errors.New("invalid ticket owner")
+}
+
 func originAllowed(origin, requestHost string, extra []string) bool {
 	if origin == "" {
 		return true
@@ -103,14 +133,26 @@ const realtimeMaxPayload = 16 << 10
 const realtimeWriteBudget = time.Second
 
 type realtimeClient struct {
-	conn  *websocket.Conn
-	send  chan []byte
-	done  chan struct{}
-	once  sync.Once
-	epoch uint64
+	conn   *websocket.Conn
+	userID int64
+	send   chan []byte
+	done   chan struct{}
+	once   sync.Once
+	epoch  uint64
 }
 
 func (c *realtimeClient) close() { c.once.Do(func() { close(c.done); c.conn.Close() }) }
+
+func (s *Server) closeUserRealtimeClients(userID int64) {
+	s.clientsMu.Lock()
+	defer s.clientsMu.Unlock()
+	for conn, client := range s.clients {
+		if client.userID == userID {
+			client.close()
+			delete(s.clients, conn)
+		}
+	}
+}
 
 type realtimeHub struct {
 	once    sync.Once

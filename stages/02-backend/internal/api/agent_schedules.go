@@ -169,7 +169,7 @@ func (s *Server) scheduleRead(c *gin.Context) {
 		return
 	}
 	var user model.User
-	if s.db.Select("id", "role").First(&user, g.UserID).Error != nil || user.Role != g.ActorRole || (user.Role != "admin" && user.Role != "operator") {
+	if s.db.Select("id", "role", "disabled_at").First(&user, g.UserID).Error != nil || user.DisabledAt != nil || user.Role != g.ActorRole || (user.Role != "admin" && user.Role != "operator") {
 		fail(c, 403, 40301, "schedule permission revoked")
 		return
 	}

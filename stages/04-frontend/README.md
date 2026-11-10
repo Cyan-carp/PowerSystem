@@ -23,7 +23,7 @@ node dev/mock-server.mjs
 npm run dev
 ```
 
-打开 <http://127.0.0.1:5173/>，用任意账号密码登录（假后端不校验账号，只签本地 token）。
+打开 <http://127.0.0.1:5173/>，首次可用任意演示账号和非空密码登录；本机假后端在内存中记住该账号密码，后续登录会核对，重启假后端后重置。
 `/api` 与 `/ws` 由 Vite 代理到 `VITE_API_TARGET`（默认 `http://127.0.0.1:8080`）。
 
 ```bash
@@ -49,6 +49,7 @@ node --check dev/mock-server.mjs   # 改过假后端务必跑
 | `/reports` | 统计报表：可用率 / 告警及时性双页签 + 设备级可用率表，CSV 走后端 `format=csv`；`?tab=timeliness` |
 | `/schedules` | 定期任务：我的任务、方案预演（只读回算命中差异）、最近审查；新建与修改走审批，批准后才生效 |
 | `/assistant` | 智能助手：运行事件流、动作审批弹窗、产物下载、来源阅读、任务记录、历史会话 |
+| `/settings/account` | 账号与安全：本人资料、验证旧密码后修改密码；桌面账号菜单和手机「更多」可进入 |
 
 页面标题只出现在顶栏一处，页内不再重复大标题。顶栏搜索把关键词带到 `/devices?q=`；
 右侧「告警解读」打开抽屉（结论 / 关键事实 / 建议动作 / 局限 / 证据快照，模型不可用时退回模板并标明）。
@@ -58,7 +59,7 @@ node --check dev/mock-server.mjs   # 改过假后端务必跑
 两条断点分工，不额外维护第二套页面：
 
 - **≤900px（手机 + 竖屏平板）**：左侧 9 枚图标的竖条隐藏，改为底部四格导航
-  （总览 / 告警 / 设备 / 助手）+「更多」底部抽屉（健康 / 预测 / 模型 / 报表 / 任务 / 演示台）。
+  （总览 / 告警 / 设备 / 助手）+「更多」底部抽屉（健康 / 预测 / 模型 / 报表 / 任务 / 演示台 / 账号与安全 / 关于）。
   顶栏收缩为「页名 + 额度 / 解读 / 铃铛 / 主题 / 账号」，顶栏搜索让位（设备台账页自带搜索框），
   弹层改为贴视口右上角。规则集中在 `styles/shell.css` 的「手机端壳层」一节，
   底部固定元素统一读 `--mnav-h` / `--safe-b`（`env(safe-area-inset-bottom)`）。
@@ -84,6 +85,8 @@ node --check dev/mock-server.mjs   # 改过假后端务必跑
 | 端点 | 关键约束 |
 | --- | --- |
 | `POST /auth/login` | 免鉴权；失败回 401，前端不跳转、原地提示 |
+| `GET /auth/me` | 只读当前登录账号、姓名与角色，不显示密码哈希 |
+| `POST /auth/change-password` | 仅修改本人；新密码 8–72 字节；成功后清除当前登录态，其他设备旧令牌后续请求返回 401 |
 | `GET /devices/:id/telemetry` | `metric` 必须合法；`start/end` RFC3339；窗口 ≤ 24h；点数 ≤ 5000 |
 | `GET /devices/:id/telemetry/export` | 窗口 ≤ 7 天；CSV 带 UTF-8 BOM、固定 11 列表头 |
 | `GET /alarms` | 只返回 `archived = FALSE`；支持 `status/level/origin/device_id/start/end/station_code` |

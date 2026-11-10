@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Read live queue volumes in a disposable, networkless fixed-image helper."""
-import argparse,json,subprocess,re,signal
+import argparse,json,subprocess,re,signal,sys
 from pathlib import Path
 ROOT=Path('/opt/powersystem')
 
@@ -41,7 +41,13 @@ def capture(output):
           '--mount','type=bind,source='+str(ROOT/'stages/04-frontend/deploy/snapshot_queues.py')+',target=/snapshot.py,readonly',
           image,'/snapshot.py','/backup/queues']
     try:
-        result=subprocess.run(run,check=True,capture_output=True,timeout=660)
+        try:
+            result=subprocess.run(run,check=True,capture_output=True,timeout=2460)
+        except subprocess.CalledProcessError as error:
+            # The helper contains no credentials; retain its bounded diagnostic
+            # instead of hiding the reason behind CalledProcessError.
+            print(error.stderr.decode(errors='replace')[-4000:],file=sys.stderr)
+            raise
     finally:
         # A killed Docker CLI is not proof that its daemon-side helper stopped.
         try:stop_owned_helper(name,image,output)
@@ -52,7 +58,7 @@ def capture(output):
     for name in ('gateway.sqlite','simulator.sqlite'):
         if not (output/name).is_file():raise ValueError('queue_snapshot_missing')
     metadata={'helper_image':image,'source_volumes':sources,'network':'none','source_readonly':True,
-              'ephemeral_helper':True,'helper_name':name,'budget_seconds':600,
+              'ephemeral_helper':True,'helper_name':name,'budget_seconds':2400,
               'queues':[json.loads(line) for line in result.stdout.decode().splitlines() if line.startswith('{')]}
     (output.parent/'queue-helper.json').write_text(json.dumps(metadata,indent=2))
     print(json.dumps({'queues_saved':2,'fixed_helper_image':image,'source_readonly':True}))

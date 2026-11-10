@@ -10,7 +10,7 @@
 
 import type { OpsStatus, OpsTask } from './ops-types'
 import { authToken, notifyUnauthorized } from './auth'
-import type { LoginResult } from './auth'
+import type { AuthUser, LoginResult } from './auth'
 
 export interface Envelope<T> {
   code: number
@@ -1014,6 +1014,17 @@ export const api = {
     }
     return payload.data
   },
+
+  me: () => get<AuthUser>('/auth/me'),
+  changePassword: (currentPassword: string, newPassword: string) =>
+    post<{ changed: boolean }>('/auth/change-password', {
+      current_password: currentPassword,
+      new_password: newPassword,
+    }),
+  users: () => get<{ list: AuthUser[]; can_delete_admin: boolean }>('/auth/users'),
+  registerUser: (input: { username: string; real_name: string; password: string; role: 'admin' | 'operator' }) =>
+    post<AuthUser>('/auth/register', input),
+  deleteUser: (id: number) => del<{ deleted: boolean }>(`/auth/users/${id}`),
 
   /** 免鉴权链路探针：登录页用它显示“数据链路正常/异常” */
   ping: () =>

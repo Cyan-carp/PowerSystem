@@ -56,7 +56,7 @@ const mobilePrimary = computed(() => nav.filter((item) => M_PRIMARY.includes(ite
 const mobileMore = computed(() => nav.filter((item) => !M_PRIMARY.includes(item.path)))
 
 const isOn = (path: string) => route.path === path || route.path.startsWith(`${path}/`)
-const moreOn = computed(() => mobileMore.value.some((item) => isOn(item.path)))
+const moreOn = computed(() => mobileMore.value.some((item) => isOn(item.path)) || route.path === '/settings/account')
 const moreOpen = ref(false)
 
 const clockText = computed(() =>
@@ -414,6 +414,10 @@ onBeforeUnmount(() => {
                 <span>会话</span>
                 <b>JWT · 8 小时有效</b>
               </div>
+              <RouterLink to="/settings/account" class="user-link" @click="open = null">
+                <Icon name="settings" :size="15" />
+                账号与安全
+              </RouterLink>
               <RouterLink to="/about" class="user-link" @click="open = null">
                 <Icon name="help" :size="15" />
                 关于
@@ -496,6 +500,10 @@ onBeforeUnmount(() => {
               <Icon name="bolt" :size="20" :stroke="1.9" />
               <span>演示台</span>
             </a>
+            <RouterLink to="/settings/account" class="msheet-item" @click="moreOpen = false">
+              <Icon name="settings" :size="20" :stroke="1.9" />
+              <span>账号与安全</span>
+            </RouterLink>
             <RouterLink to="/about" class="msheet-item" @click="moreOpen = false">
               <Icon name="help" :size="20" :stroke="1.9" />
               <span>关于</span>
