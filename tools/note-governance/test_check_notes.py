@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -340,6 +341,21 @@ class ParserUnitTests(unittest.TestCase):
     def test_code_fence_suppresses_links(self):
         text = "```\n[[a]]\n```\n[[b]]\n"
         self.assertEqual([link.target for link in nl.iter_links(text)], ["b"])
+
+
+class GitTrackingTests(unittest.TestCase):
+    """Linux 的 git ls-files 默认把中文路径转义，CI 会误判为未跟踪。"""
+
+    def test_non_ascii_paths_are_not_quoted(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+            subprocess.run(["git", "config", "core.quotePath", "true"], cwd=root, check=True)
+            target = root / "deploy" / "独立目录" / "脚本.sh"
+            target.parent.mkdir(parents=True)
+            target.write_text("x\n", encoding="utf-8")
+            subprocess.run(["git", "add", "--", "deploy/独立目录/脚本.sh"], cwd=root, check=True)
+            self.assertIn("deploy/独立目录/脚本.sh", check_notes.git_tracked_files(root))
 
 
 if __name__ == "__main__":

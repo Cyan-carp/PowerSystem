@@ -110,11 +110,16 @@ def frontmatter(text: str) -> dict[str, str]:
 
 
 def git_tracked_files(root: Path = ROOT) -> set[str]:
-    """One `git ls-files` call; per-entry subprocesses made the check needlessly slow."""
+    """One `git ls-files` call; per-entry subprocesses made the check needlessly slow.
+
+    `-z` is required: Linux Git quotes non-ASCII paths as octal escapes by default
+    (`core.quotePath=true`), so a Chinese directory would look untracked on CI even
+    though it is committed. NUL-separated output is raw UTF-8 regardless of config.
+    """
 
     try:
         result = subprocess.run(
-            ["git", "ls-files"],
+            ["git", "-c", "core.quotePath=false", "ls-files", "-z"],
             cwd=root,
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
@@ -124,7 +129,11 @@ def git_tracked_files(root: Path = ROOT) -> set[str]:
         return set()
     if result.returncode != 0:
         return set()
-    return {line.replace("\\", "/") for line in result.stdout.decode("utf-8", "replace").splitlines()}
+    return {
+        line.replace("\\", "/")
+        for line in result.stdout.decode("utf-8", "replace").split("\0")
+        if line
+    }
 
 
 def load_migration(path: Path) -> list[tuple[str, str]]:
