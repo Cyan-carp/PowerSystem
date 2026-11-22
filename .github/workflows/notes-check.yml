@@ -4,22 +4,28 @@ on:
   push:
     paths:
       - "notes/**"
+      - "shared-memory/**"
       - "tools/note-governance/**"
+      - "tools/note-graph/**"
       - "README.md"
       - "AGENTS.md"
       - "SKILL.md"
       - "stages/**/*.md"
       - "deploy/**/*.md"
+      - "tools/**/*.md"
       - ".github/workflows/notes-check.yml"
   pull_request:
     paths:
       - "notes/**"
+      - "shared-memory/**"
       - "tools/note-governance/**"
+      - "tools/note-graph/**"
       - "README.md"
       - "AGENTS.md"
       - "SKILL.md"
       - "stages/**/*.md"
       - "deploy/**/*.md"
+      - "tools/**/*.md"
       - ".github/workflows/notes-check.yml"
   workflow_dispatch:
 
@@ -30,7 +36,7 @@ jobs:
   check:
     name: vault metadata and links
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -39,6 +45,13 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+
+      - name: Parse regression tests
+        run: python -m unittest discover -s tools/note-governance -p 'test_*.py'
+
+      # 只读：有待生成内容就失败，绝不借 CI 覆盖手写内容。
+      - name: Verify generated deploy-log index
+        run: python -B tools/note-governance/build_log_index.py --check
 
       - name: Validate vault
         run: python tools/note-governance/check_notes.py --ci

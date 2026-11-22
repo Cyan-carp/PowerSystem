@@ -332,7 +332,7 @@ const exportCsv = async (kind: TabKey = tab.value) => {
   </div>
 
   <div v-if="failed" class="error-box" role="alert">{{ tab === 'availability' ? '可用率' : '告警及时性' }}报表未取到：{{ failed }}。请刷新重试。</div>
-  <p v-else-if="loading" class="table-note" role="status">{{ tab === 'availability' ? '正在统计可用率，历史数据较多时需要一些时间；可切换查看告警及时性…' : '正在加载告警及时性…' }}</p>
+  <p v-else-if="loading" class="table-note" role="status">{{ tab === 'availability' ? '正在统计可用率…' : '正在加载告警及时性…' }}</p>
 
   <section class="card filter-bar">
     <div class="filter-row">
@@ -534,7 +534,7 @@ const exportCsv = async (kind: TabKey = tab.value) => {
         :total="deviceRows.length"
         :page-size="devicePageSize"
         unit="台"
-        :note="`每页 ${devicePageSize} 台 · 覆盖率低于 90% 记为数据不足`"
+        note="覆盖率低于 90% 记为数据不足"
       />
     </section>
   </template>
@@ -601,7 +601,6 @@ const exportCsv = async (kind: TabKey = tab.value) => {
       <section class="card">
         <div class="card-head">
           <span class="card-title">恢复原因</span>
-          <span class="card-sub">按关闭原因拆分</span>
         </div>
         <div class="reasons">
           <div v-for="item in recoveryReasons" :key="item.key" class="reason">

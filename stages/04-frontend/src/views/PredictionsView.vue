@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import PredictionReview from '../components/PredictionReview.vue'
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import Icon from '../components/Icon.vue'
@@ -118,6 +119,26 @@ const stationName = computed(() => {
   return map
 })
 
+const deviceLabel = (row: PredictionRow) => {
+  const name = row.name?.trim() || row.device_code
+  const station = stationName.value.get(row.station_code)
+  return station && name.startsWith(station) ? name.slice(station.length).replace(/^[\s·—-]+/, '') || name : name
+}
+const stationRisks = computed(() => {
+  const groups = new Map<string, { code: string; total: number; high: number; stale: number }>()
+  for (const row of rows.value) {
+    const group = groups.get(row.station_code) || { code: row.station_code, total: 0, high: 0, stale: 0 }
+    group.total++
+    if (row.risk_level === 'high') group.high++
+    if (row.stale) group.stale++
+    groups.set(group.code, group)
+  }
+  return [...groups.values()].sort((a, b) => b.high - a.high || a.code.localeCompare(b.code))
+})
+const focusStation = (code: string) => {
+  keyword.value = keyword.value === code ? '' : code
+  riskFilter.value = 'all'
+}
 const filtered = computed(() => {
   const key = keyword.value.trim().toUpperCase()
   return rows.value
@@ -153,8 +174,8 @@ const threshold = computed(() => rows.value[0]?.threshold ?? 0.62)
 
 const strip = computed(() => [
   { key: 'high', label: '高风险', color: 'var(--bad)', value: `${highCount.value}`, note: `概率 ≥ ${pct(threshold.value * 100, 0)}` },
-  { key: 'low', label: '低风险', color: 'var(--ok)', value: `${rows.value.length - highCount.value}`, note: '未达阈值' },
-  { key: 'top', label: '最高概率', color: 'var(--warn)', value: topProbability.value == null ? '—' : pct(topProbability.value * 100, 1), note: '取全部预测设备' },
+  { key: 'low', label: '低风险', color: 'var(--ok)', value: `${rows.value.length - highCount.value}`, note: '' },
+  { key: 'top', label: '最高概率', color: 'var(--warn)', value: topProbability.value == null ? '—' : pct(topProbability.value * 100, 1), note: '' },
   { key: 'avg', label: '平均概率', color: 'var(--brand)', value: averageProbability.value == null ? '—' : pct(averageProbability.value * 100, 1), note: `${rows.value.length} 台有预测` },
 ])
 
@@ -175,9 +196,12 @@ const isStale = computed(() => rows.value.some((row) => row.stale))
 
 /** 列表接口只给概率与阈值；特征贡献在详情接口里，打开抽屉时补一次 */
 const loadDetail = async (deviceId: number) => {
+  const current = selected.value
   detail.value = null
   try {
-    detail.value = await api.prediction(deviceId)
+    const fetched = await api.prediction(deviceId)
+    if (selected.value === current && current?.window_end_ms === fetched.window_end_ms &&
+        (!current.prediction_id || current.prediction_id === fetched.prediction_id)) detail.value = fetched
   } catch {
     /* 详情失败就只显示列表已有信息，不影响抽屉打开 */
   }
@@ -228,7 +252,7 @@ watch(
     <div v-for="item in strip" :key="item.key" class="strip-cell">
       <span class="strip-label"><i :style="{ background: item.color }"></i>{{ item.label }}</span>
       <span class="strip-value num">{{ item.value }}</span>
-      <span class="strip-note">{{ item.note }}</span>
+      <span v-if="item.note" class="strip-note">{{ item.note }}</span>
     </div>
   </section>
 
@@ -282,14 +306,13 @@ watch(
                 <div class="cell-main">
                   <span class="cell-icon"><Icon name="cpu" :size="15" /></span>
                   <div class="cell-stack">
-                    <span class="cell-name">{{ row.name || row.device_code }}</span>
+                    <span class="cell-name" :title="row.name || row.device_code">{{ deviceLabel(row) }}</span>
                     <span class="cell-note">{{ row.device_code }}</span>
                   </div>
                 </div>
               </td>
-              <td class="station">
+              <td class="station" :title="stationName.get(row.station_code)">
                 <span class="station-code">{{ row.station_code }}</span>
-                <span class="cell-note">{{ stationName.get(row.station_code) || '' }}</span>
               </td>
               <td>
                 <div class="prob">
@@ -351,8 +374,21 @@ watch(
           <p>模型版本 <b class="num" :title="modelVersion" :data-version-full="modelVersion">{{ shortVersion(modelVersion) }}</b>，阈值 <b class="num">{{ pct(threshold * 100, 0) }}</b>。</p>
           <p>只对抽样设备给出预测；无预测不等于无风险，可能是该设备尚未进入计算窗口。</p>
           <p v-if="isStale" class="warn-line">存在过期预测，结果可能滞后于最新遥测。</p>
-          <p v-else>本轮预测均基于最新窗口。</p>
         </div>
+      </section>
+      <section class="card station-risk-card">
+        <div class="card-head"><span class="card-title">场站风险分布</span><span class="card-sub">高风险 / 已预测</span></div>
+        <p v-if="loading" class="empty">正在加载…</p>
+        <p v-else-if="failed" class="empty">暂未取得场站预测</p>
+        <div v-else-if="stationRisks.length" class="station-risk-list">
+          <button v-for="item in stationRisks" :key="item.code" class="station-risk" :class="{ active: keyword === item.code }"
+            :title="stationName.get(item.code) || item.code" :aria-pressed="keyword === item.code" @click="focusStation(item.code)">
+            <span class="station-risk-top"><b>{{ item.code }}</b><span class="num"><strong :class="{ danger: item.high > 0 }">{{ item.high }}</strong> / {{ item.total }} 台 <Icon name="chevronRight" :size="13" /></span></span>
+            <span class="station-risk-track"><i :style="{ width: `${item.high / item.total * 100}%` }"></i></span>
+            <span v-if="item.stale" class="station-stale">{{ item.stale }} 台预测已过期</span>
+          </button>
+        </div>
+        <p v-else class="empty">暂无预测数据</p>
       </section>
     </aside>
   </div>
@@ -452,6 +488,8 @@ watch(
       不构成停机或更换建议；确认故障仍需现场检查与遥测复核。
     </div>
 
+    <PredictionReview v-if="selected.prediction_id" :prediction-id="selected.prediction_id" />
+
     <template #footer>
       <RouterLink v-if="selected.device_id" class="btn btn-primary" :to="`/devices/${selected.device_id}`">
         查看设备历史曲线<Icon name="arrowRight" :size="14" />
@@ -464,6 +502,19 @@ watch(
 </template>
 
 <style scoped>
+.station-risk-card { flex:1; }
+.station-risk-list { display:grid; gap:4px; padding:0 12px 14px; }
+.station-risk { text-align:left; padding:12px 8px; border-radius:var(--r-sm); }
+.station-risk:hover, .station-risk.active { background:var(--card-soft); }
+.station-risk-top { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:10px; }
+.station-risk-top b { font-size:13px; font-weight:500; }
+.station-risk-top > span { display:flex; align-items:center; gap:6px; font-size:12px; color:var(--ink-3); }
+.station-risk-top strong { color:var(--ink); }
+.station-risk-top .danger { color:var(--bad); }
+.station-risk-track { display:block; height:5px; border-radius:3px; background:var(--line); overflow:hidden; }
+.station-risk-track i { display:block; height:100%; background:var(--bad); border-radius:inherit; }
+.station-stale { display:block; margin-top:6px; font-size:11px; color:var(--warn); }
+
 .strip {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -512,9 +563,12 @@ watch(
   display: grid;
   grid-template-columns: minmax(0, 1fr) 322px;
   gap: 16px;
-  align-items: start;
+  align-items: stretch;
 }
 
+ .pd-grid > .card { display:flex; flex-direction:column; min-width:0; }
+.pd-grid > .card > .table-wrap { flex:1; }
+.pd-grid > .card .pd-table { height:100%; }
 .pd-side {
   display: flex;
   flex-direction: column;

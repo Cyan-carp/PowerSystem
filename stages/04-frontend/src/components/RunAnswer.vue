@@ -20,6 +20,7 @@ import { renderAnswer } from '../lib/task-labels'
 
 const props = defineProps<{
   run: RunSnapshot
+  conversation?: boolean
   connection?: RunConnectionState
   error?: string
   cancelling?: boolean
@@ -119,13 +120,14 @@ async function download(row: RunArtifact): Promise<void> {
 </script>
 
 <template>
-  <section class="run" :class="`run-${run.status}`">
+  <section class="run" :class="[`run-${run.status}`, { 'in-conversation': conversation }]">
     <header class="run-head">
+      <span v-if="conversation" class="speaker"><Icon name="sparkles" :size="13" />运维助手</span>
       <span class="chip" :class="TONE[run.status] || 'is-plain'"><i></i>{{ STATUS[run.status] || run.status }}</span>
-      <span class="run-phase">{{ PHASE[run.phase] || run.phase || '已受理' }}</span>
+      <span v-if="!conversation || run.status !== 'succeeded'" class="run-phase">{{ PHASE[run.phase] || run.phase || '已受理' }}</span>
       <span v-if="connection === 'reconnecting'" class="run-conn">连接中断，正在恢复</span>
       <span v-else-if="connection === 'stopped' && !terminal" class="run-conn">已停止接收，后台继续运行</span>
-      <span class="run-id num" :title="`运行 ${run.run_id} · 轮次 ${run.turn_id}`">{{ run.run_id }}</span>
+      <span v-if="!conversation" class="run-id num" :title="`运行 ${run.run_id} · 轮次 ${run.turn_id}`">{{ run.run_id }}</span>
     </header>
 
     <p v-if="run.progress_message && !terminal" class="run-progress">
@@ -227,6 +229,18 @@ async function download(row: RunArtifact): Promise<void> {
   gap: 9px;
   flex-wrap: wrap;
   margin-bottom: 9px;
+}
+
+.in-conversation {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 0;
+}
+
+.in-conversation .run-answer {
+  font-size: 15px;
+  line-height: 1.85;
 }
 
 .run-phase {

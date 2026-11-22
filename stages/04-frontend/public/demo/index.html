@@ -5,6 +5,20 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>演示告警台 · 云边协同运维平台</title>
 <meta name="robots" content="noindex, nofollow">
+<script>
+(function () {
+  function syncTheme() {
+    var theme = 'light';
+    try { theme = localStorage.getItem('powersystem.theme') === 'dark' ? 'dark' : 'light'; } catch (e) {}
+    document.documentElement.dataset.theme = theme;
+  }
+  syncTheme();
+  window.addEventListener('storage', function (event) {
+    if (event.key === 'powersystem.theme' || event.key === null) syncTheme();
+  });
+  window.addEventListener('pageshow', syncTheme);
+})();
+</script>
 <style>
   :root {
     --brand: #2563eb;
@@ -25,6 +39,53 @@
     --green-soft: #ecfdf5;
     --sky: #0284c7;
     --radius: 10px;
+    color-scheme: light;
+    --surface-soft: #f9fafb;
+    --surface-hover: #f3f4f6;
+    --sky-soft: #f0f9ff;
+    --violet: #7c3aed;
+    --violet-soft: #f5f3ff;
+    --red-line: #fecaca;
+    --amber-line: #fde68a;
+    --green-line: #a7f3d0;
+    --sky-line: #bae6fd;
+    --brand-line: #bfdbfe;
+    --violet-line: #ddd6fe;
+    --trend-fill: rgba(37, 99, 235, .10);
+    --primary-bg: #2563eb;
+    --primary-hover: #1d4ed8;
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --bg: #161616;
+    --card: #1e1e1e;
+    --line: #2e2e2e;
+    --line-strong: #3f3f3f;
+    --ink: #ededed;
+    --ink-2: #d4d4d4;
+    --ink-3: #a6a6a6;
+    --ink-4: #868686;
+    --brand: #4c8dff;
+    --brand-soft: #1b2b45;
+    --red: #fca5a5;
+    --red-soft: #2e1616;
+    --amber: #fcd34d;
+    --amber-soft: #2c2410;
+    --green: #6ee7b7;
+    --green-soft: #12291f;
+    --sky: #7dd3fc;
+    --sky-soft: #142b36;
+    --violet: #c4b5fd;
+    --violet-soft: #221b36;
+    --surface-soft: #252525;
+    --surface-hover: #2a2a2a;
+    --red-line: #4a2020;
+    --amber-line: #4a3a12;
+    --green-line: #1e4a37;
+    --sky-line: #244858;
+    --brand-line: #2f4570;
+    --violet-line: #3b2d63;
+    --trend-fill: rgba(76, 141, 255, .14);
   }
   * { box-sizing: border-box; }
   html, body { margin: 0; padding: 0; }
@@ -46,13 +107,12 @@
   }
   .brand { display: flex; align-items: center; gap: 9px; font-weight: 600; letter-spacing: .2px; }
   .brand svg { color: var(--brand); }
-  .brand small { font-weight: 400; color: var(--ink-3); font-size: 12px; padding-left: 4px; border-left: 1px solid var(--line-strong); margin-left: 4px; }
   .topbar .grow { flex: 1; }
   .who { color: var(--ink-3); font-size: 13px; }
   .link-btn {
     background: none; border: none; color: var(--ink-3); cursor: pointer; padding: 6px 8px; border-radius: 6px;
   }
-  .link-btn:hover { background: #f3f4f6; color: var(--ink-2); }
+  .link-btn:hover { background: var(--surface-hover); color: var(--ink-2); }
 
   /* ---------- 布局 ---------- */
   .wrap { max-width: 1240px; margin: 0 auto; padding: 18px 22px 40px; display: grid; gap: 16px; grid-template-columns: 372px minmax(0, 1fr); align-items: start; }
@@ -69,14 +129,14 @@
   .label { display: block; font-size: 12px; color: var(--ink-3); margin-bottom: 6px; }
   .input {
     width: 100%; height: 38px; padding: 0 11px;
-    border: 1px solid var(--line-strong); border-radius: 8px; background: #fff; color: var(--ink);
+    border: 1px solid var(--line-strong); border-radius: 8px; background: var(--card); color: var(--ink);
     outline: none; transition: border-color .15s, box-shadow .15s;
   }
   .input:focus { border-color: var(--brand); box-shadow: 0 0 0 3px rgba(37, 99, 235, .12); }
 
   .seg { display: flex; gap: 6px; }
   .seg button {
-    flex: 1; height: 36px; border: 1px solid var(--line-strong); background: #fff; color: var(--ink-2);
+    flex: 1; height: 36px; border: 1px solid var(--line-strong); background: var(--card); color: var(--ink-2);
     border-radius: 8px; cursor: pointer; transition: .15s;
   }
   .seg button:hover { border-color: var(--brand); color: var(--brand); }
@@ -86,12 +146,12 @@
 
   .btn {
     height: 38px; padding: 0 16px; border-radius: 8px; border: 1px solid var(--line-strong);
-    background: #fff; color: var(--ink-2); cursor: pointer; transition: .15s;
+    background: var(--card); color: var(--ink-2); cursor: pointer; transition: .15s;
   }
   .btn:hover:not(:disabled) { border-color: var(--ink-4); }
   .btn:disabled { opacity: .5; cursor: not-allowed; }
-  .btn-primary { background: var(--brand); border-color: var(--brand); color: #fff; font-weight: 600; }
-  .btn-primary:hover:not(:disabled) { background: #1d4ed8; border-color: #1d4ed8; }
+  .btn-primary { background: var(--primary-bg); border-color: var(--primary-bg); color: #fff; font-weight: 600; }
+  .btn-primary:hover:not(:disabled) { background: var(--primary-hover); border-color: var(--primary-hover); }
   .btn-danger { border-color: var(--red); color: var(--red); }
   .btn-danger:hover:not(:disabled) { background: var(--red-soft); }
   .btn-block { width: 100%; }
@@ -100,14 +160,14 @@
   .device-pick { position: relative; }
   .device-list {
     margin-top: 8px; max-height: 208px; overflow: auto;
-    border: 1px solid var(--line); border-radius: 8px; background: #fff;
+    border: 1px solid var(--line); border-radius: 8px; background: var(--card);
   }
   .device-list:empty { display: none; }
   .device-item {
-    display: flex; align-items: center; gap: 8px; padding: 8px 10px; cursor: pointer; border-bottom: 1px solid #f3f4f6;
+    display: flex; align-items: center; gap: 8px; padding: 8px 10px; cursor: pointer; border-bottom: 1px solid var(--line);
   }
   .device-item:last-child { border-bottom: none; }
-  .device-item:hover { background: #f9fafb; }
+  .device-item:hover { background: var(--surface-soft); }
   .device-item.on { background: var(--brand-soft); }
   .device-item b { font-weight: 600; font-size: 13px; }
   .device-item span { color: var(--ink-3); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -123,14 +183,14 @@
     border-radius: 999px; font-size: 12px; font-weight: 600; border: 1px solid transparent; white-space: nowrap;
   }
   .chip-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
-  .lv-urgent { color: var(--red); background: var(--red-soft); border-color: #fecaca; }
-  .lv-major { color: var(--amber); background: var(--amber-soft); border-color: #fde68a; }
-  .lv-minor { color: var(--sky); background: #f0f9ff; border-color: #bae6fd; }
-  .st-unhandled { color: var(--red); background: var(--red-soft); border-color: #fecaca; }
-  .st-acked { color: var(--brand); background: var(--brand-soft); border-color: #bfdbfe; }
-  .st-recovered { color: var(--green); background: var(--green-soft); border-color: #a7f3d0; }
-  .mode-fixed { color: var(--ink-3); background: #f3f4f6; border-color: var(--line); }
-  .mode-model { color: #7c3aed; background: #f5f3ff; border-color: #ddd6fe; }
+  .lv-urgent { color: var(--red); background: var(--red-soft); border-color: var(--red-line); }
+  .lv-major { color: var(--amber); background: var(--amber-soft); border-color: var(--amber-line); }
+  .lv-minor { color: var(--sky); background: var(--sky-soft); border-color: var(--sky-line); }
+  .st-unhandled { color: var(--red); background: var(--red-soft); border-color: var(--red-line); }
+  .st-acked { color: var(--brand); background: var(--brand-soft); border-color: var(--brand-line); }
+  .st-recovered { color: var(--green); background: var(--green-soft); border-color: var(--green-line); }
+  .mode-fixed { color: var(--ink-3); background: var(--surface-hover); border-color: var(--line); }
+  .mode-model { color: var(--violet); background: var(--violet-soft); border-color: var(--violet-line); }
 
   /* ---------- 当前告警 ---------- */
   .hero { display: flex; align-items: flex-start; gap: 12px; padding: 16px; border-bottom: 1px solid var(--line); }
@@ -153,7 +213,7 @@
   .insight-head { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
   .insight-head h3 { margin: 0; font-size: 13px; font-weight: 600; }
   .insight-head .meta { color: var(--ink-3); font-size: 12px; }
-  .insight-note { color: var(--ink-3); font-size: 13px; padding: 10px 12px; background: #f9fafb; border-radius: 8px; }
+  .insight-note { color: var(--ink-3); font-size: 13px; padding: 10px 12px; background: var(--surface-soft); border-radius: 8px; }
   .insight-note.warn { color: var(--amber); background: var(--amber-soft); }
   .insight-note.err { color: var(--red); background: var(--red-soft); }
   .block { margin-top: 14px; }
@@ -162,20 +222,20 @@
   .block ul { margin: 0; padding-left: 18px; color: var(--ink-2); }
   .block li { margin: 3px 0; }
   .facts { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 8px; }
-  .fact { background: #f9fafb; border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
+  .fact { background: var(--surface-soft); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
   .fact span { display: block; color: var(--ink-3); font-size: 11px; }
   .fact b { font-weight: 600; font-size: 13px; }
 
   /* ---------- 入库运行状态 ---------- */
   .ops-body { display: grid; grid-template-columns: minmax(260px, .9fr) minmax(0, 1.6fr); gap: 18px; padding: 18px; }
   .ops-summary { display: flex; flex-direction: column; gap: 12px; }
-  .ops-total { padding: 17px 18px; background: #f3f7ff; border: 1px solid #dbe7ff; border-radius: 10px; }
-  .ops-total-label { display: block; color: #35527f; font-size: 12px; font-weight: 600; }
-  .ops-total strong { display: block; color: #1743a1; font-size: clamp(34px, 4vw, 46px); line-height: 1.1; letter-spacing: -1.2px; margin: 7px 0 4px; }
-  .ops-total small { color: #536b91; font-size: 12px; }
-  .ops-verdict { padding: 13px 15px; background: var(--green-soft); border: 1px solid #bbf7d0; border-radius: 9px; color: #065f46; }
-  .ops-verdict.warn { background: var(--amber-soft); border-color: #fcd34d; color: #92400e; }
-  .ops-verdict.unknown { background: #f9fafb; border-color: var(--line); color: var(--ink-3); }
+  .ops-total { padding: 17px 18px; background: var(--brand-soft); border: 1px solid var(--brand-line); border-radius: 10px; }
+  .ops-total-label { display: block; color: var(--ink-2); font-size: 12px; font-weight: 600; }
+  .ops-total strong { display: block; color: var(--brand); font-size: clamp(34px, 4vw, 46px); line-height: 1.1; letter-spacing: -1.2px; margin: 7px 0 4px; }
+  .ops-total small { color: var(--ink-3); font-size: 12px; }
+  .ops-verdict { padding: 13px 15px; background: var(--green-soft); border: 1px solid var(--green-line); border-radius: 9px; color: var(--green); }
+  .ops-verdict.warn { background: var(--amber-soft); border-color: var(--amber-line); color: var(--amber); }
+  .ops-verdict.unknown { background: var(--surface-soft); border-color: var(--line); color: var(--ink-3); }
   .ops-verdict strong { display: block; font-size: 13px; }
   .ops-verdict span { display: block; font-size: 12px; margin-top: 2px; }
   .ops-visuals { min-width: 0; display: grid; gap: 15px; }
@@ -183,7 +243,7 @@
   .ops-chart-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin-bottom: 10px; }
   .ops-chart-head strong { font-size: 13px; }
   .ops-chart-head span { font-size: 11px; color: var(--ink-3); text-align: right; }
-  .ops-bar { display: flex; height: 15px; overflow: hidden; border-radius: 999px; background: #edf0f4; }
+  .ops-bar { display: flex; height: 15px; overflow: hidden; border-radius: 999px; background: var(--line); }
   .ops-bar-in { background: var(--brand); transition: width .25s ease; }
   .ops-bar-out { background: var(--amber); transition: width .25s ease; }
   .ops-breakdown { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 12px; }
@@ -192,13 +252,13 @@
   .ops-swatch.out { background: var(--amber); }
   .ops-breakdown-item span { color: var(--ink-3); font-size: 12px; }
   .ops-breakdown-item b { margin-left: auto; font-size: 18px; line-height: 1; font-weight: 650; }
-  .ops-trend { height: 112px; position: relative; background: #f8faff; border-radius: 7px; overflow: hidden; }
+  .ops-trend { height: 112px; position: relative; background: var(--surface-soft); border-radius: 7px; overflow: hidden; }
   .ops-trend svg { width: 100%; height: 100%; display: block; }
   .ops-trend [hidden] { display: none; }
-  .ops-trend-grid { stroke: #e5ecf7; stroke-width: 1; }
-  .ops-trend-area { fill: rgba(37, 99, 235, .10); }
+  .ops-trend-grid { stroke: var(--line); stroke-width: 1; }
+  .ops-trend-area { fill: var(--trend-fill); }
   .ops-trend-line { fill: none; stroke: var(--brand); stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
-  .ops-trend-dot { fill: #fff; stroke: var(--brand); stroke-width: 2.5; vector-effect: non-scaling-stroke; }
+  .ops-trend-dot { fill: var(--card); stroke: var(--brand); stroke-width: 2.5; vector-effect: non-scaling-stroke; }
   .ops-trend-empty { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; padding: 12px; color: var(--ink-3); font-size: 12px; text-align: center; }
   .ops-trend-caption { display: flex; justify-content: space-between; gap: 8px; margin-top: 7px; color: var(--ink-3); font-size: 11px; }
   .ops-footer { display: flex; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; gap: 7px 14px; padding: 0 18px 17px; color: var(--ink-3); font-size: 12px; }
@@ -210,23 +270,12 @@
 
   /* ---------- 列表 ---------- */
   table { width: 100%; border-collapse: collapse; }
-  th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid #f3f4f6; font-size: 13px; }
-  th { color: var(--ink-3); font-weight: 500; font-size: 12px; background: #fafbfc; }
+  th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--line); font-size: 13px; }
+  th { color: var(--ink-3); font-weight: 500; font-size: 12px; background: var(--surface-soft); }
   tbody tr { cursor: pointer; }
-  tbody tr:hover { background: #f9fafb; }
+  tbody tr:hover { background: var(--surface-soft); }
   tbody tr.on { background: var(--brand-soft); }
   tbody tr:last-child td { border-bottom: none; }
-
-  /* ---------- 登录 ---------- */
-  .gate {
-    position: fixed; inset: 0; z-index: 100; display: flex; align-items: center; justify-content: center;
-    background: rgba(17, 24, 39, .38); backdrop-filter: blur(2px); padding: 20px;
-  }
-  .gate[hidden] { display: none; }
-  .gate-card { width: 100%; max-width: 372px; background: #fff; border-radius: 14px; padding: 26px; box-shadow: 0 24px 48px -12px rgba(17, 24, 39, .3); }
-  .gate-card h1 { margin: 0 0 4px; font-size: 18px; }
-  .gate-card p { margin: 0 0 18px; color: var(--ink-3); font-size: 12.5px; line-height: 1.7; }
-  .gate-err { color: var(--red); font-size: 12.5px; min-height: 20px; margin-top: 8px; }
 
   /* ---------- 提示 ---------- */
   .toasts { position: fixed; right: 18px; bottom: 18px; display: flex; flex-direction: column; gap: 8px; z-index: 200; }
@@ -251,11 +300,10 @@
   <div class="brand">
     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 4.5 13.2H11L10 22l8.5-11.2H12L13 2z"/></svg>
     演示告警台
-    <small>不影响真实告警</small>
   </div>
   <span class="grow"></span>
   <span class="who" id="who"></span>
-  <button class="link-btn" id="logout" hidden>退出</button>
+  <button class="link-btn" id="logout" title="退出演示台，返回主站">退出</button>
 </div>
 
 <div class="wrap">
@@ -292,7 +340,7 @@
       <div class="field">
         <span class="label">请求标识（重试时保持同一个，避免重复创建）</span>
         <div style="display:flex;gap:8px">
-          <input class="input num" id="rid" readonly style="flex:1;background:#f9fafb">
+          <input class="input num" id="rid" readonly style="flex:1;background:var(--surface-soft)">
           <button class="btn" id="newRid" title="换一个标识">换</button>
         </div>
       </div>
@@ -328,7 +376,7 @@
         </div>
         <div class="ops-verdict unknown" id="opsVerdict">
           <strong id="opsVerdictTitle">等待运行数据</strong>
-          <span id="opsVerdictDetail">登录后查看当前队列</span>
+          <span id="opsVerdictDetail">正在读取当前队列</span>
         </div>
       </div>
       <div class="ops-visuals">
@@ -343,7 +391,7 @@
           </div>
         </div>
         <div class="ops-chart-card">
-          <div class="ops-chart-head"><strong>7 天内待处理走势</strong><span>仅记录本次登录期间的观测</span></div>
+          <div class="ops-chart-head"><strong>7 天内待处理走势</strong><span>仅记录本次打开期间的观测</span></div>
           <div class="ops-trend" id="opsTrend">
             <svg id="opsTrendSvg" viewBox="0 0 600 112" preserveAspectRatio="none" role="img" aria-label="等待至少两次观测形成走势" hidden>
               <line class="ops-trend-grid" x1="0" y1="28" x2="600" y2="28"></line>
@@ -384,31 +432,24 @@
   </section>
 </div>
 
-<!-- 登录 -->
-<div class="gate" id="gate">
-  <form class="gate-card" id="gateForm">
-    <h1>演示告警台</h1>
-    <p>输入演示台密码进入。这里只操作「演示告警」，不会改动任何真实告警与设备数据；创建会在平台上真实出现一条告警并推送通知，用于演示。</p>
-    <input class="input" id="pwd" type="password" placeholder="演示台密码" autocomplete="current-password" required>
-    <div class="gate-err" id="gateErr"></div>
-    <button class="btn btn-primary btn-block" type="submit" id="gateBtn">进入</button>
-  </form>
-</div>
-
 <div class="toasts" id="toasts"></div>
 
 <script>
 (function () {
   'use strict';
 
-  var TOKEN_KEY = 'powersystem.demo.token';
-  var ACTOR_KEY = 'powersystem.demo.actor';
+  var TOKEN_KEY = 'ceoc.token';
+  var user = {};
+  try { user = JSON.parse(localStorage.getItem('ceoc.user') || '{}') || {}; } catch (e) {}
+  // 旧演示口令会话不再使用。
+  sessionStorage.removeItem('powersystem.demo.token');
+  sessionStorage.removeItem('powersystem.demo.actor');
   var LEVEL_CN = { minor: '提示', major: '重要', urgent: '紧急' };
   var STATUS_CN = { unhandled: '待处理', acked: '已确认', recovered: '已恢复' };
 
   var state = {
-    token: sessionStorage.getItem(TOKEN_KEY) || '',
-    actor: sessionStorage.getItem(ACTOR_KEY) || '',
+    token: localStorage.getItem(TOKEN_KEY) || '',
+    actor: user.real_name || user.username || '',
     devices: [],
     device: null,
     level: 'major',
@@ -473,8 +514,8 @@
     var res = await fetch('/api/v1/demo-console' + path, Object.assign({}, options, { headers: headers }));
     var body = null;
     try { body = await res.json(); } catch (e) { body = null; }
-    if (res.status === 401 && path !== '/login') {
-      signOut('密码会话已失效，请重新输入');
+    if (res.status === 401) {
+      returnToLogin();
       throw new Error('unauthorized');
     }
     if (!body || body.code !== 0) {
@@ -502,8 +543,8 @@
     $('opsBar').setAttribute('aria-label', '待处理构成等待读取');
     $('opsVerdict').className = 'ops-verdict unknown';
     $('opsVerdictTitle').textContent = '等待运行数据';
-    $('opsVerdictDetail').textContent = '登录后查看当前队列';
-    $('opsObserved').textContent = '登录后读取运行状态';
+    $('opsVerdictDetail').textContent = '正在读取当前队列';
+    $('opsObserved').textContent = '正在读取运行状态';
     $('opsObserved').classList.remove('ops-error');
     renderOpsTrend();
   }
@@ -631,55 +672,33 @@
 
   $('opsRefresh').addEventListener('click', loadInboxOperations);
 
-  /* ---------------- 登录 ---------------- */
+  /* ---------------- 主站会话与返回 ---------------- */
 
-  function showGate(message) {
-    $('gate').hidden = false;
-    $('gateErr').textContent = message || '';
-    $('pwd').value = '';
-    $('pwd').focus();
-  }
-
-  function signOut(message) {
+  function stopSession() {
     state.token = '';
-    state.actor = '';
-    sessionStorage.removeItem(TOKEN_KEY);
-    sessionStorage.removeItem(ACTOR_KEY);
-    $('who').textContent = '';
-    $('logout').hidden = true;
     stopPolling();
     stopOpsPolling();
     state.opsRequestId++;
     state.opsBusy = false;
-    resetInboxOperations();
-    if (message) showGate(message); else showGate('');
+    clearTimeout(searchTimer);
   }
 
-  $('gateForm').addEventListener('submit', async function (event) {
-    event.preventDefault();
-    var pwd = $('pwd').value;
-    if (!pwd) return;
-    $('gateBtn').disabled = true;
-    $('gateBtn').textContent = '验证中…';
-    try {
-      var data = await api('/login', { method: 'POST', body: JSON.stringify({ password: pwd }) });
-      state.token = data.token;
-      state.actor = data.actor || '';
-      sessionStorage.setItem(TOKEN_KEY, state.token);
-      sessionStorage.setItem(ACTOR_KEY, state.actor);
-      $('gate').hidden = true;
-      $('gateErr').textContent = '';
-      boot();
-    } catch (e) {
-      $('gateErr').textContent = e.message === 'unauthorized' ? '密码不正确' : e.message;
-      $('pwd').select();
-    } finally {
-      $('gateBtn').disabled = false;
-      $('gateBtn').textContent = '进入';
-    }
-  });
+  function returnToLogin() {
+    stopSession();
+    localStorage.removeItem(TOKEN_KEY);
+    localStorage.removeItem('ceoc.user');
+    window.location.replace('/login');
+  }
 
-  $('logout').addEventListener('click', function () { signOut(''); });
+  $('logout').addEventListener('click', function () {
+    stopSession();
+    window.location.assign('/');
+  });
+  window.addEventListener('pagehide', stopSession);
+  window.addEventListener('pageshow', function (event) { if (event.persisted) window.location.reload(); });
+  window.addEventListener('storage', function (event) {
+    if (event.key === TOKEN_KEY || event.key === null) window.location.reload();
+  });
 
   /* ---------------- 设备选择 ---------------- */
 
@@ -1039,7 +1058,7 @@
   if (state.token) {
     boot();
   } else {
-    showGate('');
+    returnToLogin();
   }
 })();
 </script>

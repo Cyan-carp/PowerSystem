@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import TelemetryLinkPanel from '../components/TelemetryLinkPanel.vue'
+import FieldRecords from '../components/FieldRecords.vue'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 import Icon from '../components/Icon.vue'
@@ -256,6 +258,9 @@ const alarmTone = (alarm: Alarm) => toneOf(alarm.level)
       </div>
     </div>
 
+    <TelemetryLinkPanel :device-id="device.id" />
+    <FieldRecords target="devices" :target-id="device.id" />
+
     <div class="detail-grid">
       <section class="card">
         <div class="card-head"><span class="card-title">设备档案</span></div>
@@ -311,7 +316,7 @@ const alarmTone = (alarm: Alarm) => toneOf(alarm.level)
             <dd class="num">{{ stamp(health?.received_at) }}</dd>
           </dl>
           <p class="card-foot">
-            分数只由有效遥测参与计算；离线不代表硬件故障，未知状态不参与排名，也不拉低场站均分。
+            仅有效遥测参与评分。
           </p>
         </div>
       </section>
@@ -341,7 +346,7 @@ const alarmTone = (alarm: Alarm) => toneOf(alarm.level)
     <section class="card">
       <div class="card-head">
         <span class="card-title">历史遥测曲线</span>
-        <span class="card-sub">{{ metricMeta.label }}（{{ metricMeta.unit || '—' }}）· {{ points.length }} 个绘图点</span>
+        <span class="card-sub">{{ metricMeta.label }}（{{ metricMeta.unit || '—' }}）</span>
         <div class="card-tools">
           <select v-model="metric" class="select" aria-label="选择指标" @change="loadChart">
             <option value="temperature">温度 (℃)</option>
@@ -372,7 +377,7 @@ const alarmTone = (alarm: Alarm) => toneOf(alarm.level)
         <button class="btn" :disabled="exporting" @click="exportCsv">
           <Icon name="download" :size="14" />{{ exporting ? '导出中…' : '导出 CSV' }}
         </button>
-        <span class="range-note">单次 ≤ 24 小时，超过 6 小时自动分段取数</span>
+        <span class="range-note">单次最多 24 小时</span>
       </div>
 
       <div v-if="chartError" class="error-box inset">{{ chartError }}</div>

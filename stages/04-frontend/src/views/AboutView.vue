@@ -31,7 +31,6 @@ const href = computed(() => icp.value?.href || 'https://beian.miit.gov.cn/')
     <div class="card-head"><h3 class="card-title">这个平台做什么</h3></div>
     <div class="card-body about-body">
       <p>把场站遥测、设备台账、告警处置、故障预测与模型质量放在同一处：值班看总览与告警，工程师查设备与曲线，管理员盯模型与报表。</p>
-      <p>同一套页面同时供电脑浏览器与手机使用：窄屏下左侧图标轨收成底部四格导航，其余入口进「更多」面板。</p>
     </div>
   </section>
 
@@ -60,9 +59,6 @@ const href = computed(() => icp.value?.href || 'https://beian.miit.gov.cn/')
           <span v-else class="muted">当前入口未登记备案信息</span>
         </dd>
       </dl>
-      <p class="about-note">
-        备案信息由域名入口在页面返回时注入，IP 直连入口不显示；如需核对，请以工业和信息化部备案系统为准。
-      </p>
     </div>
   </section>
 </template>

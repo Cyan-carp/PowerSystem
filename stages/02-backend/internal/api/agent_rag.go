@@ -65,6 +65,11 @@ func (s *Server) agentRAGProxy(c *gin.Context) {
 				return
 			}
 			path += "/" + id
+			for _, action := range []string{"/archive", "/restore"} {
+				if strings.HasSuffix(c.FullPath(), action) {
+					path += action
+				}
+			}
 		}
 		path += "?user_id=" + strconv.FormatInt(c.GetInt64("user_id"), 10)
 		if id == "" {
@@ -74,6 +79,12 @@ func (s *Server) agentRAGProxy(c *gin.Context) {
 				return
 			}
 			path += "&offset=" + strconv.Itoa(offset)
+			archived := c.DefaultQuery("archived", "false")
+			if archived != "true" && archived != "false" {
+				fail(c, 400, 40001, "invalid archive filter")
+				return
+			}
+			path += "&archived=" + archived
 		}
 	}
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 15*time.Second)

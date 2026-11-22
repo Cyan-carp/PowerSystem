@@ -10,7 +10,10 @@ import (
 // 演示台只读运行快照。复用现成的限时队列探测结果，不在网页刷新时查询大表。
 // 过期计数是 API 进程启动后的累计值，不能拿它当业务成功数或历史总数。
 func (s *Server) demoConsoleInboxOperations(c *gin.Context) {
-	now := time.Now().UTC()
+	ok(c, s.inboxOperationsSnapshot(time.Now().UTC()))
+}
+
+func (s *Server) inboxOperationsSnapshot(now time.Time) gin.H {
 	m := &s.telemetry
 	m.mu.Lock()
 	queueAt := m.times["inbox_queue"]
@@ -39,7 +42,7 @@ func (s *Server) demoConsoleInboxOperations(c *gin.Context) {
 	if !expiryAt.IsZero() {
 		lastRun = expiryAt.UTC().Format(time.RFC3339)
 	}
-	ok(c, gin.H{
+	return gin.H{
 		"observed_at":             observedAt.Format(time.RFC3339),
 		"known":                   known,
 		"pending_in_window":       pendingIn,
@@ -47,5 +50,5 @@ func (s *Server) demoConsoleInboxOperations(c *gin.Context) {
 		"expiry_rows_since_start": expiryRows - probeRows,
 		"s02_enabled":             s.expiry.Enabled,
 		"s02_last_run_at":         lastRun,
-	})
+	}
 }

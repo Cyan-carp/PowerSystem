@@ -3,16 +3,23 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
+import sys
 from collections import Counter, defaultdict
+from datetime import datetime, timezone
 from pathlib import Path
-
 
 ROOT = Path(__file__).resolve().parents[2]
 VAULT = ROOT / "notes"
 SITE = ROOT / "tools/note-graph/site"
-WIKILINK = re.compile(r"!?\[\[([^\]]+)\]\]")
+ATTACHMENT_SUFFIXES = {".png", ".jpg", ".jpeg", ".gif", ".svg", ".mmd", ".pdf"}
+
+# 复用检查器的提取、定位与锚点判定：另写一套扫描就会出现
+# “图谱说断链、检查器说通过”，或者目标页存在就把不存在的章节当成正常。
+sys.path.insert(0, str(ROOT / "tools/note-governance"))
+import note_links as nl  # noqa: E402
 
 
 def parse_frontmatter(text: str) -> tuple[list[str], str]:
@@ -47,26 +54,27 @@ def title_of(path: Path, body: str) -> str:
     return match.group(1).strip() if match else path.stem
 
 
-def strip_code(text: str) -> str:
-    text = re.sub(r"```.*?```", "", text, flags=re.S)
-    return re.sub(r"`[^`\n]*`", "", text)
-
-
 def resolve_note(target: str, source: Path, by_stem: dict[str, list[Path]]) -> Path | None:
-    target = target.split("|", 1)[0].split("#", 1)[0].strip().replace("\\", "/")
-    if not target or target.lower().startswith(("http://", "https://", "file://", "mailto:")):
+    if not target:
         return None
-    raw = Path(target)
-    candidates = [VAULT / raw, source.parent / raw]
-    for base in candidates:
-        for candidate in (base, Path(str(base) + ".md"), base.with_suffix(".md")):
-            if candidate.is_file() and candidate.suffix.casefold() == ".md":
-                return candidate.resolve()
-    if "/" not in target:
-        matches = by_stem.get(raw.stem.casefold(), [])
-        if len(matches) == 1:
-            return matches[0].resolve()
-    return None
+    result = nl.resolve(target, source, by_stem, vault=VAULT, kind="wikilink", notes_only=True, root=ROOT)
+    return result.path.resolve() if result.status == "ok" and result.path else None
+
+
+def source_digest(paths: list[Path]) -> str:
+    """Digest of the actual inputs, not of the derived payload.
+
+    Hashing the payload meant an equal-length edit to a note's body could leave
+    every statistic unchanged, so the file still claimed the inputs were the same.
+    """
+
+    digest = hashlib.sha256()
+    for path in paths:
+        digest.update(path.relative_to(ROOT).as_posix().encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(path.read_bytes())
+        digest.update(b"\0")
+    return "sha256:" + digest.hexdigest()
 
 
 def make_tree(nodes: list[dict[str, object]]) -> dict[str, object]:
@@ -140,12 +148,14 @@ def main() -> None:
         by_stem[path.stem.casefold()].append(path)
 
     records: dict[Path, dict[str, object]] = {}
+    pages: dict[Path, str] = {}
     top_groups: dict[str, list[Path]] = defaultdict(list)
     raw_links = 0
     notes_with_tags = 0
     total_chars = 0
     for path in paths:
         text = path.read_text(encoding="utf-8-sig")
+        pages[path] = text
         tags, body = parse_frontmatter(text)
         rel = path.relative_to(ROOT).as_posix()
         vault_rel = path.relative_to(VAULT)
@@ -171,25 +181,44 @@ def main() -> None:
         }
 
     edges_seen: set[tuple[str, str, str]] = set()
-    broken: list[list[object]] = []
+    broken: list[dict[str, str]] = []
+
+    def note_broken(source: Path, target: str, reason: str) -> None:
+        broken.append(
+            {
+                "source": source.relative_to(ROOT).as_posix(),
+                "target": target,
+                "reason": reason,
+            }
+        )
+
     for source in paths:
-        text = strip_code(source.read_text(encoding="utf-8-sig"))
-        for raw in WIKILINK.findall(text):
+        text = pages[source]
+        # 图谱只画 Obsidian 双链；Markdown 链接由检查器负责，避免同一根线被两种语法重复计权。
+        for link in nl.iter_links(text):
+            if link.kind != "wikilink":
+                continue
             raw_links += 1
-            target = resolve_note(raw, source, by_stem)
+            if not link.target:
+                if link.subpath and nl.anchor_status(text, link.subpath, "obsidian") == "missing":
+                    note_broken(source, "#" + link.subpath, "missing-anchor")
+                continue
+            target = resolve_note(link.target, source, by_stem)
             if target is None:
-                target_name = raw.split("|", 1)[0].split("#", 1)[0]
-                suffix = Path(target_name).suffix.casefold()
-                if suffix in {".png", ".jpg", ".jpeg", ".gif", ".svg", ".mmd", ".pdf"}:
+                if Path(link.target).suffix.casefold() in ATTACHMENT_SUFFIXES:
                     continue
-                broken.append([source.relative_to(ROOT).as_posix(), target_name])
+                note_broken(source, link.target, "missing-target")
                 continue
             if target not in records:
                 continue
+            if link.subpath:
+                # broken=0 只有在校验过章节时才有意义；目标页存在不等于章节存在。
+                result = nl.anchor_status(pages.get(target, ""), link.subpath, "obsidian")
+                if result == "missing":
+                    note_broken(source, f"{link.target}#{link.subpath}", "missing-anchor")
             source_id = str(records[source]["id"])
             target_id = str(records[target]["id"])
-            anchor = "#" in raw.split("|", 1)[0]
-            if anchor:
+            if link.subpath:
                 edge_type = "anchor"
             elif bool(records[source]["isIndex"]):
                 edge_type = "index"
@@ -246,13 +275,14 @@ def main() -> None:
     for record in nodes:
         record.pop("id", None)  # identical to "path" for every note
 
-    data = {
-        "generated": "2026-10-17",
+    payload = {
         "stats": {
             "notes": len(nodes),
             "rawWikilinks": raw_links,
             "edges": len(edges),
             "broken": len(broken),
+            "brokenTargets": sum(1 for item in broken if item["reason"] == "missing-target"),
+            "brokenAnchors": sum(1 for item in broken if item["reason"] == "missing-anchor"),
             "tags": len(tag_counts),
             "linkTypes": edge_types.most_common(),
             "topCounts": top_counts.most_common(),
@@ -274,6 +304,27 @@ def main() -> None:
         "clusters": [],
     }
 
+    # 输入摘要决定 generated 是否刷新：同一份笔记重复生成必须字节一致，
+    # 否则每次 build 都会改写 index.html，CI 与人工 diff 都失去意义。
+    # 摘要按笔记路径与字节内容计算，不用派生 payload：后者在等长正文改动时不变。
+    digest = source_digest(paths)
+    previous: dict[str, object] = {}
+    if (SITE / "graph-data.json").is_file():
+        try:
+            previous = json.loads((SITE / "graph-data.json").read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            previous = {}
+    if previous.get("inputDigest") == digest and isinstance(previous.get("generated"), str):
+        generated = str(previous["generated"])
+    else:
+        generated = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+
+    data = {
+        "generated": generated,
+        "generatedNote": "生成时间（UTC，ISO 8601）。输入摘要按笔记路径与字节内容计算，未变时沿用上次时间；不是生产更新时间。",
+        "inputDigest": digest,
+        **payload,
+    }
     compact = dumps(data)
     (SITE / "graph-data.json").write_text(compact + "\n", encoding="utf-8", newline="\n")
     template = (SITE / "template.html").read_text(encoding="utf-8")

@@ -168,11 +168,6 @@ onMounted(() => {
             {{ busy ? '正在登录' : '登录' }}
           </button>
         </form>
-
-        <p class="login-note">
-          <Icon name="lock" :size="12" />
-          JWT 鉴权 · 8 小时有效
-        </p>
       </section>
     </div>
   </div>

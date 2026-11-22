@@ -80,3 +80,45 @@ func TestRAGSourcePinsHistoricalCollectionAndVersion(t *testing.T) {
 		t.Fatalf("bad collection forwarded: %d", w.Code)
 	}
 }
+
+func TestRAGSessionArchiveRoutesAndIdentity(t *testing.T) {
+	const sid = "c1c2f3b4-17a3-4bb1-9988-8b8cc7a7f211"
+	var paths []string
+	next := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("user_id") != "17" || r.Header.Get("X-PowerSystem-Token") != "fixture" {
+			t.Error("archive identity must come from authenticated context")
+		}
+		paths = append(paths, r.Method+" "+r.URL.Path)
+		if r.Method == "GET" && r.URL.Query().Get("archived") != "true" {
+			t.Error("archive list filter was lost")
+		}
+		w.Write([]byte(`{"archived":true,"list":[]}`))
+	}))
+	defer next.Close()
+	s := &Server{cfg: config.Config{AgentEnabled: true, AgentChatURL: next.URL, AgentToken: "fixture"}}
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.Use(func(c *gin.Context) { c.Set("user_id", int64(17)) })
+	r.GET("/agent/sessions", s.agentRAGProxy)
+	r.POST("/agent/sessions/:id/archive", s.agentRAGProxy)
+	r.POST("/agent/sessions/:id/restore", s.agentRAGProxy)
+	for _, action := range []string{"archive", "restore"} {
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, httptest.NewRequest("POST", "/agent/sessions/"+sid+"/"+action+"?user_id=999", nil))
+		if w.Code != 200 || paths[len(paths)-1] != "POST /internal/agent/sessions/"+sid+"/"+action {
+			t.Fatalf("archive action not forwarded: %d %v", w.Code, paths)
+		}
+	}
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest("GET", "/agent/sessions?archived=true&user_id=999", nil))
+	if w.Code != 200 {
+		t.Fatal("archived listing failed")
+	}
+	for _, path := range []string{"/agent/sessions?archived=anything", "/agent/sessions?offset=-1"} {
+		w = httptest.NewRecorder()
+		r.ServeHTTP(w, httptest.NewRequest("GET", path, nil))
+		if w.Code != 400 || len(paths) != 3 {
+			t.Fatal("invalid query forwarded")
+		}
+	}
+}

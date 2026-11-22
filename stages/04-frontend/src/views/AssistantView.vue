@@ -16,7 +16,8 @@ import RunAnswer from '../components/RunAnswer.vue'
 import SourceList from '../components/SourceList.vue'
 import TaskRecordsPanel from '../components/TaskRecordsPanel.vue'
 import { api } from '../lib/api'
-import type { AgentSession, AgentTurn, AgentTurnResponse, KnowledgeChapter, RAGSource } from '../lib/api'
+import type { AgentSession, AgentTurn, AgentTurnResponse, AttachmentResult, KnowledgeChapter, RAGSource } from '../lib/api'
+import { useAssistantAttachments } from '../lib/useAssistantAttachments'
 import { cancelRun, consumeRun, createRun, getRun, isTerminalStatus, RunHttpError } from '../lib/agent-runs'
 import type { RunConnectionState, RunInput, RunSnapshot } from '../lib/agent-runs'
 import { currentUser } from '../lib/auth'
@@ -30,6 +31,7 @@ interface Turn {
   at: string
   /** 会话里存的回答元数据（正文、来源、模型）；运行快照不含来源 */
   response?: AgentTurnResponse
+  attachmentResult?: AttachmentResult
   runId?: string
   run?: RunSnapshot
   connection?: RunConnectionState
@@ -51,6 +53,10 @@ const draft = ref('')
 const busy = ref(false)
 const scroller = ref<HTMLElement | null>(null)
 const inputter = ref<HTMLTextAreaElement | null>(null)
+const attachmentPicker = ref<HTMLInputElement | null>(null)
+const attachments = useAssistantAttachments()
+const { files: attachmentFiles, selected: chosenAttachments, parsing: parsingAttachment,
+  error: attachmentError, searching: searchingAttachments, active: attachmentMode } = attachments
 const recordsOpen = ref(false)
 
 /** 读章节抽屉：知识库来源点「阅读章节」后在这里展开全文 */
@@ -73,7 +79,6 @@ const suggestions = [
   '哪些设备的健康分低于 80？',
 ]
 
-const messageCount = computed(() => turns.value.length)
 const historyCount = computed(() => sessions.value.length)
 /** 有运行在进行时才提示「后台继续运行」，避免空会话也挂个提示 */
 const streaming = computed(() => turns.value.some((turn) => turn.run && !isTerminalStatus(turn.run.status)))
@@ -95,16 +100,41 @@ const useSuggestion = (text: string) => {
 
 /* ---------------- 会话列表（GET /agent/sessions） ---------------- */
 
+const archivedList = ref(false)
+const sessionWriting = ref(false)
+let listGeneration = 0
 const refreshSessions = async () => {
+  const mine = ++listGeneration
   loadingList.value = true
   try {
-    const payload = await api.sessions(0)
+    const payload = await api.sessions(0, archivedList.value)
+    if (mine !== listGeneration) return
     sessions.value = payload.list
     listError.value = ''
   } catch (error) {
-    listError.value = String(error)
+    if (mine === listGeneration) listError.value = String(error)
   } finally {
-    loadingList.value = false
+    if (mine === listGeneration) loadingList.value = false
+  }
+}
+const showSessionList = (archived: boolean) => {
+  if (sessionWriting.value || archivedList.value === archived) return
+  archivedList.value = archived
+  sessions.value = []
+  void refreshSessions()
+}
+const archiveSession = async (session: AgentSession) => {
+  if (sessionWriting.value) return
+  sessionWriting.value = true
+  const archived = !archivedList.value
+  try {
+    await api.archiveSession(session.id, archived)
+    await refreshSessions()
+    toast('ok', archived ? '会话已归档' : '会话已恢复')
+  } catch (error) {
+    listError.value = `操作失败：${String(error)}`
+  } finally {
+    sessionWriting.value = false
   }
 }
 
@@ -115,6 +145,7 @@ const stopAll = () => {
 
 const newChat = () => {
   stopAll()
+  attachments.reset()
   generation += 1
   sessionID.value = null
   sessionTitle.value = '新会话'
@@ -130,16 +161,18 @@ const newChat = () => {
 }
 
 const mapTurn = (turn: AgentTurn, index: number): Turn => ({
-  localID: turn.id != null ? `history-${turn.id}` : `history-${index}-${turn.created_at || ''}`,
+  localID: `history-${sessionID.value}-${index}-${turn.id ?? ''}`,
   question: turn.question,
   at: turn.created_at || new Date().toISOString(),
   response: turn.response || undefined,
+  attachmentResult: turn.attachment_result,
   runId: turn.run_id || undefined,
 })
 
 const openSession = async (session: AgentSession) => {
   if (loadingSession.value) return
   stopAll()
+  attachments.cancel()
   generation += 1
   const mine = generation
   loadingSession.value = true
@@ -149,6 +182,9 @@ const openSession = async (session: AgentSession) => {
     sessionID.value = session.id
     sessionTitle.value = session.title || '未命名会话'
     turns.value = payload.turns.map(mapTurn)
+    draft.value = ''
+    attachments.reset()
+    attachments.restore(payload.attachments ?? [], payload.turns)
     try {
       sessionStorage.setItem(sessionKey(), session.id)
     } catch {
@@ -160,7 +196,7 @@ const openSession = async (session: AgentSession) => {
     }
     await scrollDown()
   } catch (error) {
-    if (mine === generation) listError.value = `会话 ${session.id} 读取失败：${String(error)}`
+    if (mine === generation) listError.value = `会话读取失败：${String(error)}`
   } finally {
     if (mine === generation) loadingSession.value = false
   }
@@ -177,79 +213,28 @@ const openSessionById = async (id: string) => {
   await refreshSessions()
   const found = sessions.value.find((item) => item.id === id)
   if (found) await openSession(found)
-  else listError.value = `会话 ${id} 不在最近的历史会话列表中`
+  else await openSession({ id, title: '历史会话', created_at: '', updated_at: '' })
 }
 
 const removeSession = async (session: AgentSession) => {
+  if (sessionWriting.value) return
   const ok = await askConfirm({
     title: '删除会话',
     body: `将删除「${session.title || '未命名会话'}」及其全部轮次，删除后无法恢复。`,
     confirmText: '删除',
     danger: true,
   })
-  if (!ok) return
+  if (!ok || sessionWriting.value) return
+  sessionWriting.value = true
   try {
     await api.deleteSession(session.id)
-    sessions.value = sessions.value.filter((item) => item.id !== session.id)
+    await refreshSessions()
     if (sessionID.value === session.id) newChat()
     toast('ok', '会话已删除')
   } catch (error) {
     listError.value = `删除失败：${String(error)}`
-  }
-}
-
-/* ---------------- 批量删除（后端只有单条 DELETE，逐条调用） ---------------- */
-
-const selectMode = ref(false)
-const selected = ref<string[]>([])
-const batchDeleting = ref(false)
-const allSelected = computed(() => sessions.value.length > 0 && selected.value.length === sessions.value.length)
-
-const enterSelectMode = () => {
-  selectMode.value = true
-  selected.value = []
-}
-const exitSelectMode = () => {
-  selectMode.value = false
-  selected.value = []
-}
-const toggleSelect = (id: string) => {
-  selected.value = selected.value.includes(id)
-    ? selected.value.filter((item) => item !== id)
-    : [...selected.value, id]
-}
-const toggleSelectAll = () => {
-  selected.value = allSelected.value ? [] : sessions.value.map((item) => item.id)
-}
-
-/** 单条失败不打断其余：一次删几十条时，不该因为一条 404 就整批停下 */
-const removeSelected = async () => {
-  if (!selected.value.length || batchDeleting.value) return
-  const ok = await askConfirm({
-    title: '批量删除会话',
-    body: `将删除 ${selected.value.length} 段会话，删除后无法恢复。`,
-    confirmText: '删除',
-    danger: true,
-  })
-  if (!ok) return
-  const ids = [...selected.value]
-  batchDeleting.value = true
-  let failed = 0
-  try {
-    for (const id of ids) {
-      try {
-        await api.deleteSession(id)
-      } catch {
-        failed += 1
-      }
-    }
-    if (sessionID.value && ids.includes(sessionID.value)) newChat()
-    exitSelectMode()
-    await refreshSessions()
-    if (failed) listError.value = `${ids.length - failed} 条已删除，${failed} 条失败`
-    else toast('ok', `已删除 ${ids.length} 段会话`)
   } finally {
-    batchDeleting.value = false
+    sessionWriting.value = false
   }
 }
 
@@ -383,7 +368,23 @@ async function submit(turn: Turn): Promise<void> {
 
 const send = async () => {
   const message = draft.value.trim()
-  if (!message || busy.value) return
+  if (!message || busy.value || loadingSession.value || parsingAttachment.value || searchingAttachments.value) return
+  if (attachmentMode.value) {
+    const mine = generation
+    const result = await attachments.search(message, sessionID.value)
+    if (!result || !withinGeneration(mine)) return
+    if (!sessionID.value) {
+      sessionID.value = result.session_id
+      sessionTitle.value = '附件问答'
+      try { sessionStorage.setItem(sessionKey(), result.session_id) } catch { /* storage is optional */ }
+    }
+    if (draft.value.trim() === message) draft.value = ''
+    const turn = mapTurn(result.turn, turns.value.length)
+    turns.value.push(turn)
+    void refreshSessions()
+    await scrollDown()
+    return
+  }
   draft.value = ''
   const turn: Turn = {
     localID: `local-${crypto.randomUUID()}`,
@@ -497,6 +498,7 @@ const restore = async () => {
   if (!saved) return
   const found = sessions.value.find((item) => item.id === saved)
   if (found) await openSession(found)
+  else await openSession({ id: saved, title: '历史会话', created_at: '', updated_at: '' })
 }
 
 onMounted(async () => {
@@ -507,45 +509,29 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   stopAll()
+  attachments.reset()
   closeSource()
 })
 </script>
 
 <template>
-  <div class="page-head">
-    <div class="page-actions">
-      <button class="btn" @click="recordsOpen = true">
-        <Icon name="layers" :size="15" />任务记录
-        <span class="records-hint">本人已受理</span>
-      </button>
-      <button class="btn btn-primary" @click="newChat">
-        <Icon name="plus" :size="15" />新会话
-      </button>
-    </div>
-  </div>
-
   <div class="assistant-grid">
-    <section class="card chat-card">
-      <div class="chat-head">
-        <span class="assistant-avatar"><Icon name="sparkles" :size="17" /></span>
+    <section class="chat-card" aria-labelledby="conversation-title">
+      <header class="chat-head">
         <div class="chat-title-box">
-          <div class="chat-title">{{ sessionTitle }}</div>
-          <div class="chat-sub">
-            {{ sessionID ? `会话 ${sessionID}` : '发送首条消息后由服务端建会话' }} · {{ messageCount }} 条消息
-            <template v-if="streaming"> · 有运行在进行</template>
-          </div>
+          <h1 id="conversation-title" class="chat-title" :title="sessionTitle">{{ sessionTitle }}</h1>
+          <span v-if="streaming" class="chat-sub" role="status">正在处理</span>
         </div>
-        <span class="chat-chip">assistant/v4-draft1</span>
-      </div>
+        <div class="chat-actions">
+          <button class="btn btn-sm" @click="recordsOpen = true"><Icon name="layers" :size="15" />任务记录</button>
+          <button class="btn btn-sm" @click="newChat"><Icon name="plus" :size="15" />新会话</button>
+        </div>
+      </header>
 
       <div ref="scroller" class="thread">
         <div v-if="!turns.length && !busy" class="welcome">
           <span class="welcome-icon"><Icon name="sparkles" :size="22" /></span>
-          <h3>从一条运行记录开始</h3>
-          <p>
-            发问后服务端先受理一次运行，正文、进度、待批准动作与产物都从同一条事件流里出来。
-            运行中途离开页面不会中断任务，回到这段会话会自动重新挂上。
-          </p>
+          <h2>想了解哪方面的运行情况？</h2>
           <div class="welcome-sugs">
             <button v-for="item in suggestions" :key="item" @click="useSuggestion(item)">
               {{ item }}<Icon name="arrowUpRight" :size="13" />
@@ -562,10 +548,11 @@ onBeforeUnmount(() => {
           </div>
 
           <div class="msg is-agent">
-            <span class="msg-avatar"><Icon name="sparkles" :size="14" /></span>
             <div class="msg-body">
+              <div v-if="!turn.run" class="speaker"><Icon name="sparkles" :size="13" />运维助手</div>
               <RunAnswer
                 v-if="turn.run"
+                conversation
                 :run="turn.run"
                 :connection="turn.connection"
                 :error="turn.error"
@@ -579,6 +566,15 @@ onBeforeUnmount(() => {
                 @source="openSource"
               />
 
+              <div v-else-if="turn.attachmentResult" class="bubble attachment-answer">
+                <strong>站内附件检索</strong>
+                <p v-if="!turn.attachmentResult.excerpts.length">没有在所选附件中找到相关片段。</p>
+                <article v-for="(excerpt, index) in turn.attachmentResult.excerpts" :key="index">
+                  <header>{{ excerpt.name }} · {{ excerpt.location }}</header>
+                  <p>{{ excerpt.text }}</p>
+                </article>
+              </div>
+
               <template v-else-if="turn.response?.answer_markdown">
                 <div class="bubble answer" v-html="renderAnswer(turn.response.answer_markdown)"></div>
                 <details v-if="turn.response.sources?.length" class="static-sources">
@@ -590,85 +586,83 @@ onBeforeUnmount(() => {
               <p v-else-if="turn.error" class="turn-error">{{ turn.error }}</p>
               <div v-else class="bubble typing"><i></i><i></i><i></i></div>
 
-              <div class="meta">
-                <span v-if="turn.runId" class="rid num">{{ turn.runId }}</span>
-                <button v-if="turn.run && isTerminalStatus(turn.run.status)" class="retry" @click="useSuggestion(turn.question)">
-                  再问一次
-                </button>
-              </div>
+              <button v-if="turn.run && isTerminalStatus(turn.run.status)" class="retry" @click="useSuggestion(turn.question)">
+                <Icon name="refresh" :size="12" />再问一次
+              </button>
             </div>
           </div>
         </article>
       </div>
 
       <div class="composer">
-        <label class="composer-field">
-          <Icon name="assistant" :size="16" />
-          <textarea
-            ref="inputter"
-            v-model="draft"
-            rows="1"
-            placeholder="问场站、设备或告警的情况…"
-            @keydown.enter="onEnter"
-          ></textarea>
-        </label>
-        <button class="send-btn" :disabled="busy || !draft.trim()" title="发送" @click="send">
+        <input ref="attachmentPicker" type="file" accept=".pdf,.docx,.xlsx,.csv,.txt,.log" multiple hidden @change="attachments.choose" />
+        <button type="button" class="icon-btn" title="添加附件" aria-label="添加附件"
+          :disabled="busy || loadingSession || !!parsingAttachment || searchingAttachments" @click="attachmentPicker?.click()">
+          <Icon name="plus" :size="18" />
+        </button>
+        <textarea
+          ref="inputter"
+          v-model="draft"
+          rows="1"
+          aria-label="向助手提问"
+          :placeholder="attachmentMode ? '在所选附件里查找…' : '问问场站、设备或告警…'"
+          @keydown.enter="onEnter"
+        ></textarea>
+        <button v-if="parsingAttachment || searchingAttachments" type="button" class="btn btn-sm" @click="attachments.cancel">取消</button>
+        <button v-else class="send-btn" aria-label="发送" :disabled="busy || loadingSession || !draft.trim()" title="发送" @click="send">
           <Icon name="send" :size="16" />
         </button>
+      </div>
+      <div v-if="attachmentFiles.length || attachmentError || parsingAttachment || searchingAttachments" class="attachment-strip">
+        <button v-for="file in attachmentFiles" :key="file.id" type="button" class="btn btn-sm"
+          :aria-pressed="chosenAttachments.includes(file.id)" :disabled="!!parsingAttachment || searchingAttachments"
+          :title="chosenAttachments.includes(file.id) ? '从本次提问移除' : '在本次提问使用'"
+          @click="attachments.toggle(file.id)">{{ chosenAttachments.includes(file.id) ? '移除' : '添加' }} {{ file.name }}</button>
+        <p v-if="parsingAttachment" role="status">正在解析 {{ parsingAttachment }}</p>
+        <p v-else-if="searchingAttachments" role="status">正在检索所选附件…</p>
+        <p v-if="attachmentError" role="alert" class="turn-error">{{ attachmentError }}</p>
       </div>
     </section>
 
     <aside class="side">
-      <section class="card session-card">
+      <section class="session-card">
         <div class="side-head">
           <h2>历史会话</h2>
           <span class="side-count num">{{ historyCount }}</span>
-          <button v-if="!selectMode" class="side-manage" :disabled="!sessions.length" title="批量删除会话" @click="enterSelectMode">批量管理</button>
-          <button v-if="!selectMode" class="icon-btn" title="刷新会话列表" :disabled="loadingList" @click="refreshSessions">
+          <button class="icon-btn" title="刷新会话列表" :disabled="loadingList" @click="refreshSessions">
             <Icon name="refresh" :size="14" />
           </button>
         </div>
-        <div v-if="selectMode" class="batch-bar">
-          <button class="batch-all" :class="{ 'is-on': allSelected }" @click="toggleSelectAll">
-            <span class="session-check" :class="{ 'is-on': allSelected }"><Icon v-if="allSelected" name="check" :size="11" /></span>
-            全选
-          </button>
-          <span class="batch-count num">已选 {{ selected.length }}</span>
-          <button class="btn btn-sm batch-del" :disabled="!selected.length || batchDeleting" @click="removeSelected">
-            {{ batchDeleting ? '删除中…' : `删除${selected.length ? ` (${selected.length})` : ''}` }}
-          </button>
-          <button class="btn btn-sm" :disabled="batchDeleting" @click="exitSelectMode">取消</button>
+        <div class="history-tabs" aria-label="会话分类">
+          <button :class="{ active: !archivedList }" :aria-pressed="!archivedList" :disabled="sessionWriting" @click="showSessionList(false)">最近</button>
+          <button :class="{ active: archivedList }" :aria-pressed="archivedList" :disabled="sessionWriting" @click="showSessionList(true)">已归档</button>
         </div>
         <div v-if="listError" class="side-error">{{ listError }}</div>
         <div class="session-list">
-          <button
-            v-for="item in sessions"
-            :key="item.id"
-            class="session-item"
-            :class="{ 'is-on': sessionID === item.id && !selectMode, 'is-checked': selectMode && selected.includes(item.id) }"
-            @click="selectMode ? toggleSelect(item.id) : openSession(item)"
-          >
-            <span v-if="selectMode" class="session-check" :class="{ 'is-on': selected.includes(item.id) }">
-              <Icon v-if="selected.includes(item.id)" name="check" :size="11" />
-            </span>
-            <span class="session-main">
-              <span class="session-title">{{ item.title || '未命名会话' }}</span>
-              <span class="session-meta num">{{ across(item.updated_at) }}更新</span>
-            </span>
-            <span v-if="!selectMode" class="session-del" title="删除会话" @click.stop="removeSession(item)">
-              <Icon name="close" :size="13" />
-            </span>
-          </button>
-          <p v-if="!sessions.length && !loadingList" class="side-empty">还没有历史会话，发一条消息就会出现在这里。</p>
-        </div>
-        <div class="side-foot">
-          <button class="btn btn-sm" @click="newChat"><Icon name="plus" :size="13" />新会话</button>
-          <span class="side-foot-note">GET /agent/sessions</span>
+          <div v-for="item in sessions" :key="item.id" class="session-item"
+            :class="{ 'is-on': sessionID === item.id }">
+            <button class="session-open" :disabled="sessionWriting" :title="item.title || '未命名会话'" @click="openSession(item)">
+              <span class="session-main">
+                <span class="session-title">{{ item.title || '未命名会话' }}</span>
+                <span class="session-meta num">{{ across(item.updated_at) }}更新</span>
+              </span>
+            </button>
+            <div class="session-actions">
+              <button class="session-action" :disabled="sessionWriting || loadingList" :title="archivedList ? '恢复会话' : '归档会话'" :aria-label="archivedList ? '恢复会话' : '归档会话'" @click="archiveSession(item)">
+                <Icon :name="archivedList ? 'restore' : 'archive'" :size="15" />
+              </button>
+              <button class="session-action session-del" :disabled="sessionWriting || loadingList" title="删除会话" aria-label="删除会话" @click="removeSession(item)">
+                <Icon name="trash" :size="15" />
+              </button>
+            </div>
+          </div>
+          <p v-if="loadingList" class="side-empty" role="status">正在加载…</p>
+          <p v-else-if="!sessions.length && !listError" class="side-empty">{{ archivedList ? '暂无归档会话' : '暂无历史会话' }}</p>
         </div>
       </section>
 
       <!-- 示例问题只在空态对话区出现；有消息后右栏不再重复一次 -->
-      <section class="card limits-card">
+      <section class="limits-card">
         <div class="side-head"><h2>能力边界</h2></div>
         <ul class="limits">
           <li><Icon name="lock" :size="15" /><span>受控动作须本人当场批准，批准只消费一次</span></li>
@@ -698,281 +692,137 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-/* 任务记录入口：主按钮旁的第二入口，副标签说明它是只读记录 */
-.records-hint {
-  margin-left: 6px;
-  padding: 1px 6px;
-  border-radius: var(--r-pill);
-  background: var(--card-soft);
-  border: 1px solid var(--line);
-  color: var(--ink-4);
-  font-size: 10px;
-  font-weight: 400;
-}
-
+.attachment-strip { display: flex; gap: 6px; flex-wrap: wrap; max-height: 112px; overflow-y: auto; padding: 6px 12px 10px; }
+.attachment-strip .btn { max-width: 100%; display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.attachment-strip .btn[aria-pressed='true'] { background: var(--brand-soft); color: var(--brand-deep); }
+.attachment-strip p { flex-basis: 100%; white-space: pre-wrap; overflow-wrap: anywhere; }
+.attachment-answer { min-width: 0; }
+.attachment-answer article { padding-top: 10px; margin-top: 10px; border-top: 1px solid var(--line); }
+.attachment-answer article header { font-size: 12px; color: var(--ink-3); overflow-wrap: anywhere; }
+.attachment-answer p { margin: 4px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 .assistant-grid {
+  --chat-gutter: clamp(16px, 3vw, 48px);
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 320px;
-  gap: 18px;
-  align-items: start;
+  grid-template-columns: minmax(0, 1fr) clamp(270px, 23%, 330px);
+  height: calc((100dvh - 128px) / var(--content-scale, 1));
+  min-height: 430px;
+  overflow: hidden;
+  background: var(--card);
+  border: 1px solid var(--card-border);
+  border-radius: 14px;
 }
-
-/* ---------- 会话卡 ---------- */
 
 .chat-card {
   display: flex;
   flex-direction: column;
-  /* 除以内容缩放系数：zoom 会把视觉高度一起缩小，补偿后仍铺满视口 */
-  height: calc((100vh - 186px) / var(--content-scale, 1));
-  min-height: 480px;
-  overflow: hidden;
+  min-width: 0;
+  min-height: 0;
 }
 
 .chat-head {
   display: flex;
   align-items: center;
-  gap: 11px;
-  padding: 14px 18px;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  padding: 16px var(--chat-gutter);
   border-bottom: 1px solid var(--line-soft);
 }
 
-.assistant-avatar {
-  width: 34px;
-  height: 34px;
-  border-radius: 6px;
-  display: grid;
-  place-items: center;
-  background: var(--brand-soft);
-  color: var(--brand);
-  flex: 0 0 34px;
-}
-
-.chat-title-box {
-  min-width: 0;
-}
-
+.chat-title-box { flex: 1 1 160px; min-width: 0; }
 .chat-title {
-  font-size: 13.5px;
-  font-weight: 650;
+  margin: 0;
   color: var(--ink);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 420px;
-}
-
-.chat-sub {
-  font-size: 11px;
-  color: var(--ink-3);
-  margin-top: 1px;
+  font-size: 17px;
+  font-weight: 650;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
-
-.chat-chip {
-  margin-left: auto;
-  font-size: 10.5px;
-  color: var(--ink-3);
-  border: 1px solid var(--line);
-  border-radius: var(--r-pill);
-  padding: 2px 8px;
-  white-space: nowrap;
-}
+.chat-sub { font-size: 12px; color: var(--ink-3); }
+.chat-actions { display: flex; gap: 6px; }
 
 .thread {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: 18px 20px 8px;
+  padding: 24px var(--chat-gutter);
   display: flex;
   flex-direction: column;
-  gap: 16px;
-  background: var(--card);
+  gap: 32px;
 }
 
-/* 一轮 = 一句提问 + 一个回答块；回答块要能撑满宽度放运行卡 */
 .turn {
+  flex: none;
+  width: 100%;
+  max-width: 860px;
+  margin-inline: auto;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 18px;
 }
-
-.msg {
-  display: flex;
-  gap: 9px;
+.msg { min-width: 0; }
+.msg.is-user { align-self: flex-end; max-width: 85%; }
+.msg.is-agent { width: 100%; max-width: 48rem; }
+.msg.is-user .meta { margin-top: 4px; font-size: 11px; color: var(--ink-4); text-align: end; }
+.msg.is-user .bubble {
+  background: var(--card-soft);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  color: var(--ink);
+  padding: 9px 14px;
+  font-size: 15px;
+  line-height: 1.65;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
-
-.msg.is-user {
-  align-self: flex-end;
-  flex-direction: row-reverse;
-  max-width: 74%;
+.msg :deep(.speaker) {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  background: var(--card-soft);
+  border-radius: var(--r-sm);
+  color: var(--ink-2);
+  font-size: 12px;
+  font-weight: 600;
 }
-
-.msg.is-agent {
-  align-items: flex-start;
-}
-
-.msg.is-agent .msg-body {
-  flex: 1;
-  min-width: 0;
-}
-
-/* ---------- 空会话欢迎态 ---------- */
-
+.bubble.answer { margin-top: 8px; font-size: 15px; line-height: 1.85; overflow-wrap: anywhere; overflow-x: auto; }
+.bubble.answer :deep(p) { margin-bottom: 8px; }
+.bubble.answer :deep(ol), .bubble.answer :deep(ul) { padding-inline-start: 1.4em; }
+.static-sources { margin-top: 10px; font-size: 12px; }
+.static-sources summary { cursor: pointer; }
 .welcome {
   margin: auto;
-  max-width: 560px;
-  padding: 18px 16px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  text-align: center;
-}
-
-.welcome-icon {
-  width: 46px;
-  height: 46px;
-  border-radius: 8px;
+  width: min(100%, 34rem);
   display: grid;
-  place-items: center;
-  background: var(--brand-soft);
-  color: var(--brand);
-  box-shadow: 0 0 0 7px var(--card-soft);
-  margin-bottom: 13px;
+  justify-items: start;
+  gap: 14px;
 }
-
-.welcome h3 {
-  font-size: 15px;
-  font-weight: 650;
-  letter-spacing: -0.01em;
-  color: var(--ink);
-}
-
-.welcome p {
-  margin-top: 6px;
-  font-size: 12.5px;
-  line-height: 1.72;
-  color: var(--ink-3);
-}
-
-.welcome-sugs {
-  margin-top: 16px;
-  width: 100%;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
+.welcome-icon { color: var(--brand); }
+.welcome h2 { color: var(--ink); font-size: clamp(18px, 2vw, 24px); font-weight: 600; }
+.welcome-sugs { display: grid; width: 100%; }
 .welcome-sugs button {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
-  padding: 10px 13px;
-  border-radius: var(--r-md);
-  border: 1px solid var(--line);
-  background: var(--field-bg);
-  font-size: 12.5px;
-  color: var(--ink-2);
-  text-align: left;
-  transition: border-color 0.16s ease, background 0.16s ease, color 0.16s ease;
-}
-
-.welcome-sugs button:hover {
-  border-color: var(--brand-line);
-  background: var(--brand-soft);
-  color: var(--brand-deep);
-}
-
-.welcome-sugs svg {
-  color: var(--ink-4);
-  flex: 0 0 auto;
-}
-
-.msg-avatar {
-  width: 26px;
-  height: 26px;
-  border-radius: 8px;
-  display: grid;
-  place-items: center;
-  background: var(--brand-soft);
-  color: var(--brand);
-  flex: 0 0 26px;
-  margin-top: 2px;
-}
-
-.msg-body {
-  min-width: 0;
-}
-
-.bubble {
-  padding: 10px 13px;
-  border-radius: 8px 8px 8px 3px;
-  background: var(--card-soft);
-  border: 1px solid var(--line);
-  font-size: 12.8px;
-  line-height: 1.68;
-  color: var(--ink-2);
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-
-.msg.is-user .bubble {
-  background: var(--brand);
-  border-color: var(--brand);
-  color: #fff;
-  border-radius: 8px 8px 3px 8px;
-}
-
-/* 历史回答是 markdown 渲染出来的，不能继承 pre-wrap（会把段落撑开） */
-.bubble.answer {
-  white-space: normal;
-}
-
-.bubble.answer :deep(p) {
-  margin: 0 0 8px;
-}
-
-.bubble.answer :deep(p:last-child) {
-  margin-bottom: 0;
-}
-
-.bubble.answer :deep(strong) {
-  color: var(--ink);
-}
-
-.static-sources {
-  margin-top: 8px;
-  font-size: 12px;
-}
-
-.static-sources summary {
-  cursor: pointer;
-  color: var(--ink-3);
-  font-size: 11.5px;
-}
-
-.meta {
-  display: flex;
-  align-items: center;
   gap: 8px;
-  flex-wrap: wrap;
-  margin-top: 4px;
-  font-size: 10.5px;
-  color: var(--ink-4);
+  padding: 11px 2px;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  font-size: 14px;
+  color: var(--ink-2);
 }
-
-.meta .rid {
+.welcome-sugs button:hover { color: var(--brand); }
+.retry {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 0;
+  margin-top: 6px;
+  font-size: 12px;
   color: var(--ink-3);
 }
-
-.retry {
-  font-size: 10.5px;
-  color: var(--brand);
-  font-weight: 550;
-}
-
 .retry:hover {
   text-decoration: underline;
 }
@@ -1016,38 +866,22 @@ onBeforeUnmount(() => {
 .composer {
   display: flex;
   align-items: flex-end;
-  gap: 10px;
-  padding: 12px 16px 14px;
-  border-top: 1px solid var(--line-soft);
-}
-
-.composer-field {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  align-items: flex-start;
-  gap: 9px;
-  padding: 10px 13px;
-  border-radius: var(--r-md);
+  gap: 12px;
+  width: calc(100% - 2 * var(--chat-gutter));
+  max-width: 860px;
+  margin: 0 auto 16px;
+  padding: 12px 14px;
   border: 1px solid var(--line-strong);
-  background: var(--field-bg);
-  color: var(--ink-3);
+  border-radius: 12px;
+  background: var(--card-soft);
 }
-
-.composer-field svg {
-  flex: 0 0 auto;
-  margin-top: 2px;
-}
-
-.composer-field:focus-within {
-  border-color: var(--brand-line);
-  box-shadow: 0 0 0 3px var(--brand-soft);
-}
+.composer:focus-within { border-color: var(--brand-line); }
 
 /* 多行输入：1 行起步，长到 6 行后内部滚动，不把对话区继续压扁 */
-.composer-field textarea {
+.composer textarea {
   flex: 1;
   min-width: 0;
+  min-height: 2.8em;
   max-height: 148px;
   border: 0;
   outline: none;
@@ -1061,29 +895,21 @@ onBeforeUnmount(() => {
   padding: 0;
 }
 
-.composer-field textarea::placeholder {
+.composer textarea::placeholder {
   color: var(--ink-placeholder);
 }
 
 .send-btn {
-  width: 40px;
-  height: 40px;
-  border-radius: var(--r-md);
   display: grid;
   place-items: center;
-  background: var(--brand);
-  color: #fff;
-  transition: background 0.16s ease, opacity 0.16s ease;
+  flex: 0 0 32px;
+  height: 32px;
+  border-radius: var(--r-md);
+  background: var(--ink);
+  color: var(--card);
 }
-
-.send-btn:hover:not(:disabled) {
-  background: var(--brand-deep);
-}
-
-.send-btn:disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
-}
+.send-btn:disabled { background: var(--track-bg); color: var(--ink-4); cursor: not-allowed; }
+.send-btn:hover:not(:disabled) { background: var(--brand); color: white; }
 
 /* ---------- 右栏 ---------- */
 
@@ -1091,11 +917,10 @@ onBeforeUnmount(() => {
 .side {
   display: flex;
   flex-direction: column;
-  gap: 18px;
   min-width: 0;
-  /* 除以内容缩放系数：zoom 会把视觉高度一起缩小，补偿后仍铺满视口 */
-  height: calc((100vh - 186px) / var(--content-scale, 1));
-  min-height: 480px;
+  min-height: 0;
+  border-left: 1px solid var(--line);
+  background: var(--card-soft);
   overflow: hidden;
 }
 
@@ -1119,86 +944,6 @@ onBeforeUnmount(() => {
 }
 
 /* 批量管理：会话卡右上角入口 + 选择模式工具条 */
-.side-manage {
-  margin-left: auto;
-  height: 24px;
-  padding: 0 8px;
-  border: 1px solid var(--line);
-  border-radius: var(--r-sm);
-  background: var(--field-bg);
-  color: var(--ink-3);
-  font-size: 11px;
-}
-
-.side-manage:hover:not(:disabled) {
-  border-color: var(--line-strong);
-  color: var(--ink);
-}
-
-.side-manage:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.batch-bar {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin: 0 18px 10px;
-  padding: 8px 10px;
-  border: 1px solid var(--brand-line);
-  border-radius: var(--r-md);
-  background: var(--brand-soft);
-}
-
-.batch-all {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: var(--ink);
-  font-size: 11.5px;
-}
-
-.batch-count {
-  margin-right: auto;
-  font-size: 11px;
-  color: var(--ink-3);
-}
-
-.batch-del {
-  color: var(--bad-deep);
-  border-color: var(--bad-line);
-}
-
-.batch-del:hover:not(:disabled) {
-  background: var(--bad-soft);
-}
-
-/* 选择态方块：不用原生 checkbox，避免 input 嵌进 button 的结构问题 */
-.session-check {
-  flex: none;
-  display: grid;
-  place-items: center;
-  width: 15px;
-  height: 15px;
-  border-radius: 3px;
-  border: 1px solid var(--line-strong);
-  background: var(--field-bg);
-  color: #fff;
-}
-
-.session-check.is-on {
-  background: var(--brand);
-  border-color: var(--brand);
-}
-
-.session-item.is-checked {
-  background: var(--brand-soft);
-}
-
 .side-count {
   font-size: 11px;
   color: var(--ink-3);
@@ -1235,7 +980,7 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 9px 10px;
+  padding: 4px 6px;
   border-radius: var(--r-md);
   text-align: left;
   transition: background 0.14s ease;
@@ -1246,7 +991,8 @@ onBeforeUnmount(() => {
 }
 
 .session-item.is-on {
-  background: var(--brand-soft);
+  background: var(--card);
+  box-shadow: inset 2px 0 var(--brand);
 }
 
 .session-main {
@@ -1275,25 +1021,16 @@ onBeforeUnmount(() => {
   color: var(--ink-4);
 }
 
-.session-del {
-  width: 22px;
-  height: 22px;
-  border-radius: 6px;
-  display: grid;
-  place-items: center;
-  color: var(--ink-4);
-  opacity: 0;
-  transition: opacity 0.14s ease, background 0.14s ease, color 0.14s ease;
-}
-
-.session-item:hover .session-del {
-  opacity: 1;
-}
-
-.session-del:hover {
-  background: var(--bad-soft);
-  color: var(--bad-deep);
-}
+.history-tabs { display:flex; gap:4px; margin:0 16px 10px; border-bottom:1px solid var(--line); }
+.history-tabs button { padding:8px 12px; color:var(--ink-3); border-bottom:2px solid transparent; font-size:12px; }
+.history-tabs button.active { color:var(--brand); border-color:var(--brand); }
+.session-open { display:flex; align-items:center; gap:8px; flex:1; min-width:0; text-align:left; padding:8px 4px; }
+.session-actions { display:flex; gap:2px; flex-shrink:0; }
+.session-action { display:grid; place-items:center; width:30px; height:32px; border-radius:var(--r-sm); color:var(--ink-3); }
+.session-action:hover { background:var(--brand-soft); color:var(--brand); }
+.session-action:focus-visible, .session-open:focus-visible { outline:2px solid var(--brand); outline-offset:2px; }
+.session-action:disabled { opacity:.4; cursor:wait; }
+.session-del:hover { background:var(--bad-soft); color:var(--bad); }
 
 .side-empty {
   padding: 18px 10px;
@@ -1303,22 +1040,8 @@ onBeforeUnmount(() => {
   text-align: center;
 }
 
-.side-foot {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 10px 18px 14px;
-  border-top: 1px solid var(--line-soft);
-}
-
-.side-foot-note {
-  margin-left: auto;
-  font-size: 10.5px;
-  color: var(--ink-4);
-}
-
-/* 能力边界常驻，不参与高度分配，只占自身内容高度 */
 .limits-card {
+  border-top: 1px solid var(--line);
   flex: 0 0 auto;
 }
 
@@ -1353,47 +1076,13 @@ onBeforeUnmount(() => {
   overflow-wrap: anywhere;
 }
 
-@media (max-width: 1100px) {
-  .assistant-grid {
-    grid-template-columns: minmax(0, 1fr) 280px;
-  }
-
-  .chat-card {
-    height: calc((100vh - 210px) / var(--content-scale, 1));
-  }
-
-  .side {
-    height: calc((100vh - 210px) / var(--content-scale, 1));
-  }
-}
-
 @media (max-width: 900px) {
-  .assistant-grid {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  /**
-   * 手机端会话卡要铺满「顶栏下方到导航条上方」这一段：
-   * 250px 是页头 + 卡片头 + 输入区的实测高度，再减去底部导航（含手势区）。
-   * 用 dvh 而不是 vh，否则地址栏收起时会多出一截空白。
-   */
+  .assistant-grid { grid-template-columns: minmax(0, 1fr); height: auto; }
   .chat-card {
-    /* 手机端 .page-inner 有 zoom，视觉高度会一起缩小；除以缩放系数补回可视高度 */
-    height: calc((100dvh - 250px - var(--mnav-h) - var(--safe-b)) / var(--content-scale, 1));
-    min-height: calc(360px / var(--content-scale, 1));
+    height: calc((100dvh - 148px - var(--mnav-h) - var(--safe-b)) / var(--content-scale, 1));
+    min-height: 360px;
   }
-
-  /* 单列堆叠：右栏回到自然高度，只给会话列表限高，避免把自己的内容裁掉 */
-  .side {
-    height: auto;
-    min-height: 0;
-    overflow: visible;
-  }
-
-  .session-card {
-    flex: none;
-    max-height: 320px;
-    min-height: 200px;
-  }
+  .side { border-left: 0; border-top: 1px solid var(--line); }
+  .session-card { max-height: 300px; min-height: 160px; }
 }
 </style>

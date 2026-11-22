@@ -84,12 +84,13 @@ stages/08-agent-rag/scripts/import-knowledge.ps1 -ConfigFile artifacts/stage8-ag
 
 - `POST /api/v1/agent/chat`：`message`、可选UUID `session_id`；返回Markdown答案、实际工具来源、调用记录和提示。
 - `POST /api/v1/agent/sessions/:id/verify`：`parent_turn_id`、`device_id`、`checks`、UUID `verification_id`；用户确认后只读核验，幂等追加记录，保留原回答。checks限定latest_telemetry/current_alarms/prediction，不调用模型。
-- `GET /api/v1/agent/sessions?offset=0`：当前用户会话，分页50项。
+- `GET /api/v1/agent/sessions?offset=0&archived=false`：当前用户最近会话，分页50项；`archived=true` 查询已归档会话。
+- `POST /api/v1/agent/sessions/:id/archive`、`POST /api/v1/agent/sessions/:id/restore`：归档/恢复本人会话，重复操作幂等；归档保留问答、任务关联与原更新时间，不取消运行或调度任务。
 - `GET /api/v1/agent/sessions/:id`：当前用户完整问答历史。
 - `DELETE /api/v1/agent/sessions/:id`：删除本人会话及其问答，忙碌会话返回409。
 - `GET /api/v1/agent/rag/sources/:id`：向量库章节详情。
 
-请求身份由JWT认证的Go服务注入，Agent内网接口验证服务token。历史库表为 `rag_sessions`、`rag_turns`，自动应用幂等迁移 `deploy/001_sessions.sql`；与平台业务库分离。历史持续保存，删除只能由本人执行，不保存跨会话偏好。模型上下文只装入资源预算内的完整旧轮次，完整历史不截断。旧阶段7临时会话不迁移、不删除。
+请求身份由JWT认证的Go服务注入，Agent内网接口验证服务token。历史库表为 `rag_sessions`、`rag_turns`，自动按编号应用 `deploy/NNN_*.sql` 幂等迁移（会话归档新增 `006_session_archive.sql` 的 `archived` 列）；与平台业务库分离。历史持续保存，删除只能由本人执行，不保存跨会话偏好。模型上下文只装入资源预算内的完整旧轮次，完整历史不截断。旧阶段7临时会话不迁移、不删除。
 
 边界第一期增加`deploy/002_verification.sql`，保留旧行，新增kind、关联原轮次及会话内唯一核验UUID。聊天新增turn_id、verification_available和可选evidence。取证状态只统计本轮实际业务工具；时间直接取查询时间、ts_ms及received_at，预测使用stale。历史核验记录不能当作后续实时事实。
 

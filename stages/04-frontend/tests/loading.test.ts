@@ -16,7 +16,6 @@ vi.mock('vue-router', async () => {
     RouterLink: { setup: (_: unknown, { slots }: any) => () => h('a', slots.default?.()) },
   }
 })
-vi.mock('../src/components/PowerChart.vue', () => ({ default: { render: () => null } }))
 // CardMenu's document listeners are unrelated to request scheduling.
 vi.mock('../src/components/CardMenu.vue', () => ({ default: { render: () => null } }))
 
@@ -76,7 +75,7 @@ beforeEach(() => {
   vi.resetAllMocks()
   route.query = {}
   api.summary.mockResolvedValue({ device_total: 143, online: 140, active_alarms: 3, current_power_kw: 1234.5, today_energy_kwh: 100, health_score_percent: 90 })
-  api.overview.mockResolvedValue({ stations: [{ station_code: 'ST-TEST', station_name: '独立加载场站', registered_device_count: 1, expected_device_count: 1, online: 1 }] })
+  api.overview.mockResolvedValue({ stations: [{ station_code: 'ST-TEST', station_name: '独立加载场站', scope: 'business', registered_device_count: 10, expected_device_count: 10, online: 7, fault: 2, offline: 2, telemetry_unknown: 1 }] })
   api.alarms.mockResolvedValue({ list: [] })
   api.devices.mockResolvedValue({ list: [], total: 0 })
   api.stations.mockResolvedValue({ list: [{ station_code: 'ST-TEST', station_name: '独立加载场站' }] })
@@ -86,17 +85,18 @@ beforeEach(() => {
 afterEach(() => cleanups.splice(0).forEach(cleanup => cleanup()))
 
 describe('page loading isolation', () => {
-  it('renders overview metrics, stations and history while availability is still pending', async () => {
+  it('renders business device states without requesting power history while availability is pending', async () => {
     api.availability.mockReturnValue(deferred().promise)
-    api.devices.mockResolvedValue({ list: [{ id: 1 }], total: 1 })
-    api.history.mockResolvedValue({ points: [[1, 12]] })
     const root = mount(OverviewView)
     await flush()
     expect(text(root)).toContain('1,234.5')
     expect(text(root)).toContain('独立加载场站')
     expect(text(root)).toContain('正在统计近 7 天数据质量')
-    expect(api.history).toHaveBeenCalled()
-    expect(text(root)).toContain('1 个采样点')
+    expect(api.history).not.toHaveBeenCalled()
+    const row = find(root, el => el.props.class === 'fleet-row')
+    expect(row).toBeDefined()
+    const counts = row!.children.filter(el => String(el.props.class).includes('fleet-count'))
+    expect(counts.map(el => text(el).trim())).toEqual(['在线非故障5', '故障2', '离线2', '未知1'])
   })
 
   it('keeps successful overview sections visible when availability fails', async () => {

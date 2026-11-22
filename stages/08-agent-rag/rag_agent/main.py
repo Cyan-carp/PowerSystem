@@ -60,8 +60,12 @@ def create_app(config=None, store=None, redis=None, provider=None, tools=None, r
         app.state.tools = tools or Tools(cfg, client, app.state.knowledge)
         app.state.fixture_tools = tools is not None
         app.state.provider = provider or Provider(cfg, client)
-        loop=None;schedule_loop=None
+        loop=None;schedule_loop=None;attachment_cleanup=None
         if hasattr(app.state.store,'pool'):
+            from .attachments import Attachments
+            app.state.attachments = Attachments(app.state.store.pool)
+            if run_worker:
+                attachment_cleanup = asyncio.create_task(app.state.attachments.expire())
             from .run_store import RunStore
             from .run_worker import RunWorker
             app.state.runs=RunStore(app.state.store)
@@ -78,6 +82,9 @@ def create_app(config=None, store=None, redis=None, provider=None, tools=None, r
         try:
             yield
         finally:
+            if attachment_cleanup:
+                attachment_cleanup.cancel()
+                await asyncio.gather(attachment_cleanup, return_exceptions=True)
             if schedule_loop:
                 schedule_loop.cancel();await asyncio.gather(schedule_loop,return_exceptions=True)
             if hasattr(app.state,'schedules'):
@@ -91,6 +98,8 @@ def create_app(config=None, store=None, redis=None, provider=None, tools=None, r
             if not redis: await app.state.redis.aclose()
 
     app = FastAPI(title="PowerSystem general Agent and RAG", lifespan=lifespan)
+    from .attachments import routes as attachment_routes
+    attachment_routes(app)
     from .schedules import routes as schedule_routes
     schedule_routes(app)
     from .schedule_bridge import routes as bridge_routes
@@ -107,9 +116,10 @@ def create_app(config=None, store=None, redis=None, provider=None, tools=None, r
                 return JSONResponse(status_code=401, content={"detail": "invalid_service_token"})
         if request.method == "POST":
             raw = bytearray()
+            max_body = (5 << 20) if request.url.path == '/internal/agent/attachments' else (256 << 10)
             async for part in request.stream():
                 raw.extend(part)
-                if len(raw) > 256 * 1024:
+                if len(raw) > max_body:
                     return JSONResponse(status_code=413, content={"detail": "request_too_large"})
             request._body = bytes(raw)
         return await next_handler(request)
@@ -138,9 +148,21 @@ def create_app(config=None, store=None, redis=None, provider=None, tools=None, r
         )
 
     @app.get("/internal/agent/sessions")
-    async def sessions(user_id: int, offset: int = 0):
+    async def sessions(user_id: int, offset: int = 0, archived: bool = False):
         if user_id <= 0 or offset < 0: raise HTTPException(400, "invalid_query")
-        return {"list": await app.state.store.list(user_id, offset), "offset": offset, "page_size": 50}
+        return {"list": await app.state.store.list(user_id, offset, archived), "offset": offset, "page_size": 50}
+
+    @app.post("/internal/agent/sessions/{sid}/archive")
+    async def archive_session(sid: UUID, user_id: int):
+        if not await app.state.store.archive(sid, user_id, True):
+            raise HTTPException(404, "session_not_found")
+        return {"archived": True}
+
+    @app.post("/internal/agent/sessions/{sid}/restore")
+    async def restore_session(sid: UUID, user_id: int):
+        if not await app.state.store.archive(sid, user_id, False):
+            raise HTTPException(404, "session_not_found")
+        return {"archived": False}
 
     @app.get("/internal/agent/sessions/{sid}")
     async def details(sid: UUID, user_id: int, request: Request):
@@ -163,7 +185,13 @@ def create_app(config=None, store=None, redis=None, provider=None, tools=None, r
                 turn["response"]["evidence"] = build_evidence(turn["response"].get("tool_calls", []), app.state.config)
             if not app.state.config.evidence_enabled:
                 turn["response"].pop("evidence", None)
-        return {"session_id": str(sid), "turns": [{k: v for k, v in t.items() if k != "model_messages"} for t in turns]}
+        history = [{k: v for k, v in t.items() if k != "model_messages"} for t in turns]
+        attachments = getattr(app.state, 'attachments', None)
+        files, local_turns = await attachments.history(user_id, sid) if attachments else ([], [])
+        if local_turns:
+            history.extend(local_turns)
+            history.sort(key=lambda turn: turn['created_at'])
+        return {"session_id": str(sid), "turns": history, "attachments": files}
 
     @app.post("/internal/agent/sessions/{sid}/verify")
     async def verify(sid: UUID, body: Verify, request: Request):

@@ -72,6 +72,7 @@ var MigrationPaths = []string{
 	"deploy/postgres/021_prediction_drift_archive.sql",
 	"deploy/postgres/022_user_session_version.sql",
 	"deploy/postgres/023_user_disabled_at.sql",
+	"deploy/postgres/024_business_supplement.sql",
 }
 
 // atomicMigrations 是必须在单个事务里整体生效的迁移。
@@ -81,6 +82,7 @@ var MigrationPaths = []string{
 // Migrate 没有版本表、每次启动都重跑，所以这里只登记确实需要原子性的文件，
 // 其余保持逐条执行，避免把大表 ALTER 长时间锁在一个事务里。
 var atomicMigrations = map[string]bool{
+	"024_business_supplement.sql":                 true,
 	"014_telemetry_reliability.sql":               true,
 	"015_telemetry_scheduler.sql":                 true,
 	"016_telemetry_realtime.sql":                  true,

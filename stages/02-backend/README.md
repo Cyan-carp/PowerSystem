@@ -110,7 +110,7 @@ python stages/02-backend/scripts/smoke-fleet-agent.py --responses $env:FLEET_SMO
 
 Go 冒烟通过 `Server.New` 装载指定清单，使用独立内存 SQLite 承载七台测试行，调用真实 stations/devices/alarms/overview 处理函数共 13 次，导出三档范围响应。Redis 缺席，因此 `observed=0`、`partial=true` 是预期空观测结果；不验证 PostgreSQL 方言、认证中间件或实时供数联动。环境变量只影响当前 PowerShell 会话，运行后可关闭该会话。
 
-Agent 脚本用 `httpx.MockTransport` 回放上述响应，阶段 8 调用真实 `Tools.execute`，阶段 9 调用真实 `Executor.call`，各查询一次业务场站和基线总览；不请求模型。第三步已落实生产清单挂载和 140 台正式导入，现行发布事实见 [扩容上线记录](../../notes/04-系统部署发布备份与变更记录/部署与运维日志/04-供数与业务批次/26-四场站140台设备扩容上线.md)。
+Agent 脚本用 `httpx.MockTransport` 回放上述响应，阶段 8 调用真实 `Tools.execute`，阶段 9 调用真实 `Executor.call`，各查询一次业务场站和基线总览；不请求模型。第三步已落实生产清单挂载和 140 台正式导入，现行发布事实见 [扩容上线记录](../../notes/04-系统部署发布备份与变更记录/部署与运维日志/04-数据供应与功能批次/26-四场站140台设备扩容上线.md)。
 
 ## 三、数据与故障语义
 
@@ -450,7 +450,7 @@ $trEvidence=Join-Path (Get-Location) 'artifacts/遥测可靠性/TR-S04-local'
 
 普通API启动预算保持30秒；`-migration-timeout`只有同时传`-migrate-only`才可设为30秒至15分钟，非离线模式拒绝延长。大表索引工作须由统一发布器在旧API/gateway均停止、候选后全备可核时执行一次性迁移；成功后正常启动只重复已存在的schema。禁止让普通API反复超时建索引、手工SQL代偿或直接切旧镜像。
 
-本轮生产前适配、用户接受的失败冻结停写边界及真实同量级迁移证据见[发布记录53](../../notes/04-系统部署发布备份与变更记录/部署与运维日志/05-发布工具链与文档治理/53-遥测可靠性修复发布与前滚门禁.md)。正式生产命令只在[部署README](../04-frontend/deploy/README.md)维护；隔离验收不授权通用历史积压/告警重放。
+本轮生产前适配、用户接受的失败冻结停写边界及真实同量级迁移证据见[发布记录53](../../notes/04-系统部署发布备份与变更记录/部署与运维日志/05-发布工具链与文档治理/01-发布机制与门禁/53-遥测可靠性修复发布与前滚门禁.md)。正式生产命令只在[部署README](../04-frontend/deploy/README.md)维护；隔离验收不授权通用历史积压/告警重放。
 
 
 ## home-dev远程开发

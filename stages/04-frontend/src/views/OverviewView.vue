@@ -1,88 +1,55 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import TelemetryLinkPanel from '../components/TelemetryLinkPanel.vue'
+import { computed, onBeforeUnmount, onMounted, watch } from 'vue'
 import { RouterLink, useRouter } from 'vue-router'
 import Icon from '../components/Icon.vue'
-import PowerChart from '../components/PowerChart.vue'
 import DonutGauge from '../components/DonutGauge.vue'
 import CardMenu from '../components/CardMenu.vue'
 import StatusChip from '../components/StatusChip.vue'
 import { api } from '../lib/api'
-import type { Alarm, AvailabilityReport, Device, StationSummary, Summary } from '../lib/api'
+import { fetchAlarmViews } from '../lib/data'
+import type { AlarmView } from '../lib/data'
+import type { AvailabilityReport, Overview, Summary } from '../lib/api'
 import { shell } from '../lib/store'
-import { n, pct, stamp } from '../lib/format'
+import { clock, n, pct, stamp, LEVEL_CN, METRIC_CN } from '../lib/format'
 import { useLatestRequest } from '../lib/useLatestRequest'
 
 const router = useRouter()
 
 const metrics = useLatestRequest<Summary>()
-const stationRequest = useLatestRequest<StationSummary[]>()
+const stationRequest = useLatestRequest<Overview>()
 const quality = useLatestRequest<AvailabilityReport>()
-const alarmRequest = useLatestRequest<Alarm[]>()
-const chart = useLatestRequest<{ points: [number, number][]; note: string }>()
+const alarmRequest = useLatestRequest<AlarmView[]>()
 const { data: summary, pending: summaryLoading, error: summaryError } = metrics
 const { data: availability, pending: qualityLoading, error: qualityError } = quality
 const { pending: stationsLoading, error: stationsError } = stationRequest
 const { pending: alarmsLoading, error: alarmsError } = alarmRequest
-const { pending: seriesLoading, error: seriesError } = chart
-const stations = computed(() => stationRequest.data.value ?? [])
+const stations = computed(() => stationRequest.data.value?.stations ?? [])
 const alarms = computed(() => alarmRequest.data.value ?? [])
-const series = computed(() => chart.data.value?.points ?? [])
-const seriesNote = computed(() => chart.data.value?.note ?? '')
-const sampled = ref<Device[]>([])
-const range = ref(24)
-const busy = computed(() => summaryLoading.value || stationsLoading.value || qualityLoading.value || alarmsLoading.value || seriesLoading.value)
+const busy = computed(() => summaryLoading.value || stationsLoading.value || qualityLoading.value || alarmsLoading.value)
 
-const ranges = [
-  { hours: 6, label: '近 6 小时' },
-  { hours: 24, label: '近 24 小时' },
-  { hours: 48, label: '近 48 小时' },
-]
+const loadStations = () => stationRequest.run(signal => api.overview('all', '', signal), { keepData: true })
 
-/**
- * 曲线不取自虚构的“全站聚合”接口：真实后端只有 /devices/:id/telemetry。
- * 按 2h 一段分批取基线站 3 台设备的功率历史再逐点相加，与后端 24h / 5000 点上限兼容。
- */
-const CHUNK_MS = 2 * 3_600_000
+const statusTypes = [
+  { key: 'online', label: '在线非故障', color: 'var(--ok)' },
+  { key: 'fault', label: '故障', color: 'var(--bad)' },
+  { key: 'offline', label: '离线', color: 'var(--warn)' },
+  { key: 'unknown', label: '未知', color: 'var(--ink-placeholder)' },
+] as const
 
-const loadSeries = () => chart.run(async (signal) => {
-  const hours = range.value
-  if (!sampled.value.length) {
-    const payload = await api.devices({ pageSize: 3, scope: 'baseline' })
-    sampled.value = payload.list
-  }
-  signal.throwIfAborted()
-  if (!sampled.value.length) {
-    return { points: [], note: '暂无基线站设备' }
-  }
-  const end = Date.now()
-  const start = end - hours * 3_600_000
-  const maps = sampled.value.map(() => new Map<number, number>())
-  const jobs: Promise<void>[] = []
-  for (let from = start; from < end; from += CHUNK_MS) {
-    const to = Math.min(end, from + CHUNK_MS)
-    sampled.value.forEach((device, index) => {
-      jobs.push(
-        api.history(device.id, 'power', new Date(from), new Date(to), signal).then((payload) => {
-          for (const [ts, value] of payload.points) maps[index].set(ts, value)
-        }),
-      )
-    })
-  }
-  const results = await Promise.allSettled(jobs)
-  if (results.every((item) => item.status === 'rejected')) {
-    throw new Error('基线站历史遥测暂不可用，请稍后重试')
-  }
-  const axis = [...maps[0].keys()].sort((a, b) => a - b)
-  const points: [number, number][] = axis.map((ts) => [ts, Math.round(maps.reduce((sum, map) => sum + (map.get(ts) || 0), 0) * 10) / 10])
-  return { points, note: results.some((item) => item.status === 'rejected') ? '部分历史遥测未取到，当前曲线不完整' : '' }
-}, { keepData: true })
+const businessStates = computed(() => stations.value.filter(row => row.scope === 'business').map(row => ({
+  code: row.station_code, name: row.station_name, total: row.registered_device_count,
+  // The overview API includes fresh fault reports in its online count.
+  online: row.online - row.fault, fault: row.fault, offline: row.offline, unknown: row.telemetry_unknown,
+})))
+const businessTotal = computed(() => businessStates.value.reduce((total, row) => total + row.total, 0))
+const snapshotAt = computed(() => stationRequest.data.value?.computed_at)
 
 const loadAll = () => {
   void metrics.run(() => api.summary(), { keepData: true })
-  void stationRequest.run(async () => (await api.overview('all')).stations, { keepData: true })
-  void alarmRequest.run(async () => (await api.alarms({ pageSize: 100 })).list, { keepData: true })
+  void loadStations()
+  void alarmRequest.run(async () => (await fetchAlarmViews(100)).list, { keepData: true })
   void quality.run((signal) => api.availability({}, signal), { keepData: true })
-  void loadSeries()
 }
 
 watch(summary, (s) => {
@@ -93,9 +60,14 @@ watch(summary, (s) => {
   }
 })
 
-watch(range, loadSeries)
-
-onMounted(loadAll)
+let stationTimer: ReturnType<typeof setInterval>
+onMounted(() => {
+  loadAll()
+  stationTimer = setInterval(() => {
+    if (!document.hidden && !stationsLoading.value) void loadStations()
+  }, 30_000)
+})
+onBeforeUnmount(() => clearInterval(stationTimer))
 
 /* ---------------- 指标 ---------------- */
 
@@ -230,25 +202,30 @@ const alarmGroups = computed(() => {
   ]
 })
 
+const attentionAlarms = computed(() => {
+  const priority: Record<string, number> = { urgent: 0, major: 1, minor: 2 }
+  return alarms.value.filter(item => item.status === 'unhandled' && !item.archived)
+    .sort((a, b) => (priority[a.level] ?? 3) - (priority[b.level] ?? 3) || Date.parse(a.triggered_at) - Date.parse(b.triggered_at)).slice(0, 2)
+})
 const alarmTotal = computed(() => alarms.value.length)
 const alarmsLoaded = computed(() => alarmRequest.data.value !== null)
 
 /** 顶部按钮只带未处理数量，与跳转后的筛选条件一致。 */
 const unhandledCount = computed(() => alarms.value.filter((item) => item.status === 'unhandled').length)
 
-const peak = computed(() => (series.value.length ? Math.max(...series.value.map(([, value]) => value)) : 0))
-
 /* ---------------- 导出 ---------------- */
 
 const exportCsv = () => {
-  if (seriesLoading.value || !series.value.length) return
-  const header = 'ts,time,power_kw'
-  const rows = series.value.map(([ts, value]) => `${ts},${new Date(ts).toISOString()},${value}`)
+  if (!businessStates.value.length) return
+  const header = '场站编码,在册设备,在线非故障,故障,离线,未知,统计时间'
+  const rows = businessStates.value.map(row => [
+    row.code, row.total, row.online, row.fault, row.offline, row.unknown, snapshotAt.value,
+  ].map(value => '"' + String(value ?? '').replace(/^[=+@-]/, "'$&").replaceAll('"', '""') + '"').join(','))
   const blob = new Blob([`\ufeff${[header, ...rows].join('\n')}`], { type: 'text/csv;charset=utf-8' })
   const url = URL.createObjectURL(blob)
   const link = document.createElement('a')
   link.href = url
-  link.download = `power-baseline-${range.value}h.csv`
+  link.download = `station-status-${snapshotAt.value?.slice(0, 10)}.csv`
   link.click()
   URL.revokeObjectURL(url)
 }
@@ -269,6 +246,8 @@ const exportCsv = () => {
 
   <p v-if="summaryError" class="error-box" role="alert">总览指标未取到：{{ summaryError }}。请稍后刷新重试。</p>
   <p v-else-if="summaryLoading" class="table-note" role="status">正在加载总览指标…</p>
+
+  <TelemetryLinkPanel />
 
   <div class="ov-grid">
     <div class="ov-main">
@@ -292,31 +271,34 @@ const exportCsv = () => {
         </component>
       </section>
 
-      <!-- 功率曲线 -->
-      <section class="card chart-card">
+      <section class="card fleet-card" aria-labelledby="fleet-status-title">
         <div class="card-head">
-          <span class="card-title">功率输出</span>
+          <h2 id="fleet-status-title" class="card-title">各站设备状态</h2>
           <div class="card-tools">
-            <select v-model.number="range" class="select" aria-label="选择时间范围">
-              <option v-for="item in ranges" :key="item.hours" :value="item.hours">{{ item.label }}</option>
-            </select>
-            <CardMenu :payload="series" filename="power-series">
+            <time v-if="snapshotAt" class="fleet-time num" :datetime="snapshotAt" :title="stamp(snapshotAt)">更新于 {{ clock(snapshotAt) }}</time>
+            <CardMenu v-if="businessStates.length" :payload="{ computed_at: snapshotAt, stations: businessStates }" filename="station-status">
               <button class="card-menu-item" @click="exportCsv">导出 CSV</button>
             </CardMenu>
           </div>
         </div>
-        <div class="chart-body">
-          <p v-if="seriesLoading" class="table-note" role="status">{{ series.length ? '正在更新功率曲线，当前显示上次结果…' : '正在加载功率曲线…' }}</p>
-          <p v-if="seriesError" class="error-box" role="alert">{{ seriesError }}{{ series.length ? '，当前显示上次结果' : '' }}</p>
-          <PowerChart v-if="series.length || (!seriesLoading && !seriesError)" :points="series" :height="214" unit="kW" />
+        <p v-if="stationsError" class="error-box" role="alert">{{ stationRequest.data.value ? '更新失败，显示上次快照。' : '设备状态未取到。' }}<button class="btn btn-sm" @click="loadStations">重试</button></p>
+        <div v-if="businessStates.length" class="fleet">
+          <div class="fleet-scope">业务场站 <b>{{ businessStates.length }}</b> 座 · 在册 <b>{{ n(businessTotal) }}</b> 台</div>
+          <div class="fleet-row fleet-head" aria-hidden="true">
+            <span>场站</span><span>状态占比</span>
+            <span v-for="type in statusTypes" :key="type.key" class="fleet-key"><i :style="{ background: type.color }"></i>{{ type.label }}</span>
+          </div>
+          <div v-for="row in businessStates" :key="row.code" class="fleet-row">
+            <RouterLink class="fleet-name" :to="{ path: '/devices', query: { station: row.code } }">{{ row.name }} <span aria-hidden="true">›</span></RouterLink>
+            <div class="fleet-track" aria-hidden="true">
+              <i v-for="type in statusTypes" :key="type.key" :style="{ width: row.total ? (100 * row[type.key] / row.total) + '%' : '0', background: type.color }"></i>
+            </div>
+            <span v-for="type in statusTypes" :key="type.key" class="fleet-count num" :class="{ flagged: row[type.key] > 0 && type.key !== 'online' }">
+              <span class="fleet-mobile-label"><i :style="{ background: type.color }"></i>{{ type.label }}</span>{{ n(row[type.key]) }}
+            </span>
+          </div>
         </div>
-        <div class="chart-foot">
-          <span class="legend"><i></i>基线站有功功率</span>
-          <span class="foot-note">
-            <span class="num">{{ seriesLoading ? '加载中' : seriesError ? '历史遥测未取到' : seriesNote || `峰值 ${n(peak, 1)} kW · ${series.length} 个采样点` }}</span>
-            <span class="foot-sep">·</span>仅基线站 3 台，全站出力见上方指标卡
-          </span>
-        </div>
+        <p v-else-if="!stationsError" class="empty" role="status">{{ stationsLoading ? '正在读取设备状态…' : '暂无业务场站' }}</p>
       </section>
 
       <!-- 场站对比 -->
@@ -395,7 +377,7 @@ const exportCsv = () => {
           <h2>数据质量</h2>
           <CardMenu :payload="availability" filename="availability" to="/reports" to-label="查看统计报表" />
         </div>
-        <p v-if="qualityLoading" class="table-note" role="status">正在统计近 7 天数据质量，其他区域可正常查看{{ availability ? '；下方暂显示上次结果' : '' }}…</p>
+        <p v-if="qualityLoading" class="table-note" role="status">正在统计近 7 天数据质量{{ availability ? '；下方暂显示上次结果' : '' }}…</p>
         <p v-if="qualityError" class="error-box" role="alert">数据质量未取到：{{ qualityError }}。{{ availability ? '下方显示上次结果。' : '' }}请稍后刷新重试。</p>
         <div v-if="availability" class="donuts">
           <DonutGauge :value="availabilityRate" tone="brand" label="平均可用率" note="近 7 天" />
@@ -462,11 +444,40 @@ const exportCsv = () => {
         </div>
         </template>
       </section>
+      <section class="card attention-card">
+        <div class="side-head"><h2>优先关注</h2><RouterLink class="attention-more" to="/alarms?status=unhandled">全部 <Icon name="chevronRight" :size="13" /></RouterLink></div>
+        <p v-if="alarmsLoading" class="table-note" role="status">正在加载…</p>
+        <p v-else-if="alarmsError" class="error-box">待处理告警暂不可用</p>
+        <template v-else-if="alarmsLoaded">
+          <div v-if="attentionAlarms.length" class="attention-list">
+            <RouterLink v-for="item in attentionAlarms" :key="item.id" class="attention-item" :title="`${LEVEL_CN[item.level]} · ${item.device_name || item.device_code} · ${stamp(item.triggered_at)}`" :to="`/alarms?id=${item.id}`">
+              <i class="attention-dot" :class="item.level"></i>
+              <b>{{ METRIC_CN[item.metric] || item.metric }}</b>
+              <span class="num">{{ item.device_code }}</span>
+              <Icon name="chevronRight" :size="13" />
+            </RouterLink>
+          </div>
+          <p v-else class="table-note">最近记录中没有待处理告警</p>
+          <p v-if="attentionAlarms.length" class="attention-scope">最近 {{ alarmTotal }} 条中，按级别优先</p>
+        </template>
+      </section>
     </aside>
   </div>
 </template>
 
 <style scoped>
+.attention-more { display:flex; align-items:center; color:var(--brand); gap:4px; font-size:12px; }
+.attention-list { padding:0 16px; }
+.attention-item { display:flex; align-items:center; gap:8px; padding:9px 4px; border-top:1px solid var(--line); border-radius:var(--r-sm); }
+.attention-item:hover { background:var(--card-soft); }
+.attention-item b { font-weight:500; font-size:12px; }
+.attention-item > span { margin-left:auto; font-size:11px; color:var(--ink-3); }
+.attention-item > svg { color:var(--ink-3); }
+.attention-dot { width:6px; height:6px; border-radius:50%; background:var(--ink-3); }
+.attention-dot.urgent { background:var(--bad); }
+.attention-dot.major { background:var(--warn); }
+.attention-scope { margin:0; padding:6px 20px 12px; color:var(--ink-3); font-size:10px; }
+
 /* ---------- 指标卡 ---------- */
 
 .stats {
@@ -559,7 +570,7 @@ const exportCsv = () => {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 334px;
   gap: 18px;
-  align-items: start;
+  align-items: stretch;
 }
 
 .ov-main,
@@ -570,39 +581,35 @@ const exportCsv = () => {
   min-width: 0;
 }
 
-.chart-body {
-  padding: 0 12px 2px 2px;
-}
-
-.chart-foot {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  padding: 2px 18px 15px;
-  font-size: 11.5px;
-  color: var(--ink-3);
-}
-
-.legend {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-}
-
-.legend i {
-  width: 14px;
-  height: 3px;
-  border-radius: 2px;
-  background: var(--brand);
-}
-
-.foot-note {
-  margin-left: auto;
-  color: var(--ink-4);
-}
-
-.foot-sep {
-  margin: 0 6px;
+.ov-main > .card:last-child, .ov-side > .card:last-child { flex:1; }
+.ov-main > .card:last-child { display:flex; flex-direction:column; }
+.ov-main > .card:last-child .table-wrap { flex:1; }
+.ov-main > .card:last-child .table { height:100%; }
+.fleet-card .card-title { margin: 0; }
+.fleet-time, .fleet-scope { color: var(--ink-3); font-size: 12px; }
+.fleet { padding: 0 clamp(14px, 2vw, 24px) 14px; }
+.fleet-scope { margin: 0 0 12px; }
+.fleet-scope b { color: var(--ink); }
+.fleet-row { display: grid; grid-template-columns: minmax(7rem, 1fr) minmax(60px, 2fr) 5rem repeat(3, 3rem); align-items: center; gap: 12px; min-height: 45px; border-top: 1px solid var(--line-soft); }
+.fleet-head { min-height: 30px; border: 0; color: var(--ink-3); font-size: 12px; }
+.fleet-key, .fleet-mobile-label { display: inline-flex; align-items: center; gap: 5px; }
+.fleet-key { justify-content: flex-end; }
+.fleet-key i, .fleet-mobile-label i { width: 8px; height: 8px; border-radius: 2px; }
+.fleet-name { color: var(--ink); font-weight: 600; overflow-wrap: anywhere; text-decoration: none; }
+.fleet-name:hover, .fleet-name:focus-visible { color: var(--brand-deep); text-decoration: underline; }
+.fleet-name span { color: var(--ink-3); }
+.fleet-track { display: flex; height: 12px; overflow: hidden; border-radius: 3px; background: var(--track-bg); }
+.fleet-count { text-align: right; color: var(--ink-2); }
+.fleet-count.flagged { color: var(--ink); font-weight: 750; }
+.fleet-mobile-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+.fleet-card { container-type: inline-size; }
+@container (max-width: 620px) {
+  .fleet-head { display: none; }
+  .fleet-row:not(.fleet-head) { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; padding: 12px 0; }
+  .fleet-name { grid-column: 1 / -1; }
+  .fleet-track { grid-column: 1 / -1; margin: 2px 0; height: 9px; }
+  .fleet-count { text-align: left; }
+  .fleet-mobile-label { position: static; width: auto; height: auto; clip-path: none; display: flex; line-height: 1.5; font-size: 11px; font-weight: 400; color: var(--ink-3); }
 }
 
 /* ---------- 场站表 ---------- */
@@ -820,14 +827,6 @@ const exportCsv = () => {
     font-size: 24px;
   }
 
-  .chart-foot {
-    flex-wrap: wrap;
-    gap: 6px;
-  }
 
-  .foot-note {
-    margin-left: 0;
-    width: 100%;
-  }
 }
 </style>

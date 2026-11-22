@@ -22,6 +22,7 @@ import { askConfirm } from '../lib/toast'
 import { useDeviceChoices } from '../lib/useDeviceChoices'
 
 const list = ref<Schedule[]>([])
+const taskPanel = ref<'tasks' | 'runs'>('tasks')
 const runs = ref<ScheduleRunBrief[]>([])
 const stations = ref<StationRow[]>([])
 const loading = ref(true)
@@ -52,6 +53,12 @@ const blankConfig = (): ScheduleConfig => ({
   destination_version: '1',
 })
 const form = ref<ScheduleConfig>(blankConfig())
+
+function onFormEscape(event: KeyboardEvent) {
+  if (CSS.supports('selector(select:open)') && (event.currentTarget as HTMLElement).querySelector('select:open')) {
+    event.stopPropagation()
+  }
+}
 
 const flash = (text: string) => {
   notice.value = text
@@ -96,9 +103,9 @@ const strip = computed(() => {
     .filter((value): value is string => !!value)
     .sort()[0]
   return [
-    { key: 'active', label: '运行中', color: 'var(--ok)', value: `${active.length}`, note: '按设定时间自动执行' },
-    { key: 'paused', label: '已暂停', color: 'var(--warn)', value: `${paused.length}`, note: '到期或手动暂停' },
-    { key: 'cancelled', label: '已取消', color: 'var(--ink-4)', value: `${cancelled.length}`, note: '保留历史，不再执行' },
+    { key: 'active', label: '运行中', color: 'var(--ok)', value: `${active.length}`, note: '' },
+    { key: 'paused', label: '已暂停', color: 'var(--warn)', value: `${paused.length}`, note: '' },
+    { key: 'cancelled', label: '已取消', color: 'var(--ink-4)', value: `${cancelled.length}`, note: '' },
     { key: 'next', label: '下次执行', color: 'var(--brand)', value: next ? clock(next) : '—', note: next ? across(next) : '暂无待执行任务' },
   ]
 })
@@ -199,7 +206,7 @@ const openDetail = async (item: Schedule) => {
 
 const CAP_CN: Record<string, string> = {
   'schedule.propose': '配置审批',
-  'rule.preview': '规则预演',
+  'rule.preview': '告警阈值对比',
   'assistant.answer': '对话回答',
 }
 const RUN_STATUS_CN: Record<string, string> = {
@@ -312,14 +319,18 @@ const bjInput = (ms: number) => {
 }
 
 const previewOpen = ref(sessionStorage.getItem('sched-preview-open') === '1')
+const thresholdExamples: Record<RulePreviewInput['metric'], [number, number]> = {
+  temperature: [40, 35], power: [110, 100], voltage: [430, 420], current: [180, 170],
+}
+const metrics = Object.keys(thresholdExamples) as RulePreviewInput['metric'][]
 const previewForm = ref({
   device_id: 0,
   metric: 'temperature' as RulePreviewInput['metric'],
   start: '',
   end: '',
   operator: 'gt' as RulePreviewInput['operator'],
-  threshold: 35,
-  baseline_threshold: 40,
+  threshold: thresholdExamples.temperature[1],
+  baseline_threshold: thresholdExamples.temperature[0],
   expected_interval_seconds: 300,
 })
 const previewError = ref('')
@@ -331,15 +342,41 @@ const previewConnection = ref<RunConnectionState>('stopped')
 const previewArtifactID = ref('')
 let previewAbort: AbortController | null = null
 
-/** 默认窗口取「已经结束的最近 24 小时」：无论几点打开，都有一整天的样本可比 */
-const defaultWindow = () => {
+const rangeHours = ref<1 | 24 | 'custom'>(24)
+const selectWindow = (hours: 1 | 24 | 'custom') => {
+  rangeHours.value = hours
+  previewError.value = ''
+  if (hours === 'custom') return
   const end = Math.floor(Date.now() / 600_000) * 600_000
   previewForm.value.end = bjInput(end)
-  previewForm.value.start = bjInput(end - 24 * 3600_000)
+  previewForm.value.start = bjInput(end - hours * 3600_000)
 }
-defaultWindow()
+selectWindow(24)
 
-const { devices, loading: devicesLoading, error: devicesError, load: loadDevices } = useDeviceChoices(toRef(previewForm.value, 'device_id'))
+const selectMetric = (metric: RulePreviewInput['metric']) => {
+  if (previewForm.value.metric === metric) return
+  previewForm.value.metric = metric
+  const [baseline, candidate] = thresholdExamples[metric]
+  previewForm.value.baseline_threshold = baseline
+  previewForm.value.threshold = candidate
+  previewError.value = ''
+}
+
+const { devices, loading: devicesLoading, error: devicesError, load: loadDevices } = useDeviceChoices(toRef(previewForm.value, 'device_id'), { autoSelect: false })
+
+const deviceGroups = computed(() => {
+  const groups = new Map<string, typeof devices.value>()
+  for (const device of devices.value) {
+    const code = device.station_code
+    const items = groups.get(code)
+    if (items) items.push(device)
+    else groups.set(code, [device])
+  }
+  return Array.from(groups, ([code, items]) => ({
+    code, label: stations.value.find(station => station.station_code === code)?.station_name || code || '未分配场站',
+    items,
+  }))
+})
 
 const togglePreview = () => {
   previewOpen.value = !previewOpen.value
@@ -354,18 +391,11 @@ onMounted(() => {
   if (previewOpen.value) void loadDevices()
 })
 
-const previewWindow = (hours: number) => {
-  const end = Math.floor(Date.now() / 600_000) * 600_000
-  previewForm.value.end = bjInput(end)
-  previewForm.value.start = bjInput(end - hours * 3600_000)
-  previewError.value = ''
-}
-
 const readPreviewResult = async (snapshot: RunSnapshot) => {
   previewNotice.value = ''
   previewRun.value = snapshot
   if (snapshot.status !== 'succeeded') {
-    previewError.value = snapshot.error?.message || '预演未完成，可在「最近的审查与预演」里重新打开这条运行'
+    previewError.value = snapshot.error?.message || '预演未完成，可在「操作记录」里重新打开这条运行'
     return
   }
   const artifact = snapshot.artifacts.find((item) => String(item.name ?? '').endsWith('.json'))
@@ -423,7 +453,7 @@ const openPreviewRun = async (runId: string, scroll = false) => {
 }
 
 const submitPreview = async () => {
-  previewError.value = ''
+  selectWindow(rangeHours.value)
   const form = previewForm.value
   if (!form.device_id) {
     previewError.value = '请选择要预演的设备'
@@ -447,8 +477,8 @@ const submitPreview = async () => {
     previewError.value = '只能预演已经发生的历史窗口'
     return
   }
-  if (!Number.isInteger(form.threshold) || !Number.isInteger(form.baseline_threshold)) {
-    previewError.value = '基准阈值与候选阈值必须是整数'
+  if (![form.threshold, form.baseline_threshold].every(value => Number.isInteger(value) && Math.abs(value) <= 1_000_000)) {
+    previewError.value = '两组阈值都需填写整数，范围为 −1,000,000 至 1,000,000'
     return
   }
   if (!Number.isInteger(form.expected_interval_seconds) || form.expected_interval_seconds < 1 || form.expected_interval_seconds > 86_400) {
@@ -511,12 +541,8 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="sc-intro">
-    <h1>定期任务</h1>
-    <p>到点自动巡检设备、生成报告，结果放在平台站内。新建或修改后，需要管理员批准才会开始执行。</p>
-  </div>
-
   <div class="page-head">
+    <h1>定期任务</h1>
     <div class="page-actions">
       <button class="btn" :disabled="loading" @click="load">
         <Icon name="refresh" :size="15" />刷新
@@ -532,11 +558,11 @@ onUnmounted(() => {
     <Icon name="check" :size="14" />{{ notice }}
   </div>
 
-  <section class="card strip">
+  <section v-if="!failed || list.length" class="card strip" aria-label="任务概况">
     <div v-for="item in strip" :key="item.key" class="strip-cell">
       <span class="strip-label"><i :style="{ background: item.color }"></i>{{ item.label }}</span>
-      <span class="strip-value num">{{ item.value }}</span>
-      <span class="strip-note">{{ item.note }}</span>
+      <span class="strip-value num">{{ loading && !list.length ? '—' : item.value }}</span>
+      <span v-if="(!loading || list.length) && item.note" class="strip-note">{{ item.note }}</span>
     </div>
   </section>
 
@@ -563,15 +589,15 @@ onUnmounted(() => {
     </div>
   </section>
 
-  <div class="sc-grid">
-    <div class="sc-main">
-      <section class="card">
-        <div class="card-head">
-          <span class="card-title">我的任务</span>
-          <span class="card-sub">{{ list.length }} 个 · 只列本人创建的任务</span>
-        </div>
-
-        <div class="task-list">
+  <div class="sc-main">
+    <section class="card">
+      <nav class="task-switch" aria-label="任务与操作记录">
+        <button :aria-pressed="taskPanel === 'tasks'" @click="taskPanel = 'tasks'">我的任务 <span>{{ list.length }}</span></button>
+        <button :aria-pressed="taskPanel === 'runs'" @click="taskPanel = 'runs'">操作记录 <span>{{ runs.length }}</span></button>
+      </nav>
+      <template v-if="taskPanel === 'tasks'">
+        <p v-if="loading && !list.length" class="empty small" role="status">正在读取任务…</p>
+        <div v-else-if="list.length || !failed" class="task-list">
           <article v-for="item in list" :key="item.id" class="task" :class="`is-${item.status}`">
             <span class="task-icon" :class="`t-${statusTone(item.status)}`">
               <Icon :name="item.config.task_type === 'inspection' ? 'activity' : 'layers'" :size="17" />
@@ -624,204 +650,169 @@ onUnmounted(() => {
           </article>
 
           <div v-if="!list.length && !loading" class="empty-start">
-            <p class="empty-lead">还没有任务。选一个常用配置，改改时间和范围就能用：</p>
+            <p class="empty-lead">还没有定期任务，可以从以下安排开始。</p>
             <div class="tpl-grid">
               <button class="tpl" @click="useTemplate('daily-inspection')">
                 <b>每天巡检一次</b>
-                <span>每天 09:00 检查全部场站，生成巡检记录</span>
+                <span>09:00 · 全部设备</span>
               </button>
               <button class="tpl" @click="useTemplate('interval-inspection')">
                 <b>每半小时巡检</b>
-                <span>每 30 分钟检查业务场站，适合盯重点设备</span>
+                <span>每 30 分钟 · 业务设备</span>
               </button>
               <button class="tpl" @click="useTemplate('daily-report')">
                 <b>每天生成日报</b>
-                <span>每天 18:00 汇总当天运行情况</span>
+                <span>18:00 · 全部设备</span>
               </button>
             </div>
           </div>
         </div>
-      </section>
+      </template>
+      <div v-else class="review-list">
+        <button v-for="item in runs" :key="item.run_id" class="review" @click="openRun(item)">
+          <span class="review-cap">{{ CAP_CN[item.capability] || item.capability }}</span>
+          <span class="review-id num">{{ shortRunID(item.run_id) }}</span>
+          <StatusChip :dot="false" :tone="runTone(item.status)" :label="RUN_STATUS_CN[item.status] || item.status" />
+        </button>
+        <div v-if="!runs.length && !failed" class="empty small">{{ loading ? '正在读取记录…' : '暂无操作记录' }}</div>
+      </div>
+    </section>
 
-
-    </div>
-
-    <aside class="sc-side">
-      <section class="card">
-        <div class="card-head">
-          <span class="card-title">使用说明</span>
+    <section class="card preview-card">
+      <h2 class="preview-heading">
+        <button class="preview-toggle" :aria-expanded="previewOpen" aria-controls="threshold-comparison" @click="togglePreview">
+          <Icon name="activity" :size="18" /><span>告警阈值对比</span>
+          <Icon name="chevronDown" :size="16" class="disclosure-icon" />
+        </button>
+      </h2>
+      <div v-show="previewOpen" id="threshold-comparison" class="preview-body">
+        <p class="preview-note">用同一段历史数据比较两组阈值各命中多少个采样点。试算只读。</p>
+        <div class="pv-section">
+          <label class="form-row">
+            <span>设备</span>
+            <select v-model.number="previewForm.device_id" class="select" :disabled="devicesLoading || !devices.length">
+              <option :value="0" disabled>{{ devicesLoading ? '读取设备…' : devicesError ? '设备列表加载失败' : devices.length ? '请选择要对比的设备' : '暂无设备' }}</option>
+              <optgroup v-for="group in deviceGroups" :key="group.code" :label="group.label">
+                <option v-for="item in group.items" :key="item.id" :value="item.id" :title="item.name">{{ item.device_code }}</option>
+              </optgroup>
+            </select>
+          </label>
+          <fieldset class="choice-group">
+            <legend>指标</legend>
+            <div class="choice-row">
+              <button v-for="metric in metrics" :key="metric" type="button" :aria-pressed="previewForm.metric === metric" @click="selectMetric(metric)">{{ METRIC_CN[metric] }}</button>
+            </div>
+          </fieldset>
         </div>
-        <div class="note-body">
-          <p>任务只会<b>读取</b>数据并生成报告，不会改动设备，也不会修改报警规则。</p>
-          <p>有效期到了任务会自动暂停，不会默默续期；要继续用需要重新审批。</p>
-          <p>报告只放在平台站内，暂不支持发到邮箱或其它系统。</p>
-        </div>
-      </section>
-
-      <section class="card">
-        <div class="card-head">
-          <span class="card-title">最近的操作记录</span>
-          <span class="card-sub">最新 {{ runs.length }} 条 · 只列本人提交</span>
-        </div>
-        <div class="review-list">
-          <button v-for="item in runs" :key="item.run_id" class="review" @click="openRun(item)">
-            <span class="review-cap">{{ CAP_CN[item.capability] || item.capability }}</span>
-            <span class="review-id num">{{ shortRunID(item.run_id) }}</span>
-            <StatusChip :dot="false" :tone="runTone(item.status)" :label="RUN_STATUS_CN[item.status] || item.status" />
-          </button>
-          <div v-if="!runs.length" class="empty small">还没有配置审查或预演记录</div>
-        </div>
-      </section>
-    </aside>
-
-      <!-- 方案预演：先试算再改规则 -->
-      <section class="card preview-card">
-        <div class="card-head">
-          <span class="card-title">改报警线前，先试算</span>
-          <span class="card-sub">选一台设备，用过去 24 小时的数据看改完会多触发几次</span>
-          <div class="card-tools">
-            <button class="btn btn-sm" @click="togglePreview">
-              <Icon name="chevronDown" :size="13" :style="{ transform: previewOpen ? 'none' : 'rotate(-90deg)' }" />
-              {{ previewOpen ? '收起' : '展开' }}
-            </button>
-          </div>
-        </div>
-
-        <div v-show="previewOpen" class="preview-body">
-          <p class="preview-note">
-            这里只是试算，不会改动线上报警规则。命中次数按采样点比较，不等于真实收益或漏报率。
-          </p>
-
+        <fieldset class="compare-fields">
+          <legend>触发条件</legend>
           <div class="pv-form">
-            <label class="form-row span-2">
-              <span>选一台设备</span>
-              <select v-model.number="previewForm.device_id" class="field" :disabled="devicesLoading">
-                <option :value="0" disabled>{{ devicesLoading ? '读取设备…' : devices.length ? '请选择设备' : devicesError ? '设备列表加载失败' : '暂无设备' }}</option>
-                <option v-for="item in devices" :key="item.id" :value="item.id">
-                  {{ item.device_code }} · {{ item.name }}
-                </option>
+            <label class="form-row">
+              <span>何时触发</span>
+              <select v-model="previewForm.operator" class="select">
+                <option value="gt">高于阈值</option><option value="gte">达到或高于阈值</option>
+                <option value="lt">低于阈值</option><option value="lte">达到或低于阈值</option>
               </select>
             </label>
-
             <label class="form-row">
-              <span>看哪个指标</span>
-              <select v-model="previewForm.metric" class="field">
-                <option value="temperature">温度 ℃</option>
-                <option value="power">功率 kW</option>
-                <option value="voltage">电压 V</option>
-                <option value="current">电流 A</option>
-              </select>
-            </label>
-
-            <label class="form-row">
-              <span>试算开始（北京时间）</span>
-              <input v-model="previewForm.start" type="datetime-local" class="field" />
-            </label>
-
-            <label class="form-row">
-              <span>试算结束（北京时间）</span>
-              <input v-model="previewForm.end" type="datetime-local" class="field" />
-            </label>
-
-            <label class="form-row">
-              <span>设备多久上报一次（秒）</span>
-              <input v-model.number="previewForm.expected_interval_seconds" type="number" min="1" max="86400" step="1" class="field" />
-            </label>
-
-            <label class="form-row">
-              <span>判断方式</span>
-              <select v-model="previewForm.operator" class="field">
-                <option value="gt">大于 &gt;</option>
-                <option value="gte">大于等于 ≥</option>
-                <option value="lt">小于 &lt;</option>
-                <option value="lte">小于等于 ≤</option>
-              </select>
-            </label>
-
-            <label class="form-row">
-              <span>现在的报警线</span>
+              <span>基准阈值（{{ METRIC_UNIT[previewForm.metric] }}）</span>
               <input v-model.number="previewForm.baseline_threshold" type="number" step="1" class="field" />
             </label>
-
             <label class="form-row">
-              <span>想改成</span>
+              <span>对比阈值（{{ METRIC_UNIT[previewForm.metric] }}）</span>
               <input v-model.number="previewForm.threshold" type="number" step="1" class="field" />
             </label>
           </div>
+          <p class="preview-note">预填值是示例。可把基准填为现行规则的值，把对比阈值填为想尝试的值。</p>
+        </fieldset>
+        <fieldset class="choice-group">
+          <legend>历史时段</legend>
+          <div class="choice-row">
+            <button type="button" :aria-pressed="rangeHours === 1" @click="selectWindow(1)">近 1 小时</button>
+            <button type="button" :aria-pressed="rangeHours === 24" @click="selectWindow(24)">近 24 小时</button>
+            <button type="button" :aria-pressed="rangeHours === 'custom'" @click="selectWindow('custom')">自定义</button>
+          </div>
+          <div v-if="rangeHours === 'custom'" class="pv-section custom-window">
+            <label class="form-row"><span>开始（北京时间）</span><input v-model="previewForm.start" type="datetime-local" class="field" /></label>
+            <label class="form-row"><span>结束（最长 24 小时）</span><input v-model="previewForm.end" type="datetime-local" class="field" /></label>
+          </div>
+        </fieldset>
+        <details class="sampling">
+          <summary>采样间隔 · {{ previewForm.expected_interval_seconds || '—' }} 秒</summary>
+          <label class="form-row"><span>设备预期上报间隔（秒，用于估算缺测）</span>
+            <input v-model.number="previewForm.expected_interval_seconds" type="number" min="1" max="86400" step="1" class="field" />
+          </label>
+        </details>
 
-          <p v-if="devicesError" class="preview-error" role="alert">
-            设备列表未取到：{{ devicesError }}
-            <button class="btn btn-sm" :disabled="devicesLoading" @click="loadDevices">重试设备列表</button>
-          </p>
+        <p v-if="devicesError" class="preview-error" role="alert">
+          设备列表未取到：{{ devicesError }}
+          <button class="btn btn-sm" :disabled="devicesLoading" @click="loadDevices">重试设备列表</button>
+        </p>
 
-          <div class="preview-actions">
-            <button class="btn btn-primary" :disabled="previewBusy || devicesLoading || !!devicesError || !devices.length" @click="submitPreview">
-              {{ previewBusy ? '试算中…' : '开始试算' }}
-            </button>
-            <button class="btn btn-sm" @click="previewWindow(24)">近 24 小时</button>
-            <button class="btn btn-sm" @click="previewWindow(1)">近 1 小时</button>
-            <span class="preview-hint">按设备真实上报周期填：填小了会把「没上报」算成漏采。</span>
+        <div class="preview-actions">
+          <button class="btn btn-primary" :disabled="previewBusy || devicesLoading || !!devicesError || !devices.length" @click="submitPreview">
+            {{ previewBusy ? '试算中…' : '开始试算' }}
+          </button>
+        </div>
+
+        <p v-if="previewError" class="preview-error" role="alert">{{ previewError }}</p>
+        <p v-else-if="previewNotice" class="preview-status">
+          <i></i>{{ previewNotice }}<span v-if="previewConnection === 'reconnecting'"> · 连接中断，正在恢复</span>
+        </p>
+
+        <div v-if="previewResult" class="pv-result">
+          <div class="pv-result-head">
+            <b>试算结果</b>
+            <StatusChip
+              :dot="false"
+              :tone="previewComplete ? 'ok' : 'warn'"
+              :label="previewComplete ? '采样完整' : '采样不完整'"
+            />
+            <span class="pv-result-win num">
+              {{ stamp(previewResult.coverage.start_inclusive) }} → {{ stamp(previewResult.coverage.end_exclusive) }}
+            </span>
           </div>
 
-          <p v-if="previewError" class="preview-error">{{ previewError }}</p>
-          <p v-else-if="previewNotice" class="preview-status">
-            <i></i>{{ previewNotice }}<span v-if="previewConnection === 'reconnecting'"> · 连接中断，正在恢复</span>
+          <p class="pv-summary">{{ previewEcho }}</p>
+
+          <div class="pv-stats">
+            <div class="pv-stat">
+              <span>有效样本</span><b class="num">{{ n(previewResult.coverage.valid_samples) }}</b>
+            </div>
+            <div class="pv-stat">
+              <span>预计缺测</span>
+              <b class="num" :class="{ 'is-hot': previewResult.coverage.missing_samples > 0 }">
+                {{ n(previewResult.coverage.missing_samples) }}
+              </b>
+            </div>
+            <div class="pv-stat">
+              <span>基准命中点数</span><b class="num">{{ n(previewResult.metrics.baseline_hits) }}</b>
+            </div>
+            <div class="pv-stat">
+              <span>对比命中点数</span><b class="num">{{ n(previewResult.metrics.candidate_hits) }}</b>
+            </div>
+          </div>
+
+          <p class="pv-diff">
+            候选新增命中 <b class="num">{{ n(previewResult.metrics.new_hits) }}</b>
+            · 基准独有 <b class="num">{{ n(previewResult.metrics.baseline_only_hits) }}</b>
+            · 区间断点 {{ n(previewResult.coverage.interior_gap_samples) }} 点
+            · 快照 <span class="num">{{ previewResult.snapshot_sha256.slice(0, 12) }}</span>
           </p>
 
-          <div v-if="previewResult" class="pv-result">
-            <div class="pv-result-head">
-              <b>试算结果</b>
-              <StatusChip
-                :dot="false"
-                :tone="previewComplete ? 'ok' : 'warn'"
-                :label="previewComplete ? '采样完整' : '采样不完整'"
-              />
-              <span class="pv-result-win num">
-                {{ stamp(previewResult.coverage.start_inclusive) }} → {{ stamp(previewResult.coverage.end_exclusive) }}
-              </span>
-            </div>
+          <details class="pv-notes">
+            <summary>假设与边界 · {{ previewResult.assumptions.length }} 条</summary>
+            <ul>
+              <li v-for="(item, index) in previewResult.assumptions" :key="index">{{ item }}</li>
+            </ul>
+          </details>
 
-            <p class="pv-summary">{{ previewEcho }}</p>
-
-            <div class="pv-stats">
-              <div class="pv-stat">
-                <span>有效样本</span><b class="num">{{ n(previewResult.coverage.valid_samples) }}</b>
-              </div>
-              <div class="pv-stat">
-                <span>预计缺测</span>
-                <b class="num" :class="{ 'is-hot': previewResult.coverage.missing_samples > 0 }">
-                  {{ n(previewResult.coverage.missing_samples) }}
-                </b>
-              </div>
-              <div class="pv-stat">
-                <span>现在会触发</span><b class="num">{{ n(previewResult.metrics.baseline_hits) }}</b>
-              </div>
-              <div class="pv-stat">
-                <span>改完会触发</span><b class="num">{{ n(previewResult.metrics.candidate_hits) }}</b>
-              </div>
-            </div>
-
-            <p class="pv-diff">
-              候选新增命中 <b class="num">{{ n(previewResult.metrics.new_hits) }}</b>
-              · 基准独有 <b class="num">{{ n(previewResult.metrics.baseline_only_hits) }}</b>
-              · 区间断点 {{ n(previewResult.coverage.interior_gap_samples) }} 点
-              · 快照 <span class="num">{{ previewResult.snapshot_sha256.slice(0, 12) }}</span>
-            </p>
-
-            <details class="pv-notes">
-              <summary>假设与边界 · {{ previewResult.assumptions.length }} 条</summary>
-              <ul>
-                <li v-for="(item, index) in previewResult.assumptions" :key="index">{{ item }}</li>
-              </ul>
-            </details>
-
-            <div class="pv-result-actions">
-              <button class="btn btn-sm" @click="downloadPreview">下载结果 JSON</button>
-              <span class="preview-hint">结论只对这段快照成立，未修改线上规则。</span>
-            </div>
+          <div class="pv-result-actions">
+            <button class="btn btn-sm" @click="downloadPreview">下载结果 JSON</button>
           </div>
         </div>
-      </section>
+      </div>
+    </section>
   </div>
 
   <!-- 任务详情 + 运行历史 -->
@@ -889,13 +880,13 @@ onUnmounted(() => {
   <Drawer
     v-if="formOpen"
     :title="formMode === 'edit' ? '修改任务' : '新建任务'"
-    sub="提交后生成待批运行，批准前不会执行"
+    sub="提交后需本人批准，任务才会执行"
     @close="formOpen = false"
   >
-    <div class="form">
+    <div class="form" @keydown.esc="onFormEscape">
       <label class="form-row">
         <span>任务类型</span>
-        <select v-model="form.task_type" class="field">
+        <select v-model="form.task_type" class="select">
           <option value="daily_report">每日报告</option>
           <option value="inspection">自动巡检</option>
         </select>
@@ -903,7 +894,7 @@ onUnmounted(() => {
 
       <label class="form-row">
         <span>范围</span>
-        <select v-model="form.scope" class="field">
+        <select v-model="form.scope" class="select">
           <option value="all">所有设备</option>
           <option value="business">业务设备</option>
           <option value="baseline">指定场站</option>
@@ -912,7 +903,7 @@ onUnmounted(() => {
 
       <label v-if="form.scope === 'baseline'" class="form-row">
         <span>场站</span>
-        <select v-model="form.station_code" class="field">
+        <select v-model="form.station_code" class="select">
           <option :value="null">请选择</option>
           <option v-for="item in stations" :key="item.station_code" :value="item.station_code">
             {{ item.station_code }} · {{ item.station_name }}
@@ -922,7 +913,7 @@ onUnmounted(() => {
 
       <label class="form-row">
         <span>触发方式</span>
-        <select v-model="form.mode" class="field">
+        <select v-model="form.mode" class="select">
           <option value="daily">每天固定时间</option>
           <option value="interval">每隔一段时间</option>
         </select>
@@ -951,38 +942,20 @@ onUnmounted(() => {
       <div v-if="formError" class="form-error">{{ formError }}</div>
 
       <div class="form-note">
-        任务只会读取数据，不会改动设备。提交后需要管理员批准才会开始执行。
+        任务只读，报告投递到平台站内。授权到期后任务会暂停。
       </div>
     </div>
 
     <template #footer>
       <button class="btn" @click="formOpen = false">取消</button>
       <button class="btn btn-primary" :disabled="submitting" @click="submitForm">
-        {{ submitting ? '提交中…' : '提交给管理员批准' }}
+        {{ submitting ? '提交中…' : '提交审批' }}
       </button>
     </template>
   </Drawer>
 </template>
 
 <style scoped>
-.sc-intro {
-  margin-bottom: 10px;
-}
-
-.sc-intro h1 {
-  margin: 0;
-  font-size: 17px;
-  font-weight: 700;
-  color: var(--ink-1);
-}
-
-.sc-intro p {
-  margin: 5px 0 0;
-  font-size: 12px;
-  line-height: 1.6;
-  color: var(--ink-3);
-}
-
 .empty-start {
   padding: 24px 18px 20px;
 }
@@ -1090,12 +1063,24 @@ onUnmounted(() => {
   font-size: 12px;
 }
 
-.sc-grid {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 322px;
-  gap: 16px;
-  align-items: start;
+.task-switch {
+  display: flex;
+  gap: 20px;
+  padding: 0 18px;
+  border-bottom: 1px solid var(--line-soft);
 }
+.task-switch button {
+  padding: 13px 0 11px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--ink-3);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.task-switch button[aria-pressed="true"] { color: var(--brand); border-bottom-color: var(--brand); }
+.task-switch span { margin-left: 3px; font-size: 12px; font-variant-numeric: tabular-nums; }
 
 .sc-main {
   display: flex;
@@ -1104,16 +1089,6 @@ onUnmounted(() => {
   min-width: 0;
 }
 
-/* 试算工具放在网格最后并跨两列：收起时只占一行，不抢主区注意力 */
-.preview-card {
-  grid-column: 1 / -1;
-}
-
-.sc-side {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-}
 
 .task-list {
   display: flex;
@@ -1240,6 +1215,8 @@ onUnmounted(() => {
 
 /* 最近的审查与预演：一行一条，点击打开运行或预演结果 */
 .review-list {
+  max-height: 32rem;
+  overflow-y: auto;
   display: flex;
   flex-direction: column;
   padding: 2px 12px 14px;
@@ -1247,7 +1224,7 @@ onUnmounted(() => {
 
 .review {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
+  grid-template-columns: minmax(0, 1fr) minmax(60px, .3fr) 6em;
   align-items: center;
   gap: 8px;
   padding: 8px 10px;
@@ -1285,56 +1262,54 @@ onUnmounted(() => {
   color: var(--ink-3);
 }
 
-.note-body {
+/* 历史采样试算 */
+.preview-heading { margin: 0; }
+.preview-toggle {
   display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 0 20px 18px;
-  font-size: 11.5px;
-  line-height: 1.6;
-  color: var(--ink-3);
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 16px 18px;
+  border: 0;
+  border-radius: var(--r-lg);
+  background: transparent;
+  color: var(--ink);
+  text-align: left;
+  font: inherit;
+  font-size: 15px;
+  font-weight: 650;
+  cursor: pointer;
 }
-
-.note-body b {
-  color: var(--ink-2);
+.preview-toggle:hover { background: var(--card-hover); }
+.preview-toggle > svg:first-child { color: var(--brand); }
+.disclosure-icon { margin-left: auto; color: var(--ink-3); }
+.preview-toggle[aria-expanded="true"] .disclosure-icon { transform: rotate(180deg); }
+.preview-body { display: grid; gap: 18px; padding: 0 18px 18px; }
+.preview-note { margin: 0; font-size: 12px; color: var(--ink-2); line-height: 1.6; }
+.pv-section, .pv-form { display: grid; align-items: end; gap: 12px; }
+.pv-section { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.pv-form { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.choice-group, .compare-fields { margin: 0; min-width: 0; padding: 0; border: 0; }
+.choice-group legend, .compare-fields legend { padding: 0; margin-bottom: 6px; font-size: 12px; color: var(--ink-2); }
+.compare-fields { padding: 10px 14px 12px; border: 1px solid var(--line); border-radius: var(--r-md); }
+.compare-fields legend { margin: 0; padding: 0 5px; color: var(--ink); font-weight: 600; }
+.compare-fields .preview-note { margin-top: 8px; }
+.choice-row { display: flex; flex-wrap: wrap; gap: 4px; }
+.choice-row button {
+  padding: 7px 10px; border: 1px solid var(--line); border-radius: var(--r-sm);
+  background: var(--card); color: var(--ink-2); font: inherit; font-size: 12px; cursor: pointer;
 }
-
-/* 方案预演 */
-.preview-body {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  padding: 0 20px 18px;
-}
-
-.preview-note {
-  font-size: 11.5px;
-  line-height: 1.65;
-  color: var(--ink-3);
-}
-
-.pv-form {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 10px 14px;
-}
-
-.pv-form .span-2 {
-  grid-column: span 2;
-}
-
+.choice-row button[aria-pressed="true"] { border-color: var(--brand); background: var(--brand-soft); color: var(--brand); font-weight: 650; }
+.custom-window, .sampling .form-row { margin-top: 10px; }
+.sampling { font-size: 12px; color: var(--ink-2); }
+.sampling summary { cursor: pointer; }
+.sampling .field { max-width: 15rem; }
 .preview-actions,
 .pv-result-actions {
   display: flex;
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
-}
-
-.preview-hint {
-  font-size: 11px;
-  line-height: 1.5;
-  color: var(--ink-4);
 }
 
 .preview-error {
@@ -1509,9 +1484,77 @@ onUnmounted(() => {
   color: var(--ink-3);
 }
 
+.form-row .select,
 .form-row .field {
   min-width: 0;
   width: 100%;
+}
+
+.form-row .select {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.form-row .select:not(:disabled):hover {
+  border-color: var(--btn-hover-line);
+}
+
+.form-row .select:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 1px;
+}
+
+.form-row .select:disabled {
+  background-color: var(--card-soft);
+  color: var(--ink-4);
+  cursor: default;
+}
+
+@supports (appearance: base-select) and selector(::picker(select)) {
+  .form-row .select,
+  .form-row .select::picker(select) {
+    appearance: base-select;
+  }
+
+  .form-row .select { align-items: center; }
+  .form-row .select::picker-icon { display: none; }
+
+  .form-row .select::picker(select) {
+    max-block-size: min(19rem, 44dvh);
+    max-inline-size: calc(100vw - 24px);
+    margin-block: 4px;
+    padding: 4px;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    border: 1px solid var(--line-strong);
+    border-radius: var(--r-lg);
+    background: var(--card);
+    color: var(--ink);
+    box-shadow: var(--shadow-2);
+    font: inherit;
+  }
+
+  .form-row option {
+    min-height: 34px;
+    padding: 6px 10px;
+    border-radius: var(--r-sm);
+    font-weight: 400;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  .form-row optgroup {
+    padding: 4px 0;
+    color: var(--ink-3);
+    font-size: 12px;
+  }
+
+  .form-row optgroup + optgroup { border-top: 1px solid var(--line-soft); }
+  .form-row option:not(:disabled):hover { background: var(--hover-bg); }
+  .form-row option:checked { background: var(--brand-soft); color: var(--ink); font-weight: 600; }
+  .form-row option:focus-visible { outline: 2px solid var(--brand); outline-offset: -2px; }
+  .form-row option::checkmark { order: 1; margin-inline-start: auto; color: var(--brand); }
 }
 
 .form-row.is-static b {
@@ -1539,28 +1582,12 @@ onUnmounted(() => {
   padding: 10px 0;
 }
 
-@media (max-width: 1240px) {
-  .sc-grid {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .sc-side {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
+@media (min-width: 1000px) {
+  .preview-body { grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr); align-items: start; column-gap: 26px; }
+  .preview-body > * { grid-column: 1 / -1; }
+  .preview-body > .pv-section, .preview-body > .choice-group { grid-column: 1; }
+  .preview-body > .compare-fields, .preview-body > .sampling { grid-column: 2; }
 }
-
-/* 三列里的时间输入放不下就退两列：datetime-local 太窄会截断小时分钟，设备也收回一格免得落单 */
-@media (max-width: 1180px) {
-  .pv-form {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .pv-form .span-2 {
-    grid-column: auto;
-  }
-}
-
 @media (max-width: 900px) {
   .task {
     flex-wrap: wrap;
@@ -1588,17 +1615,7 @@ onUnmounted(() => {
     border-top: 1px solid var(--line-soft);
   }
 
-  .sc-side {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .pv-form {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .pv-form .span-2 {
-    grid-column: auto;
-  }
+  .pv-form, .pv-section { grid-template-columns: minmax(0, 1fr); }
 
   .pv-stats {
     grid-template-columns: repeat(2, minmax(0, 1fr));

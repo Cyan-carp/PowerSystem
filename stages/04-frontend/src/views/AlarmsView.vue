@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import FieldRecords from '../components/FieldRecords.vue'
 import { computed, onMounted, ref, watch } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 import Icon from '../components/Icon.vue'
@@ -142,7 +143,7 @@ const strip = computed(() => {
   const total = Math.max(1, counts.value.total)
   const share = (value: number) => `${Math.round((value / total) * 100)}%`
   return [
-    { key: 'unhandled', label: '未处理', value: counts.value.unhandled, note: '需值班确认', color: 'var(--brand)' },
+    { key: 'unhandled', label: '未处理', value: counts.value.unhandled, note: '', color: 'var(--brand)' },
     { key: 'urgent', label: '紧急', value: counts.value.urgent, note: `占全部 ${share(counts.value.urgent)}`, color: 'var(--bad)' },
     { key: 'major', label: '重要', value: counts.value.major, note: `占全部 ${share(counts.value.major)}`, color: 'var(--warn)' },
     { key: 'recovered', label: '已恢复', value: counts.value.recovered, note: `占全部 ${share(counts.value.recovered)}`, color: 'var(--ok)' },
@@ -235,12 +236,6 @@ const ack = async (alarm: AlarmView) => {
 
 const archiveOne = async (alarm: AlarmView) => {
   if (busy.value) return
-  const go = await askConfirm({
-    title: `归档告警 #${alarm.id}`,
-    body: '归档只打标记，不删除告警事实、时间线与规则快照。归档后该告警不再出现在列表里，目前没有撤销入口。',
-    confirmText: '归档',
-  })
-  if (!go) return
   busy.value = true
   try {
     await api.archiveAlarm(alarm.id)
@@ -351,7 +346,7 @@ const timeline = computed(() => {
     <div v-for="item in strip" :key="item.key" class="strip-cell">
       <span class="strip-label"><i :style="{ background: item.color }"></i>{{ item.label }}</span>
       <span class="strip-value num">{{ item.value }}</span>
-      <span class="strip-note">{{ item.note }}</span>
+      <span v-if="item.note" class="strip-note">{{ item.note }}</span>
     </div>
   </section>
 
@@ -408,12 +403,13 @@ const timeline = computed(() => {
         <colgroup>
           <col style="width: 4%" />
           <col style="width: 8%" />
-          <col style="width: 30%" />
+          <col style="width: 26%" />
           <col style="width: 11%" />
           <col style="width: 15%" />
           <col style="width: 11%" />
           <col style="width: 9%" />
           <col style="width: 12%" />
+          <col style="width: 4%" />
         </colgroup>
         <thead>
           <tr>
@@ -437,6 +433,7 @@ const timeline = computed(() => {
             <th>状态</th>
             <th class="r">持续</th>
             <th>触发时刻</th>
+            <th aria-label="操作"></th>
           </tr>
         </thead>
         <tbody>
@@ -484,9 +481,14 @@ const timeline = computed(() => {
               <span class="num">{{ clock(row.triggered_at) }}</span>
               <span class="day">{{ dayOf(row.triggered_at) }}</span>
             </td>
+            <td class="archive-cell" @click.stop>
+              <button class="archive-action" :disabled="busy" title="归档告警" :aria-label="`归档告警 #${row.id}`" @click="archiveOne(row)">
+                <Icon name="archive" :size="17" />
+              </button>
+            </td>
           </tr>
           <tr v-if="!paged.length">
-            <td colspan="8" class="empty">当前筛选下没有告警。</td>
+            <td colspan="9" class="empty">当前筛选下没有告警。</td>
           </tr>
         </tbody>
       </table>
@@ -562,9 +564,11 @@ const timeline = computed(() => {
     </ol>
 
     <p class="panel-note">
-      确认只对「未处理且未恢复」的告警生效；若已被他人抢先确认，后端返回冲突，页面会自动重新对齐状态。
-      归档只打标记，不删除告警事实、时间线与规则快照，归档后不再出现在列表里，也没有撤销入口。
+      仅可确认尚未恢复的未处理告警。
+      归档后移出列表，历史保留，无法撤销。
     </p>
+
+    <FieldRecords target="alarms" :target-id="selected.id" />
 
     <template #footer>
       <RouterLink class="btn btn-sm" :to="`/devices?device=${selected.device_id}`" @click="close">
@@ -588,6 +592,12 @@ const timeline = computed(() => {
 </template>
 
 <style scoped>
+.archive-cell { padding-left:4px; padding-right:4px; }
+.archive-action { display:grid; place-items:center; width:32px; height:34px; border-radius:var(--r-sm); color:var(--ink-3); }
+.archive-action:hover { color:var(--brand); background:var(--brand-soft); }
+.archive-action:focus-visible { outline:2px solid var(--brand); }
+.archive-action:disabled { opacity:.4; cursor:wait; }
+
 /* ---------- 概览条 ---------- */
 
 .strip {

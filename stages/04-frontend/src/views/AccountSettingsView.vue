@@ -194,7 +194,7 @@ onMounted(() => { void load() })
     <section v-if="account?.role === 'admin'" class="card management">
       <div class="card-head"><h2 class="card-title">创建账号</h2></div>
       <div class="card-body">
-        <p class="explain">只有管理员可创建账号并指定权限。新管理员可管理普通运维人员；只有原始 user 账号可删除管理员。</p>
+        <p class="explain">仅原始 user 管理员可停用其他管理员。</p>
         <form class="password-form" novalidate @submit.prevent="createUser">
           <label for="register-username">新账号</label>
           <input id="register-username" v-model="createForm.username" class="field" autocomplete="off" :disabled="creating" @input="createError = ''" />
@@ -207,7 +207,7 @@ onMounted(() => { void load() })
           </select>
           <label for="register-password">初始密码</label>
           <input id="register-password" v-model="createForm.password" class="field" type="password" autocomplete="new-password" :disabled="creating" @input="createError = ''" />
-          <p class="hint">8–72 字节；密码只用于本次创建，不会保存在页面地址或本地存储。</p>
+          <p class="hint">8–72 字节。</p>
           <label for="register-confirm">确认密码</label>
           <input id="register-confirm" v-model="createForm.confirm" class="field" type="password" autocomplete="new-password" :disabled="creating" @input="createError = ''" />
           <p v-if="createError" class="form-error" role="alert">{{ createError }}</p>

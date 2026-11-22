@@ -4,7 +4,7 @@ import { api } from './api'
 import type { Device } from './api'
 
 /** A complete device selector, with one shared in-flight load per page. */
-export function useDeviceChoices(selected: Ref<number>) {
+export function useDeviceChoices(selected: Ref<number>, options: { autoSelect?: boolean } = {}) {
   const devices = shallowRef<Device[]>([])
   const loading = ref(false)
   const error = ref('')
@@ -33,7 +33,7 @@ export function useDeviceChoices(selected: Ref<number>) {
         devices.value = [...rows.values()]
         loaded = true
         if (!devices.value.some(device => device.id === selected.value)) {
-          selected.value = devices.value[0]?.id ?? 0
+          selected.value = options.autoSelect === false ? 0 : devices.value[0]?.id ?? 0
         }
       } catch (reason) {
         if (!lifetime.signal.aborted) error.value = reason instanceof Error ? reason.message : String(reason)

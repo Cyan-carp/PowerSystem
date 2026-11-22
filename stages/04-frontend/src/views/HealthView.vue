@@ -145,7 +145,7 @@ const strip = computed(() => [
   },
   { key: 'online', label: '在线', color: 'var(--ok)', value: `${countOf('online')}`, note: '按最高活动告警评级' },
   { key: 'offline', label: '离线', color: 'var(--ink-placeholder)', value: `${countOf('offline')}`, note: '接收超 15 秒，计 0 分' },
-  { key: 'fault', label: '故障', color: 'var(--bad)', value: `${countOf('fault')}`, note: '最新遥测 status=2' },
+  { key: 'fault', label: '故障', color: 'var(--bad)', value: `${countOf('fault')}`, note: '' },
 ])
 
 /* 与后端 aggregateHealth 的排序一致：正式分在前、暂定分在后，再按分数降序 */
@@ -237,7 +237,7 @@ watch(
     <div v-for="item in strip" :key="item.key" class="strip-cell">
       <span class="strip-label"><i :style="{ background: item.color }"></i>{{ item.label }}</span>
       <span class="strip-value num">{{ item.value }}</span>
-      <span class="strip-note">{{ item.note }}</span>
+      <span v-if="item.note" class="strip-note">{{ item.note }}</span>
     </div>
   </section>
 
@@ -333,7 +333,6 @@ watch(
         :total="rows.length"
         :page-size="pageSize"
         unit="台"
-        :note="`每页 ${pageSize} 台`"
       />
     </section>
 
@@ -341,7 +340,6 @@ watch(
       <section class="card">
         <div class="card-head">
           <span class="card-title">场站健康</span>
-          <span class="card-sub">按均分排名</span>
         </div>
         <div class="station-list">
           <div v-for="item in stationRows" :key="item.code" class="station-row">
@@ -364,7 +362,6 @@ watch(
       <section class="card">
         <div class="card-head">
           <span class="card-title">评分档位</span>
-          <span class="card-sub">rule-health-v1 只有五档</span>
         </div>
         <div class="band-body">
           <div class="band-bar">

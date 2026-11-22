@@ -41,9 +41,14 @@ class Store:
                 await conn.execute("UPDATE rag_sessions SET updated_at=now() WHERE id=$1", sid)
         return turn_id
 
-    async def list(self, user, offset=0):
-        rows = await self.pool.fetch("SELECT id,title,created_at,updated_at FROM rag_sessions WHERE user_id=$1 AND deleted_at IS NULL ORDER BY updated_at DESC LIMIT 50 OFFSET $2", user, offset)
-        return [{"id": str(r["id"]), "title": r["title"], "created_at": r["created_at"].isoformat(), "updated_at": r["updated_at"].isoformat()} for r in rows]
+    async def list(self, user, offset=0, archived=None):
+        rows = await self.pool.fetch("SELECT id,title,created_at,updated_at,archived FROM rag_sessions WHERE user_id=$1 AND deleted_at IS NULL AND ($3::boolean IS NULL OR archived=$3) ORDER BY updated_at DESC,id DESC LIMIT 50 OFFSET $2", user, offset, archived)
+        return [{"id": str(r["id"]), "title": r["title"], "archived": r["archived"], "created_at": r["created_at"].isoformat(), "updated_at": r["updated_at"].isoformat()} for r in rows]
+
+    async def archive(self, sid, user, archived):
+        return await self.pool.execute(
+            "UPDATE rag_sessions SET archived=$3 WHERE id=$1 AND user_id=$2 AND deleted_at IS NULL",
+            sid, user, archived) == "UPDATE 1"
 
     async def delete(self, sid, user):
         async with self.pool.acquire() as conn, conn.transaction():

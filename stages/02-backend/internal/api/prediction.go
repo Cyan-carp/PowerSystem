@@ -44,6 +44,7 @@ type predictionResponse struct {
 }
 
 type predictionListRow struct {
+	PredictionID *int64   `json:"prediction_id"`
 	DeviceID     int64    `json:"device_id"`
 	DeviceCode   string   `json:"device_code"`
 	Name         string   `json:"name"`
@@ -71,10 +72,10 @@ func (s *Server) listPredictions(c *gin.Context) {
 	cutoff := time.Now().Add(-15 * time.Minute).UnixMilli()
 	var rows []predictionListRow
 	err := s.db.Raw(`SELECT d.id AS device_id, d.device_code, d.name, d.station_code, d.group_name,
-		p.window_end_ms, p.probability, p.threshold, p.risk_level, p.model_version, p.source
+		p.id AS prediction_id, p.window_end_ms, p.probability, p.threshold, p.risk_level, p.model_version, p.source
 		FROM devices AS d
 		LEFT JOIN LATERAL (
-			SELECT window_end_ms, probability, threshold, risk_level, model_version, source
+			SELECT id, window_end_ms, probability, threshold, risk_level, model_version, source
 			FROM prediction_records WHERE device_id = d.id
 			ORDER BY window_end_ms DESC, id DESC LIMIT 1
 		) AS p ON true
@@ -112,7 +113,7 @@ func (s *Server) getPrediction(c *gin.Context) {
 		return
 	}
 	stale := time.Since(time.UnixMilli(item.WindowEndMS)) > 15*time.Minute
-	ok(c, gin.H{"device_id": item.DeviceID, "window_end_ms": item.WindowEndMS,
+	ok(c, gin.H{"prediction_id": item.ID, "device_id": item.DeviceID, "window_end_ms": item.WindowEndMS,
 		"probability": item.Probability, "threshold": item.Threshold, "risk_level": item.RiskLevel,
 		"model_version": item.ModelVersion, "top_factors": item.TopFactors,
 		"source": item.Source, "created_at": item.CreatedAt, "stale": stale})

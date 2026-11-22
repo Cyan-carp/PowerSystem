@@ -8,15 +8,13 @@ import (
 	"os"
 	"regexp"
 	"strings"
-	"sync"
 	"time"
 	"unicode/utf8"
 
 	"github.com/gin-gonic/gin"
-	"github.com/golang-jwt/jwt/v5"
-	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
 
+	"powersystem/backend/internal/model"
 	"powersystem/backend/internal/service"
 )
 
@@ -24,14 +22,11 @@ import (
 // 只是把“进容器敲命令”换成“点按钮”。它没有任何新的业务逻辑，也不碰真实告警——
 // 所有写操作都先过 IsManualDemo，非演示告警一律拒绝。
 //
-// 口令放在 api 容器的 /data 卷里（api-state 是具名卷，重建容器不丢），
-// 不新增环境变量、不改 compose——发布时只需要重建 api 镜像。
+// /data 配置仅保留演示入口启停；身份和会话状态由平台 authorize 统一校验。
 const demoConsoleDefaultFile = "/data/demo-console.json"
 
 type demoConsoleConf struct {
-	Enabled      bool   `json:"enabled"`
-	PasswordHash string `json:"password_hash"`
-	Actor        string `json:"actor"`
+	Enabled bool `json:"enabled"`
 }
 
 func demoConsoleConfig() (demoConsoleConf, error) {
@@ -47,106 +42,16 @@ func demoConsoleConfig() (demoConsoleConf, error) {
 	if err := json.Unmarshal(raw, &conf); err != nil {
 		return conf, err
 	}
-	if !conf.Enabled || strings.TrimSpace(conf.PasswordHash) == "" || strings.TrimSpace(conf.Actor) == "" {
+	if !conf.Enabled {
 		return conf, errors.New("demo_console_disabled")
 	}
 	return conf, nil
 }
 
-// 口令只有一把，所以失败次数必须自己数：同一来源 5 分钟内错 8 次就锁。
-var demoConsoleAttempts = struct {
-	sync.Mutex
-	byIP map[string][]time.Time
-}{byIP: map[string][]time.Time{}}
-
-func demoConsoleAllowed(ip string) bool {
-	demoConsoleAttempts.Lock()
-	defer demoConsoleAttempts.Unlock()
-	now := time.Now()
-	kept := demoConsoleAttempts.byIP[ip][:0]
-	for _, t := range demoConsoleAttempts.byIP[ip] {
-		if now.Sub(t) < 5*time.Minute {
-			kept = append(kept, t)
-		}
-	}
-	demoConsoleAttempts.byIP[ip] = kept
-	return len(kept) < 8
-}
-
-func demoConsoleRecordFailure(ip string) {
-	demoConsoleAttempts.Lock()
-	defer demoConsoleAttempts.Unlock()
-	demoConsoleAttempts.byIP[ip] = append(demoConsoleAttempts.byIP[ip], time.Now())
-}
-
-func demoConsoleReset(ip string) {
-	demoConsoleAttempts.Lock()
-	defer demoConsoleAttempts.Unlock()
-	delete(demoConsoleAttempts.byIP, ip)
-}
-
-func (s *Server) demoConsoleLogin(c *gin.Context) {
-	conf, err := demoConsoleConfig()
-	if err != nil {
-		fail(c, 503, 50301, "演示入口未启用，请联系维护人员")
-		return
-	}
-	ip := c.ClientIP()
-	if !demoConsoleAllowed(ip) {
-		fail(c, 429, 42901, "密码错误次数过多，请 5 分钟后再试")
-		return
-	}
-	var body struct {
-		Password string `json:"password"`
-	}
-	if c.ShouldBindJSON(&body) != nil || utf8.RuneCountInString(body.Password) > 128 {
-		fail(c, 400, 40001, "请求格式不正确")
-		return
-	}
-	if bcrypt.CompareHashAndPassword([]byte(conf.PasswordHash), []byte(body.Password)) != nil {
-		demoConsoleRecordFailure(ip)
-		fail(c, 401, 40101, "密码不正确")
-		return
-	}
-	ttl := 8 * time.Hour
-	token, err := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
-		"scope": "demo-console",
-		"exp":   time.Now().Add(ttl).Unix(),
-		"iat":   time.Now().Unix(),
-	}).SignedString([]byte(s.cfg.JWTSecret))
-	if err != nil {
-		fail(c, 500, 50000, "登录失败")
-		return
-	}
-	demoConsoleReset(ip)
-	ok(c, gin.H{"token": token, "actor": conf.Actor, "expires_in": int(ttl.Seconds())})
-}
-
-// 演示台令牌与平台令牌用同一把密钥签名，靠 scope 区分：反过来也进不来，
-// 因为 authorize 要求 sub 是真实用户，演示台令牌没有 sub。
+// 平台登录校验通过后，仍遵守服务器上的演示入口启停配置。
 func (s *Server) demoConsoleAuth(c *gin.Context) {
-	header := c.GetHeader("Authorization")
-	if !strings.HasPrefix(header, "Bearer ") {
-		fail(c, 401, 40101, "请输入演示台密码")
-		return
-	}
-	token, err := jwt.Parse(strings.TrimPrefix(header, "Bearer "), func(t *jwt.Token) (any, error) {
-		if t.Method.Alg() != jwt.SigningMethodHS256.Alg() {
-			return nil, errors.New("unexpected signing method")
-		}
-		return []byte(s.cfg.JWTSecret), nil
-	})
-	if err != nil || !token.Valid {
-		fail(c, 401, 40101, "密码会话已失效，请重新输入")
-		return
-	}
-	claims, valid := token.Claims.(jwt.MapClaims)
-	if !valid {
-		fail(c, 401, 40101, "密码会话已失效，请重新输入")
-		return
-	}
-	if scope, _ := claims["scope"].(string); scope != "demo-console" {
-		fail(c, 401, 40101, "密码会话已失效，请重新输入")
+	if _, err := demoConsoleConfig(); err != nil {
+		fail(c, 503, 50301, "演示入口未启用，请联系维护人员")
 		return
 	}
 	c.Next()
@@ -285,12 +190,12 @@ func (s *Server) demoConsoleAck(c *gin.Context) {
 	if !valid {
 		return
 	}
-	conf, err := demoConsoleConfig()
-	if err != nil {
-		fail(c, 503, 50301, "演示入口未启用")
+	var actor model.User
+	if err := s.requestDB(c).Select("id", "username").First(&actor, c.GetInt64("user_id")).Error; err != nil {
+		fail(c, 401, 40101, "登录账号不可用，请重新登录")
 		return
 	}
-	alarm, changed, err := service.AckManualAPIDemo(s.requestDB(c), alarmID, conf.Actor)
+	alarm, changed, err := service.AckManualAPIDemo(s.requestDB(c), alarmID, actor.Username)
 	if err != nil {
 		demoConsoleFailed(c, err)
 		return

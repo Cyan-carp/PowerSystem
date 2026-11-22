@@ -108,7 +108,7 @@ const strip = computed(() => {
       note: total ? `占在册 ${pct((online / total) * 100, 1)}` : '—',
       color: 'var(--ok)',
     },
-    { key: 'offline', label: '离线 / 故障', value: n(total - online), note: fault ? `其中故障 ${fault} 台` : '需现场核查', color: 'var(--warn)' },
+    { key: 'offline', label: '离线 / 故障', value: n(total - online), note: fault ? `其中故障 ${fault} 台` : '', color: 'var(--warn)' },
     { key: 'health', label: '平均健康分', value: avg ? avg.toFixed(1) : '—', note: `${scores.length} 台有效`, color: 'var(--brand)' },
   ]
 })
@@ -157,7 +157,7 @@ function scoreWidth(score: number | null | undefined) {
     <div v-for="item in strip" :key="item.key" class="strip-cell">
       <span class="strip-label"><i :style="{ background: item.color }"></i>{{ item.label }}</span>
       <span class="strip-value num">{{ item.value }}</span>
-      <span class="strip-note">{{ item.note }}</span>
+      <span v-if="item.note" class="strip-note">{{ item.note }}</span>
     </div>
   </section>
 

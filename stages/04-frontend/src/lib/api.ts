@@ -36,7 +36,7 @@ export class ApiError extends Error {
  */
 function authHeaders(init: RequestInit = {}): Headers {
   const headers = new Headers(init.headers)
-  if (init.body) headers.set('Content-Type', 'application/json')
+  if (init.body && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json')
   if (authToken.value) headers.set('Authorization', `Bearer ${authToken.value}`)
   return headers
 }
@@ -98,6 +98,13 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 
 const get = <T>(path: string, signal?: AbortSignal) => request<T>(path, { signal })
 
+export const supplementary = {
+  read: get,
+  write<T>(path: string, body: object, signal?: AbortSignal) {
+    return request<T>(path, { method: 'POST', body: JSON.stringify(body), signal })
+  },
+}
+
 /**
  * /agent/runs 与 /agent/schedules 由网关 c.Data 原样透出内部服务的 JSON，
  * 不套 { code, message, data } 信封；这里单独走一条裸解析通道。
@@ -120,8 +127,10 @@ async function rawRequest<T>(path: string, init: RequestInit = {}): Promise<T> {
   }
   if (!response.ok) {
     catchAuth(response.status)
-    const message = (payload as { message?: string } | null)?.message
-    throw new ApiError(response.status, response.status, message || `请求失败（HTTP ${response.status}）`)
+    const error = payload as { message?: string; detail?: unknown } | null
+    const message = error?.message || (typeof error?.detail === 'string' ? error.detail : '')
+    const fallback = response.status === 413 ? '附件或请求超过大小限制' : `请求失败（HTTP ${response.status}）`
+    throw new ApiError(response.status, response.status, message || fallback)
   }
   return payload as T
 }
@@ -408,6 +417,7 @@ export interface Factor {
 }
 
 export interface Prediction {
+  prediction_id?: number | null
   device_id: number
   window_end_ms: number | null
   probability: number | null
@@ -789,6 +799,7 @@ export interface RulePreviewResult {
 
 /** GET /agent/sessions 的列表项（RAG 服务字段名是 id） */
 export interface AgentSession {
+  archived?: boolean
   id: string
   title: string
   created_at: string
@@ -846,11 +857,34 @@ export interface AgentTurnResponse {
 }
 
 export interface AgentTurn {
-  id?: number
+  id?: number | string
   run_id?: string | null
   question: string
   response?: AgentTurnResponse | null
   created_at?: string
+  attachment_result?: AttachmentResult
+}
+
+export interface AgentAttachment { id: string; name: string; size_bytes: number }
+export interface AttachmentResult {
+  attachment_ids: string[]
+  excerpts: { attachment_id: string; name: string; location: string; text: string }[]
+}
+
+export const agentAttachments = {
+  upload(file: File, signal: AbortSignal) {
+    return rawRequest<AgentAttachment>(`/agent/attachments${query({ name: file.name })}`, {
+      method: 'POST', body: file, headers: { 'Content-Type': 'application/octet-stream' }, signal,
+    })
+  },
+  discard(id: string) {
+    return rawRequest<{ removed: boolean }>(`/agent/attachments/${encodeURIComponent(id)}`, { method: 'DELETE' })
+  },
+  search(body: { request_id: string; session_id: string | null; attachment_ids: string[]; question: string }, signal: AbortSignal) {
+    return rawRequest<{ session_id: string; turn: AgentTurn }>('/agent/attachment-queries', {
+      method: 'POST', body: JSON.stringify(body), signal,
+    })
+  },
 }
 
 /* ---------------- 告警解读（/agent/interpretations，生产跑 v2） ---------------- */
@@ -1032,8 +1066,8 @@ export const api = {
 
   /* 看板 */
   summary: () => get<Summary>('/dashboard/summary'),
-  overview: (scope: Scope = 'all', stationCode = '') =>
-    get<Overview>(`/dashboard/overview${query({ scope, station_code: stationCode })}`),
+  overview: (scope: Scope = 'all', stationCode = '', signal?: AbortSignal) =>
+    get<Overview>(`/dashboard/overview${query({ scope, station_code: stationCode })}`, signal),
   stations: (scope: Scope = 'all') => get<{ scope: Scope; list: StationRow[]; total: number }>(`/stations${query({ scope })}`),
 
   /* 设备与遥测 */
@@ -1224,9 +1258,11 @@ export const api = {
     rawPost<RunReceipt>('/agent/rule-preview', input, { 'Idempotency-Key': crypto.randomUUID() }),
 
   /* 智能助手：会话与来源走信封；运行与定期任务走裸 JSON，见 agent-runs.ts */
-  sessions: (offset = 0) =>
-    get<{ list: AgentSession[]; offset: number; page_size: number }>(`/agent/sessions${query({ offset })}`),
-  session: (id: string) => get<{ session_id: string; turns: AgentTurn[] }>(`/agent/sessions/${encodeURIComponent(id)}`),
+  sessions: (offset = 0, archived = false) =>
+    get<{ list: AgentSession[]; offset: number; page_size: number }>(`/agent/sessions${query({ offset, archived })}`),
+  session: (id: string) => get<{ session_id: string; turns: AgentTurn[]; attachments?: AgentAttachment[] }>(`/agent/sessions/${encodeURIComponent(id)}`),
+  archiveSession: (id: string, archived: boolean) =>
+    post<{ archived: boolean }>(`/agent/sessions/${encodeURIComponent(id)}/${archived ? 'archive' : 'restore'}`, {}),
   deleteSession: (id: string) => del<{ deleted: boolean }>(`/agent/sessions/${encodeURIComponent(id)}`),
   knowledge: (id: string) => get<KnowledgeChapter>(`/agent/knowledge/${encodeURIComponent(id)}`),
   ragKnowledge: (source: RAGSource, signal?: AbortSignal) => {

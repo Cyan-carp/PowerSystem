@@ -82,6 +82,71 @@ bytes_of() {
   printf '%s' "$total"
 }
 
+# Capacity values are integer KiB. Reject empty, signed, fractional and
+# oversized input instead of letting shell arithmetic treat it as zero.
+backup_kb_value() {
+  local name="$1" value="$2" zero_ok="${3:-0}" normalized
+  case "$value" in
+    ''|*[!0-9]*)
+      echo "Backup capacity: $name must be a non-negative integer in KiB, got '$value'" >&2
+      return 2
+      ;;
+  esac
+  if [ "${#value}" -gt 15 ]; then
+    echo "Backup capacity: $name exceeds the supported 15-digit KiB bound, got '$value'" >&2
+    return 2
+  fi
+  normalized=$((10#$value))
+  if [ "$normalized" -eq 0 ] && [ "$zero_ok" != 1 ]; then
+    echo "Backup capacity: $name must be greater than 0 KiB" >&2
+    return 2
+  fi
+  printf '%s' "$normalized"
+}
+
+# D4 capacity budget. Estimates are current peak sizes supplied explicitly;
+# a successful timing record is history, not a current estimate, and is never
+# used here. The check runs before any backup writer is paused.
+backup_capacity_check() {
+  local available_kb="$1"
+  local staging_kb="${POWERSYSTEM_BACKUP_STAGING_ESTIMATE_KB:-}"
+  local archive_kb="${POWERSYSTEM_BACKUP_ARCHIVE_ESTIMATE_KB:-}"
+  local business_headroom_kb="${POWERSYSTEM_BACKUP_BUSINESS_HEADROOM_KB:-8388608}"
+  local margin_kb="${POWERSYSTEM_BACKUP_MARGIN_KB:-8388608}"
+  local min_free_kb="${POWERSYSTEM_BACKUP_MIN_FREE_KB:-}"
+  local required_kb legacy_floor=none
+
+  available_kb=$(backup_kb_value 'free space' "$available_kb" 1) || return 2
+  if [ -z "$staging_kb" ] || [ -z "$archive_kb" ]; then
+    echo "Backup capacity: set POWERSYSTEM_BACKUP_STAGING_ESTIMATE_KB and POWERSYSTEM_BACKUP_ARCHIVE_ESTIMATE_KB to current peak sizes in KiB; historical timing records are reference only and are not used as the current estimate" >&2
+    return 2
+  fi
+  staging_kb=$(backup_kb_value POWERSYSTEM_BACKUP_STAGING_ESTIMATE_KB "$staging_kb") || return 2
+  archive_kb=$(backup_kb_value POWERSYSTEM_BACKUP_ARCHIVE_ESTIMATE_KB "$archive_kb") || return 2
+  business_headroom_kb=$(backup_kb_value POWERSYSTEM_BACKUP_BUSINESS_HEADROOM_KB "$business_headroom_kb") || return 2
+  margin_kb=$(backup_kb_value POWERSYSTEM_BACKUP_MARGIN_KB "$margin_kb") || return 2
+  if [ -n "$min_free_kb" ]; then
+    min_free_kb=$(backup_kb_value POWERSYSTEM_BACKUP_MIN_FREE_KB "$min_free_kb" 1) || return 2
+    legacy_floor=not_binding
+    echo "Backup capacity: POWERSYSTEM_BACKUP_MIN_FREE_KB is deprecated; honoring it as an additional floor" >&2
+  else
+    min_free_kb=0
+  fi
+  # C and E both use the archive estimate; the encryption wrapper is small and
+  # any difference is left to the explicit margin M, not assumed away.
+  required_kb=$(( staging_kb + archive_kb + archive_kb + business_headroom_kb + margin_kb ))
+  if [ "$min_free_kb" -gt "$required_kb" ]; then
+    required_kb=$min_free_kb
+    legacy_floor=applied
+  fi
+  echo "Backup peak budget: estimate_source=explicit_env staging_kb=${staging_kb} archive_kb=${archive_kb} encrypted_kb=${archive_kb} business_headroom_kb=${business_headroom_kb} margin_kb=${margin_kb} legacy_min_free_kb=${min_free_kb} legacy_floor=${legacy_floor} required_kb=${required_kb} available_kb=${available_kb}" >&2
+  if [ "$available_kb" -lt "$required_kb" ]; then
+    echo "Backup peak budget exceeded: available=${available_kb}KB required=${required_kb}KB" >&2
+    return 2
+  fi
+  return 0
+}
+
 stage_begin() {
   stage_name="$1"
   stage_start="$(date +%s%N)"
@@ -254,15 +319,21 @@ mkdir -m 700 "$staging/tdengine"
 mkdir -m 700 "$staging/config"
 stage_end 0
 
-# A full staging tree plus archive needs roughly three times the archive size;
-# stop before dumping instead of failing on a full disk after ten minutes.
+# D4: capacity budget before any writer is paused. A full backup temporarily
+# holds staging + compressed archive + encrypted archive on the same file
+# system, so a fixed headroom threshold is not enough. Budget the peak and stop
+# before dumping instead of failing on a full disk after minutes of work.
+# F >= S + C + E + W + R + M, where C = E = archive estimate; W+R are covered
+# by the explicit business headroom and M is the explicit margin. Estimates
+# must describe the current backup, not a past one.
 stage_begin disk_headroom
 available_kb=$(df -Pk "$backup_dir" | awk 'NR==2 {print $4}')
-minimum_kb=${POWERSYSTEM_BACKUP_MIN_FREE_KB:-4194304}
-if [ -z "$available_kb" ] || [ "$available_kb" -lt "$minimum_kb" ]; then
-  echo "Free space under $backup_dir is ${available_kb:-unknown}KB, ${minimum_kb}KB required" >&2
+if [ -z "$available_kb" ]; then
+  echo "Cannot measure free space under $backup_dir" >&2
   exit 2
 fi
+available_kb=$(backup_kb_value "free space under $backup_dir" "$available_kb" 1) || exit 2
+backup_capacity_check "$available_kb" || exit 2
 stage_end "$(( available_kb * 1024 ))"
 dc=(docker compose --env-file "$env_file" -f "$compose_file")
 if [ -f "$production_state/active.json" ]; then

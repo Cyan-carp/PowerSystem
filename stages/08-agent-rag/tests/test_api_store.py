@@ -86,3 +86,39 @@ async def test_token_input_and_busy_session(environment):
         busy = await client.delete(f'/internal/agent/sessions/{sid}?user_id={user}',headers=headers(cfg))
         assert busy.status_code == 409
         assert (await task).status_code == 200 and not redis.locks
+
+
+@pytest.mark.asyncio
+async def test_session_archive_owner_persistence_restore_and_delete(environment):
+    cfg, store, user = environment
+    sid = uuid4()
+    assert await store.ensure(sid, user, "archive lifecycle", create=True)
+    await store.save(sid, "question", {"answer_markdown": "retained"}, [])
+    app = create_app(cfg, store, Redis(), Provider(), Tools(cfg, None, None), run_worker=False)
+    async with app.router.lifespan_context(app), httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        path = f"/internal/agent/sessions/{sid}"
+        # Authentication and ownership apply to both lifecycle actions.
+        assert (await client.post(path + "/archive", params={"user_id": user})).status_code == 401
+        for action in ("archive", "restore"):
+            assert (await client.post(path + "/" + action, params={"user_id": user + 1}, headers=headers(cfg))).status_code == 404
+        for _ in range(2):
+            result = await client.post(path + "/archive", params={"user_id": user}, headers=headers(cfg))
+            assert result.status_code == 200 and result.json() == {"archived": True}
+        active = await client.get("/internal/agent/sessions", params={"user_id": user}, headers=headers(cfg))
+        assert not any(row["id"] == str(sid) for row in active.json()["list"])
+        archived = await client.get("/internal/agent/sessions", params={"user_id": user, "archived": "true"}, headers=headers(cfg))
+        assert any(row["id"] == str(sid) and row["archived"] for row in archived.json()["list"])
+        history = await client.get(path, params={"user_id": user}, headers=headers(cfg))
+        assert history.json()["turns"][0]["question"] == "question"
+        # Reopening the pool reapplies migrations and must preserve the saved flag.
+        reopened = await Store.open(cfg.database_url)
+        try:
+            assert any(row["id"] == str(sid) for row in await reopened.list(user, archived=True))
+        finally:
+            await reopened.pool.close()
+        restored = await client.post(path + "/restore", params={"user_id": user}, headers=headers(cfg))
+        assert restored.json() == {"archived": False}
+        assert any(row["id"] == str(sid) for row in await store.list(user, archived=False))
+        await client.post(path + "/archive", params={"user_id": user}, headers=headers(cfg))
+        assert (await client.delete(path, params={"user_id": user}, headers=headers(cfg))).status_code == 200
+        assert (await client.post(path + "/restore", params={"user_id": user}, headers=headers(cfg))).status_code == 404
