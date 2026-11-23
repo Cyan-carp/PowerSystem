@@ -2,15 +2,35 @@
   {
     "path": "notes/03-平台使用运维与二次开发手册/平台使用手册.md",
     "title": "平台使用手册.md",
-    "sha256": "39e7982d65777e325f8f849c610ea7ad7d11fb6ad1b2b40403cd20dc39aee5f9"
+    "sha256": "25ed32a75933c7e5c0bcb021fe3e1faf79b2ef7ce4fbc63781ba5d1bf12706e0"
   },
   {
     "path": "notes/03-平台使用运维与二次开发手册/平台运维与二次开发手册.md",
     "title": "平台运维与二次开发手册.md",
-    "sha256": "ab2b367eabf6ce478bc54b67c35777b251ab179cdfa2b55c72832c889df187b7"
+    "sha256": "cfd14e5d8a6c434ff05fd263ea33bb27a054dbaeaae82674f6c1fb14f39bf82a"
   },
   {
-    "path": "notes/05-设备知识设计素材与历史归档资产/设备知识/SUN2000-100KTL-M2-仿真参考.md",
+    "path": "notes/03-平台使用运维与二次开发手册/平台运维与二次开发手册/01-平台架构部署与基础运维.md",
+    "title": "平台运维与二次开发手册/01-平台架构部署与基础运维.md",
+    "sha256": "f23e82e08b50757599dc13b793d988a53df7beed1b899d376ca517a7f1986a1f"
+  },
+  {
+    "path": "notes/03-平台使用运维与二次开发手册/平台运维与二次开发手册/04-发布恢复与补充业务维护.md",
+    "title": "平台运维与二次开发手册/04-发布恢复与补充业务维护.md",
+    "sha256": "21f5abef852030249463aeeb869ca203cad85dfe69db362bbd5c7ff80a75b0f5"
+  },
+  {
+    "path": "notes/03-平台使用运维与二次开发手册/平台运维与二次开发手册/02-Agent与知识库运维.md",
+    "sha256": "e267d9505386be05bd09184b80334711999ea80b33463d263edd5cddaac69c2f",
+    "disabled": true
+  },
+  {
+    "path": "notes/03-平台使用运维与二次开发手册/平台运维与二次开发手册/03-多智能体与安全审查运维.md",
+    "sha256": "0f283d8077bbdc838baa780f41a7d4925305eb9932dc87c053a1b1a3e5dda052",
+    "disabled": true
+  },
+  {
+    "path": "notes/04-系统部署发布备份与变更记录/版本迭代及变更记录/03-模拟数据与模拟器/设备知识/SUN2000-100KTL-M2-仿真参考.md",
     "title": "设备知识/SUN2000-100KTL-M2-仿真参考.md",
     "applicability": {
       "source_type": "simulation_reference",
@@ -28,34 +48,54 @@
   },
   {
     "path": "stages/02-backend/README.md",
-    "sha256": "0b2535eef4819e6b70c3fb2ac4677bc62581bb0bf694a947be75d97ddd5815f0"
+    "sha256": "a0e31c92a288a671a1b2a81c4263209554cd6631e0ecd577eb38d5defeef5fa9"
   },
   {
     "path": "stages/03-ai-prediction/README.md",
-    "sha256": "9a088fcb65a8dfcddd200be55a4c049f178f51feae78e7c32412e08b67e01cc8"
+    "sha256": "930f12aa4ca1899e1f15ecf6fa4b11c77b6b05bec77b6031e29f3eb85caa7d09"
   },
   {
     "path": "stages/08-agent-rag/README.md",
-    "sha256": "eae3a2b5a9a1230ebe56f41f8d628073b2c145b990deb48cf0db8ae790372d20"
+    "sha256": "ca958b3fad27abb0e978a8e5195dcf790583c848f4bd1968e647137e608a4038"
   },
   {
-    "path": "notes/03-平台使用运维与二次开发手册/平台运维与二次开发手册/01-平台架构部署与基础运维.md",
-    "title": "平台运维与二次开发手册/01-平台架构部署与基础运维.md",
-    "sha256": "4ae9d81f608d30936f9d95042457bb406c1c9b743c847ead8ab2c5eba9e82cf5"
+    "path": "stages/02-backend/deploy/home-dev/README.md",
+    "sha256": "80bf4caeba000d7813a8080354b73715571742062bc86dbecd581c18607c8036"
   },
   {
-    "path": "notes/03-平台使用运维与二次开发手册/平台运维与二次开发手册/02-Agent与知识库运维.md",
-    "title": "平台运维与二次开发手册/02-Agent与知识库运维.md",
-    "sha256": "9f23440faddf2d188b28c48a0a3cda441ff93ec8d1ee74dd10e70b39d45515bf"
+    "path": "notes/00-当前系统状态.md",
+    "sha256": "68d280ff41e940d00e0ad007ef0d06729c2d646b0da983c2ed0f31bf4f2ac8e8"
   },
   {
-    "path": "notes/03-平台使用运维与二次开发手册/平台运维与二次开发手册/03-多智能体与安全审查运维.md",
-    "title": "平台运维与二次开发手册/03-多智能体与安全审查运维.md",
-    "sha256": "646b3487598f7a6d94942453fbae027c5ad2927e19fde2d04aa84b8f57c892e5"
+    "path": "notes/06-当前系统状态/01-生产快照与发布指针.md",
+    "sha256": "b51efed73b8a0b30c166e24c2b70a77c75c2b9ad13d1df34b0552f9f1cea98f0"
   },
   {
-    "path": "notes/03-平台使用运维与二次开发手册/平台运维与二次开发手册/04-发布恢复与补充业务维护.md",
-    "title": "平台运维与二次开发手册/04-发布恢复与补充业务维护.md",
-    "sha256": "3aaa7ce6636ad06eacb155fd5ab7bf0cb5114408ec1b03ca67f8316bac361729"
+    "path": "notes/06-当前系统状态/02-阶段与模块状态.md",
+    "sha256": "873286abcee440dbf0f15ad7f38c5fecee161cd44d725e6edda8fcde29ffaa62"
+  },
+  {
+    "path": "notes/06-当前系统状态/03-运行能力现状.md",
+    "sha256": "0efcf78c077f38bcd6203b439340c4043630212cf410c65d4ef46bb12238019b"
+  },
+  {
+    "path": "notes/06-当前系统状态/04-已知限制与未生效改动.md",
+    "sha256": "eb4a1cf6a4fcbdc4d2b8e8dba38833b27cae4f09d4be6bfdc5ea8fe87e6d3b37"
+  },
+  {
+    "path": "notes/06-当前系统状态/05-口径与术语.md",
+    "sha256": "6095a29b3c74be6ae38c40f36069c422597877db4d4b66b0712c292ef0d9fc68"
+  },
+  {
+    "path": "notes/06-当前系统状态/06-开发环境与生产分开.md",
+    "sha256": "edf0681c4a8b5831ef9b2010236de2a82e9eac1a588c3c5a432d2eddbe904b2d"
+  },
+  {
+    "path": "notes/03-平台使用运维与二次开发手册/平台使用手册/01-账号会话与助手附件.md",
+    "sha256": "620074738c3d716943f76e98292df461ae6e8c1e486e6736d153e50dbaf7a148"
+  },
+  {
+    "path": "notes/03-平台使用运维与二次开发手册/平台使用手册/02-数据链路现场记录与预测反馈.md",
+    "sha256": "bd170eab9b8087b067230ce048feb72e4c354827d0aa54b022af6f780fc8e381"
   }
 ]

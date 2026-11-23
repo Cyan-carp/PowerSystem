@@ -82,6 +82,7 @@ stages/08-agent-rag/scripts/import-knowledge.ps1 -ConfigFile artifacts/stage8-ag
 
 导入器将资料按章节和段落拆分，最多400个模型token、重叠60token，使用本地 `intfloat/multilingual-e5-small` 和384维 Cosine 向量。默认查询返回5片，由回答模型判断是否有用。首次下载完成后向量化无需联网。
 
+**生产导入按冻结快照执行（2026-11-23 起）**：`knowledge/sources.json` 只登记原始受控来源，`path`/`title`/`sha256` 对应仓库正文；实际入库使用批次冻结目录里的独立清单，逐章节取舍与两套摘要的映射记在该批证据里，不能让一个 sha256 同时代表原文与摘录。导入必须显式覆盖 `RAG_COLLECTION`（独立候选别名）与 `RAG_DOCUMENT_ROOT`（冻结根），核对后只原子替换服务真正使用的别名；现役容器的 `RAG_DOCUMENT_ROOT=/run/v4-knowledge` 仍指 v4-s09 冻结目录，不能直接拿它导入新资料。批次目录、集合 ID 与片段数见 [部署日志 127](../../notes/04-系统部署发布备份与变更记录/部署与运维日志/03-智能体与模型调用链/127-RAG知识库更新与生产知识别名切换.md)。
 导入或增量更新都构建新集合，计数及查询校验成功后原子切换 `powersystem_rag_active` 别名，保留旧集合。未变化资料采用稳定内容ID；新集合重建避免旧片段残留。删除资料须先从清单移除或设 `disabled:true`，再执行导入。CLI `--delete-document` 可做单次排除；若不修改清单，下次重建会重新导入。`--dry-run` 仅输出提取报告，不修改向量库。
 
 ## 接口与持久化
