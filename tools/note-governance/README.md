@@ -52,7 +52,7 @@
 
 - 根 `README.md`/`AGENTS.md`/`SKILL.md`、`stages/`、`deploy/`、`tools/` 以及 `shared-memory/` 三个入口文件。
 - `node_modules`、`artifacts`、`dist`、`build` 等依赖与生成目录不参与判定。
-- 库外用双链指向笔记时按笔记解析；指向工作区路径的双链只记警告（GitHub 不解析双链）。
+- 库外 Markdown 的双链**一律记警告**（GitHub 不解析），不论目标是笔记还是工作区路径；目标存在性另行判定：笔记按 Vault 规则解析，工作区路径按仓库根检查，缺失记断链。可点击性与目标存在性分开报告。
 
 **会话历史**
 

@@ -401,11 +401,35 @@ def run(root: Path = ROOT, ci_mode: bool = False, verbose: bool = False) -> tupl
                         add("warning", "ambiguous-anchor", path, link.line, link.raw, "同页重复标题，锚点有歧义")
                 continue
             if link.kind == "wikilink":
+                # 库外 Markdown 的双链在 GitHub 一律不可点击，无论目标在 Vault 还是工作区。
+                add(
+                    "warning",
+                    "workspace-wikilink",
+                    path,
+                    link.line,
+                    link.raw,
+                    "库外 Markdown 使用双链，GitHub 不解析；应改为相对 Markdown 链接",
+                )
                 target = link.target
                 if target.startswith("notes/"):
                     target = target[len("notes/") :]
                 elif target.split("/")[0] in WORKSPACE_TREES:
-                    add("warning", "workspace-wikilink", path, link.line, link.raw, "库外 Markdown 使用双链，GitHub 不解析")
+                    # 可点击性与目标存在性分开判定：双链不可点击，但目标仍必须存在。
+                    base = root / target
+                    ws_target = next(
+                        (candidate for candidate in (base, Path(str(base) + ".md"), base / "README.md") if candidate.is_file()),
+                        None,
+                    )
+                    if ws_target is None:
+                        add("error", "broken-link", path, link.line, link.raw, "工作区目标不存在")
+                        continue
+                    stats["workspace-wikilink-ok"] += 1
+                    if link.subpath:
+                        result = nl.anchor_status(page_text(ws_target), link.subpath, "obsidian")
+                        if result == "missing":
+                            add("error", "broken-anchor", path, link.line, link.raw, "目标页没有该章节或块")
+                        elif result == "ambiguous":
+                            add("warning", "ambiguous-anchor", path, link.line, link.raw, "目标页重复标题，锚点有歧义")
                     continue
                 resolved = nl.resolve(target, path, by_stem, vault=vault, kind="wikilink", notes_only=True, root=root)
                 if resolved.status == "ok" and resolved.path is not None:

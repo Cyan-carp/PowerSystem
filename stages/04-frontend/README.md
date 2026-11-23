@@ -11,7 +11,7 @@ Vue 3 + Vite + TypeScript，**不带 UI 组件库与图表库**——`Drawer` / 
 > 逐条对照见 [API-INVENTORY-20261029.md](./API-INVENTORY-20261029.md)，新旧能力差异与逐轮补齐见
 > [PARITY-20261029.md](./PARITY-20261029.md)，视觉决策日志见 [DESIGN.md](./DESIGN.md)。
 >
-> **当前状态**：工作区候选，**未发布**；生产仍跑上一版前端。发布与指针回写见仓库 `notes/00-当前系统状态.md`。
+> **当前状态**：整站覆盖自 2026-10-30（`ui-cover-20261030-r6`）起上线；当前生产指针、镜像与回退依据见仓库[当前系统状态](../../notes/00-当前系统状态.md)，本页只描述源码行为。
 
 ## 快速开始
 
@@ -29,30 +29,46 @@ npm run dev
 ```bash
 npm run typecheck   # vue-tsc --noEmit
 npm run build       # 先 typecheck 再 vite build，产物在 dist/
-npm run test        # vitest（少量单测）
+npm run test        # vitest（tests/ 下按模块拆分）
 node --check dev/mock-server.mjs   # 改过假后端务必跑
 ```
 
-需要 Node 20 以上；本机系统 Node 22.11 低于 Vite 8 要求时，用托管 Node 22.22 跑构建。
+需要 Node.js 20.19+ 或 22.12+；本机系统 Node 22.11 低于 Vite 8 要求时，用托管 Node 22.22 跑构建。
 
 ## 页面
 
 | 路径 | 内容 |
 | --- | --- |
 | `/login` | 登录：账号密码 → token 与用户信息落本地，失败留在原页提示 |
-| `/` | 场站总览：紧凑统计带、功率曲线（可选时段）、场站对比、设备状态环图、告警构成 |
-| `/alarms` | 告警中心：状态/级别筛选、分页、详情抽屉、确认与归档、勾选批量归档；`?status=&level=&id=` 双向同步 |
+| `/` | 场站总览：紧凑统计带、链路状态、功率曲线（可选时段）、场站对比、设备状态环图、告警构成 |
+| `/alarms` | 告警中心：状态/级别筛选、分页、详情抽屉（含现场记录）、确认与归档、勾选批量归档；`?status=&level=&id=` 双向同步 |
 | `/devices` | 设备台账：健康分排序、状态筛选、分页，点行进详情 |
-| `/devices/:id` | 设备详情：档案、健康评分、最新遥测、历史曲线（自选指标与时段、导出 CSV）、该设备告警、失效风险 |
+| `/devices/:id` | 设备详情：档案、链路状态、健康评分、最新遥测、历史曲线（自选指标与时段、导出 CSV）、现场记录、该设备告警、失效风险 |
 | `/health` | 健康排行：平均分与档位、排名、场站健康、评分依据与采样时间；`?state=scored\|unknown\|offline\|fault` |
-| `/predictions` | 故障预测：概率条 + 阈值竖线、风险筛选、概率分布、特征贡献 |
+| `/predictions` | 故障预测：概率条 + 阈值竖线、风险筛选、概率分布、特征贡献、人工反馈 |
+| `/model-quality` | 模型质量：批次速览、指标与混淆矩阵、校准/增益/漂移、模型台账、人工复核统计 |
 | `/reports` | 统计报表：可用率 / 告警及时性双页签 + 设备级可用率表，CSV 走后端 `format=csv`；`?tab=timeliness` |
 | `/schedules` | 定期任务：我的任务、方案预演（只读回算命中差异）、最近审查；新建与修改走审批，批准后才生效 |
-| `/assistant` | 智能助手：运行事件流、动作审批弹窗、产物下载、来源阅读、任务记录、历史会话 |
-| `/settings/account` | 账号与安全：本人资料、验证旧密码后修改密码；桌面账号菜单和手机「更多」可进入 |
+| `/assistant` | 智能助手：运行事件流、附件上传与引用、动作审批弹窗、产物下载、来源阅读、任务记录、历史会话与归档 |
+| `/settings/account` | 账号与安全：本人资料、修改密码；管理员可注册账号并停用他人 |
+| `/about` | 关于：版本、数据口径与使用边界 |
 
 页面标题只出现在顶栏一处，页内不再重复大标题。顶栏搜索把关键词带到 `/devices?q=`；
 右侧「告警解读」打开抽屉（结论 / 关键事实 / 建议动作 / 局限 / 证据快照，模型不可用时退回模板并标明）。
+
+## 展示业务补充（2026-11）
+
+| 能力 | 前端入口 | 组件 / 模块 | 后端约束 |
+| --- | --- | --- | --- |
+| 链路状态 | 总览、设备详情 | `TelemetryLinkPanel.vue` | 开关 `POWERSYSTEM_LINK_STATUS`；只读 |
+| 现场记录 | 设备详情、告警详情 | `FieldRecords.vue` | 开关 `POWERSYSTEM_FIELD_RECORD_WRITES`；`request_id` 幂等 |
+| 预测反馈 | 预测页 | `PredictionReview.vue` | 开关 `POWERSYSTEM_PREDICTION_FEEDBACK_WRITES`；`not_occurred` 窗口结束前提交 400；409 表示反馈版本或提交编号冲突 |
+| 助手附件 | 助手输入区 | `lib/useAssistantAttachments.ts` | 开关 `POWERSYSTEM_ASSISTANT_ATTACHMENTS`；5 MiB，支持 pdf/docx/xlsx/csv/txt/log |
+| 会话归档 | 助手历史会话 | `AssistantView.vue` | 归档即从默认列表消失，可恢复 |
+| 账号与权限 | 账号与安全 | `AccountSettingsView.vue` | 管理员才能注册/停用；原始 user 才能停用管理员 |
+| 模型通道与额度 | 顶栏额度、模型面板 | `ModelPanel.vue`、`lib/model-usage.ts` | 仅管理员；五项功能，09/10 余额未接入 |
+
+详细设计与验收记录见 `notes/01-项目调研规划与开发建设记录/展示业务功能补充/00-索引·展示业务功能补充.md`。
 
 ## 手机端
 
@@ -91,6 +107,12 @@ node --check dev/mock-server.mjs   # 改过假后端务必跑
 | `GET /devices/:id/telemetry/export` | 窗口 ≤ 7 天；CSV 带 UTF-8 BOM、固定 11 列表头 |
 | `GET /alarms` | 只返回 `archived = FALSE`；支持 `status/level/origin/device_id/start/end/station_code` |
 | `POST /alarms/:id/ack`、`/archive`、`POST /alarm-archive` | 409 = 已被别人处置、404 = 已归档、503 = 维护窗口 |
+| `GET /devices/:id/telemetry/link-status`、`GET /dashboard/telemetry-link` | 开关关闭回 503；队列数字可能显示未知 |
+| `GET/POST /devices/:id/field-records`、`/alarms/:id/field-records` | 写端开关；`before_id` 分页，`request_id` 幂等 |
+| `GET/POST /predictions/:id/feedback` | 状态限 `confirmed_fault/not_occurred/watching`；`confirmed_fault` 必带 `occurred_at`；`not_occurred` 窗口结束前提交 400；409 表示反馈版本或提交编号冲突 |
+| `POST /agent/attachments?name=`、`DELETE /agent/attachments/:id`、`POST /agent/attachment-queries` | 5 MiB；六类文本；单次查询最多 3 个附件 |
+| `POST /agent/sessions/:id/archive`、`/restore` | 幂等；归档不取消运行或调度 |
+| `GET /agent/model-balance` | 仅管理员；按功能返回，未接入项显式标注 |
 | `GET /agent/interpretations` | 异步任务：`task_status` 有 `pending/running/completed/degraded`，`attention=true` 只回未读且仍值得看的 |
 | `POST /ws-ticket` → `GET /ws/realtime?ticket=` | ticket 48 位 hex、60 秒内一次性消费 |
 | 任意分页接口 | `page_size` 上限 100，超出按 100 处理 |
@@ -102,16 +124,16 @@ node --check dev/mock-server.mjs   # 改过假后端务必跑
 ├── vite.config.ts        # 端口 5173，代理 /api 与 /ws 到 VITE_API_TARGET（默认 8080）
 ├── dev/mock-server.mjs   # 假后端（与真后端同契约；不入库）
 ├── src/
-│   ├── main.ts           # 路由 10 条 + 401 唯一出口
+│   ├── main.ts           # 路由 13 条 + 401 唯一出口
 │   ├── App.vue           # 图标轨 + 顶栏 + 告警解读/活动告警/账号弹层
 │   ├── styles/
 │   │   ├── tokens.css    # 色板、文字层级、圆角、壳层尺寸
 │   │   └── shell.css     # 壳层与通用类（card/btn/chip/kv/page-head…）
 │   ├── lib/              # api/auth/store/format/data + 运行、产物、审批、任务、解读
-│   ├── components/       # 20 个：Drawer/StatusChip/ToastHost/Icon/PowerChart/DonutGauge/RunAnswer…
-│   └── views/            # 10 个页面
+│   ├── components/       # 33 个：Drawer/StatusChip/ToastHost/Icon/PowerChart/DonutGauge/RunAnswer…
+│   └── views/            # 13 个页面
 ├── PARITY-20261029.md    # 新旧能力对照与逐轮补齐
-├── API-INVENTORY-20261029.md  # 前端调用接口逐条对照（51 条）
+├── API-INVENTORY-20261029.md  # 前端调用接口逐条对照（2026-10-29 基线；新增接口见上表）
 └── DESIGN.md             # 视觉方向决策日志
 ```
 

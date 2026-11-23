@@ -37,7 +37,7 @@ python -m unittest -v test_app.py
 
 > 测试不读取服务器密钥，也不发送群消息。
 
-入口探活测试另运行 `python -m unittest discover -s stages/05-feishu-notification/entry-probe -p test_entry_probe.py`。生产 VM117 的 `/opt/powersystem-probe/entry-probe.py` 独立于 Compose；当前镜像、脚本摘要及群内目视待验事项以 `notes/00-当前系统状态.md` 和 [[notes/04-系统部署发布备份与变更记录/部署与运维日志/02-界面展示与通知/103-飞书运维告警统一卡片发布]] 为准。
+入口探活测试另运行 `python -m unittest discover -s stages/05-feishu-notification/entry-probe -p test_entry_probe.py`。生产 VM117 的 `/opt/powersystem-probe/entry-probe.py` 独立于 Compose；当前镜像、脚本摘要及群内目视待验事项以 `notes/00-当前系统状态.md` 和 [103-飞书运维告警统一卡片发布](../../notes/04-系统部署发布备份与变更记录/部署与运维日志/02-界面展示与通知/103-飞书运维告警统一卡片发布.md) 为准。
 
 #### 步骤 2 · 在 R730xd 检查私有配置和 Compose
 
@@ -72,4 +72,4 @@ docker compose --env-file .env -f stages/04-frontend/deploy/compose.yaml exec -T
 - 统一部署：[阶段四服务器部署说明](../04-frontend/deploy/README.md)
 - 工程规范：[项目工程规范](../../notes/02-工程规范边界与验收治理/项目工程规范/00-索引·项目工程规范.md)
 
-> 飞书告警卡片是展示扩展，独立说明见 [[notes/04-系统部署发布备份与变更记录/部署与运维日志/02-界面展示与通知/41-飞书告警卡片展示（原补充业务01）]]。具体运行命令继续在源码 README 维护，原阶段签收范围不变。
+> 飞书告警卡片是展示扩展，独立说明见 [41-飞书告警卡片展示（原补充业务01）](../../notes/04-系统部署发布备份与变更记录/部署与运维日志/02-界面展示与通知/41-飞书告警卡片展示（原补充业务01）.md)。具体运行命令继续在源码 README 维护，原阶段签收范围不变。

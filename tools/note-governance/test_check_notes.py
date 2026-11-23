@@ -102,6 +102,37 @@ class LinkParsingTests(unittest.TestCase):
         self.assertNotIn("broken-link", self.fixture.kinds())
 
 
+class WorkspaceWikilinkTests(unittest.TestCase):
+    """库外 Markdown 的双链：可点击性与目标存在性必须分开判定。"""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        self.fixture = Fixture(self.root)
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def test_vault_wikilink_in_workspace_warns(self):
+        """目标能解析到 Vault 笔记，也要提示 GitHub 不可点击。"""
+
+        self.fixture.write("notes/sub/01-x.md", note("# X"))
+        self.fixture.write("stages/svc/README.md", "# 服务\n\n[[notes/sub/01-x]]\n")
+        issues, _ = self.fixture.check()
+        warned = [i for i in issues if i.kind == "workspace-wikilink" and i.path.endswith("stages/svc/README.md")]
+        self.assertEqual(len(warned), 1)
+        self.assertNotIn("broken-link", [i.kind for i in issues])
+
+    def test_workspace_wikilink_target_is_still_checked(self):
+        """双链不可点击，但目标不存在仍要报错。"""
+
+        self.fixture.write("stages/svc/README.md", "# 服务\n\n[[stages/missing/README]]\n")
+        issues, _ = self.fixture.check()
+        kinds = [i.kind for i in issues]
+        self.assertIn("workspace-wikilink", kinds)
+        self.assertIn("broken-link", kinds)
+
+
 class AnchorTests(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()

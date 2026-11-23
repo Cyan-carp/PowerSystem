@@ -85,6 +85,16 @@ adb install -r stages/12-android-client/build/out/PowerSystem-Android-1.0.0.apk
 `usesCleartextTraffic="true"` 是为了能连内网 http 测试环境；生产入口是 HTTPS，
 若确定只用生产，可在 `AndroidManifest.xml` 里改成 `false` 收紧。
 
+### 附件选择与下载
+
+| 场景 | 现状 | 结论 |
+| --- | --- | --- |
+| 下载报表 CSV | `setDownloadListener` 交给系统下载器，携带登录 Cookie，落到「下载」目录 | 已实现；模拟器未实测落盘 |
+| 助手附件上传（网页 `<input type="file">`） | `WebChromeClient` 未覆盖 `onShowFileChooser`，WebView 没有默认文件选择器 | **待实现、待验证**；网页同源不等于附件上传可用 |
+| 拍照 / 相册选择 | 未接入 `ACTION_GET_CONTENT` 或相机回调 | 未支持 |
+
+因此，安卓端已实现网页浏览、下载处理与站内会话；下载的实际落盘仍待验证，助手附件等依赖文件选择的能力需先补壳层回调并在真机验证后才能声明可用。
+
 ## 与网页的配合
 
 手机端布局由阶段四前端负责，断点与规则见 `stages/04-frontend/README.md` 的「手机端」一节：
