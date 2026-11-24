@@ -134,7 +134,7 @@ describe('page loading isolation', () => {
     expect(text(root)).toContain('场站列表未取到')
   })
 
-  it('switches away from a slow report without waiting, aborts it, and ignores its late response', async () => {
+  it('switches away from a loading report without aborting it, and keeps the result for when it comes back', async () => {
     const slow = deferred()
     api.availability.mockReturnValue(slow.promise)
     const root = mount(ReportsView)
@@ -142,12 +142,18 @@ describe('page loading isolation', () => {
     expect(text(root)).toContain('正在统计可用率')
     const signal = api.availability.mock.calls[0][1] as AbortSignal
     await click(root, '告警及时性')
-    expect(signal.aborted).toBe(true)
+
+    /* 切页签不是刷新：可用率那次请求继续跑完，不中止、也不重发 */
+    expect(signal.aborted).toBe(false)
     expect(text(root)).toContain('时效分布')
-    slow.resolve({ ...available, rule_version: 'obsolete-report' })
+
+    slow.resolve({ ...available, rule_version: 'kept-report' })
     await flush()
-    expect(text(root)).not.toContain('obsolete-report')
-    expect(text(root)).toContain('timeliness-v1')
+
+    /* 结果落进可用率那一半，切回去直接能看 */
+    await click(root, '可用率')
+    expect(api.availability).toHaveBeenCalledTimes(1)
+    expect(text(root)).toContain('kept-report')
   })
 
   it('can replace a slow query and prevents the older result from overwriting it', async () => {

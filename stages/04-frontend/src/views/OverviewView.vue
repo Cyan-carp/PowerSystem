@@ -9,7 +9,8 @@ import StatusChip from '../components/StatusChip.vue'
 import { api } from '../lib/api'
 import { fetchAlarmViews } from '../lib/data'
 import type { AlarmView } from '../lib/data'
-import { putSnapshot, snapshotOwner } from '../lib/report-snapshot'
+import { putSnapshot } from '../lib/report-snapshot'
+import { sessionFingerprint } from '../lib/auth'
 import type { AvailabilityReport, Overview, Summary } from '../lib/api'
 import { shell } from '../lib/store'
 import { clock, n, pct, stamp, LEVEL_CN, METRIC_CN } from '../lib/format'
@@ -53,7 +54,7 @@ const loadAll = () => {
   /* 这张数据质量卡就是「最近 7 天 / 全部设备」的可用率报表，与统计报表默认查询同口径。
      顺手把结果留给统计报表，省掉它首次进入时的那一次全量计算（不新增请求）。
      owner 在发请求前取，putSnapshot 回来时会再比一次：期间登出或换人就作废。 */
-  const owner = snapshotOwner()
+  const owner = sessionFingerprint()
   void quality.run(async (signal) => {
     const report = await api.availability({}, signal)
     putSnapshot(report, owner)

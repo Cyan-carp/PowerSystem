@@ -29,8 +29,9 @@ vi.mock('../src/components/CardMenu.vue', () => ({ default: { render: () => null
 
 import OverviewView from '../src/views/OverviewView.vue'
 import ReportsView from '../src/views/ReportsView.vue'
-import { authToken, currentUser } from '../src/lib/auth'
-import { putSnapshot, snapshotOwner, takeSnapshot } from '../src/lib/report-snapshot'
+import { authToken, currentUser, sessionFingerprint } from '../src/lib/auth'
+import { clearReportState } from '../src/lib/report-state'
+import { putSnapshot, takeSnapshot } from '../src/lib/report-snapshot'
 
 type Node = { text: string; type: string; children: Node[]; parent: Node | null; props: Record<string, any> }
 const node = (type: string, text = ''): Node =>
@@ -60,12 +61,22 @@ const find = (el: Node, predicate: (el: Node) => boolean): Node | undefined =>
   predicate(el) ? el : el.children.map(child => find(child, predicate)).find(Boolean)
 const flush = async () => { for (let i = 0; i < 8; i++) { await Promise.resolve(); await nextTick() } }
 const cleanups: (() => void)[] = []
-function mount(component: any) {
+/** 拿到 app 句柄，用来在用例里模拟「离开页面再回来」 */
+function mountTracked(component: any) {
   const root = node('root')
   const app = renderer.createApp(component)
   app.mount(root)
-  cleanups.push(() => app.unmount())
-  return root
+  let live = true
+  const unmount = () => {
+    if (!live) return
+    live = false
+    app.unmount()
+  }
+  cleanups.push(unmount)
+  return { root, unmount }
+}
+function mount(component: any) {
+  return mountTracked(component).root
 }
 async function click(root: Node, label: string) {
   const button = find(root, el => el.type === 'button' && text(el).trim() === label)
@@ -111,8 +122,9 @@ beforeEach(() => {
   vi.stubGlobal('ShadowRoot', class {})
   vi.resetAllMocks()
   route.query = {}
-  /* 快照模块是模块级单槽，用例之间要真清空 */
+  /* 快照与页面留存都是模块级单槽，用例之间要真清空 */
   takeSnapshot()
+  clearReportState()
   authToken.value = ''
   currentUser.value = null
   api.summary.mockResolvedValue({ device_total: 143, online: 140, active_alarms: 3, current_power_kw: 1234.5, today_energy_kwh: 100, health_score_percent: 90 })
@@ -149,7 +161,7 @@ describe('首页 → 报表的快照交接', () => {
     currentUser.value = { id: 1, username: 'u1', real_name: '', role: 'operator' }
 
     const old = { ...available, start: '2026-11-01T00:00:00Z', end: '2026-11-08T00:00:00Z' }
-    putSnapshot(old, snapshotOwner())
+    putSnapshot(old, sessionFingerprint())
 
     const root = mount(ReportsView)
     await flush()
@@ -169,7 +181,7 @@ describe('首页 → 报表的快照交接', () => {
 
     putSnapshot(
       { ...available, start: '2026-11-01T00:13:37Z', end: '2026-11-08T00:13:37Z' },
-      snapshotOwner(),
+      sessionFingerprint(),
     )
     const root = mount(ReportsView)
     await flush()
@@ -208,7 +220,7 @@ describe('首页 → 报表的快照交接', () => {
   it('URL 直接带 tab=timeliness 且命中快照时，当前页签照样要查', async () => {
     authToken.value = 'token-a'
     currentUser.value = { id: 1, username: 'u1', real_name: '', role: 'operator' }
-    putSnapshot(available, snapshotOwner())
+    putSnapshot(available, sessionFingerprint())
     route.query = { tab: 'timeliness' }
 
     const root = mount(ReportsView)
@@ -221,42 +233,101 @@ describe('首页 → 报表的快照交接', () => {
   })
 })
 
-describe('快照提示文案', () => {
-  it('命中快照才说「快照数据」，刷新之后只说生成时间', async () => {
+describe('报表页文案', () => {
+  it('表格底部不再放口径小字，生成时间独立成块', async () => {
     authToken.value = 'token-a'
     currentUser.value = { id: 1, username: 'u1', real_name: '', role: 'operator' }
-    putSnapshot(available, snapshotOwner())
 
     const root = mount(ReportsView)
     await flush()
-    expect(api.availability).not.toHaveBeenCalled()
-    expect(text(root)).toContain('（快照数据，如需最新请刷新）')
 
-    /* 刷新 = 同一窗口重算，手上这份不再来自首页：不能再自称快照 */
-    await click(root, '刷新')
-    expect(api.availability).toHaveBeenCalledTimes(1)
     expect(text(root)).toContain('生成于')
+    /* 解释性小字按所有者要求从表格底部删掉；口径说明留在页尾可展开的「口径说明」里 */
+    expect(text(root)).not.toContain('台·时 = 设备数 × 小时')
+    /* 「如需最新请刷新」这类提示也一并去掉：要不要新数据只看用户按不按刷新 */
     expect(text(root)).not.toContain('快照数据')
   })
+})
 
-  it('切到及时性时不说「快照数据」，切回可用率仍然说', async () => {
+describe('切出去再回来不重算', () => {
+  it('离开页面再回来沿用上次的结果：一个报表请求都不发，窗口不被推到此刻', async () => {
     authToken.value = 'token-a'
     currentUser.value = { id: 1, username: 'u1', real_name: '', role: 'operator' }
-    putSnapshot(available, snapshotOwner())
+
+    const first = mountTracked(ReportsView)
+    await flush()
+    expect(api.availability).toHaveBeenCalledTimes(1)
+    const windowBefore = (text(first.root).match(/统计窗口[^·]+/)?.[0] ?? '').trim()
+    expect(windowBefore).not.toBe('')
+    first.unmount()
+
+    const second = mountTracked(ReportsView)
+    await flush()
+
+    /* 关键断言：回来不发请求，窗口与生成时间都还是离开时那一份 */
+    expect(api.availability).toHaveBeenCalledTimes(1)
+    expect(text(second.root)).toContain(windowBefore)
+    expect(text(second.root)).toContain('生成于')
+  })
+
+  it('在两个页签之间来回切，不重发任何请求', async () => {
+    authToken.value = 'token-a'
+    currentUser.value = { id: 1, username: 'u1', real_name: '', role: 'operator' }
 
     const root = mount(ReportsView)
     await flush()
-    expect(text(root)).toContain('快照数据')
+    expect(api.availability).toHaveBeenCalledTimes(1)
 
-    /* 及时性那一半永远是现查的，不该跟着可用率的快照一起标注 */
     await click(root, '告警及时性')
     expect(api.timeliness).toHaveBeenCalledTimes(1)
-    expect(text(root)).not.toContain('快照数据')
 
-    /* 切回来复用的还是那份快照，标注要回来 */
+    /* 来回切三轮：两边都有结果，谁都不该再问后端 */
     await click(root, '可用率')
-    expect(api.availability).not.toHaveBeenCalled()
-    expect(text(root)).toContain('快照数据')
+    await click(root, '告警及时性')
+    await click(root, '可用率')
+    expect(api.availability).toHaveBeenCalledTimes(1)
+    expect(api.timeliness).toHaveBeenCalledTimes(1)
+  })
+
+  it('页签还在加载时切走，请求继续跑完；切回来直接显示，不重发', async () => {
+    authToken.value = 'token-a'
+    currentUser.value = { id: 1, username: 'u1', real_name: '', role: 'operator' }
+
+    let resolveTimeliness: (value: unknown) => void = () => {}
+    api.timeliness.mockReturnValue(new Promise((resolve) => { resolveTimeliness = resolve }))
+
+    const root = mount(ReportsView)
+    await flush()
+    await click(root, '告警及时性')
+    expect(api.timeliness).toHaveBeenCalledTimes(1)
+
+    /* 还没回来就切回可用率，再切过去：不许重发第二次 */
+    await click(root, '可用率')
+    await click(root, '告警及时性')
+    expect(api.timeliness).toHaveBeenCalledTimes(1)
+    expect(text(root)).toContain('正在加载告警及时性')
+
+    /* 那次请求自己跑完，结果照样填进来 */
+    resolveTimeliness(timely)
+    await flush()
+    expect(text(root)).toContain('时效分布')
+  })
+
+  it('换人 / 登出后留存失效：上个会话的报表不会给下一个人看', async () => {
+    authToken.value = 'token-a'
+    currentUser.value = { id: 1, username: 'u1', real_name: '', role: 'operator' }
+    const first = mountTracked(ReportsView)
+    await flush()
+    expect(api.availability).toHaveBeenCalledTimes(1)
+    first.unmount()
+
+    authToken.value = 'token-b'
+    currentUser.value = { id: 2, username: 'u2', real_name: '', role: 'operator' }
+    mount(ReportsView)
+    await flush()
+
+    /* 归属不符，留存按「没有」处理，必须重新查 */
+    expect(api.availability).toHaveBeenCalledTimes(2)
   })
 })
 

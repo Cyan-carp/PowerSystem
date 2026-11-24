@@ -78,6 +78,20 @@ export function clearSession(): void {
   currentUser.value = null
 }
 
+/**
+ * 会话指纹：token + 用户 id + 角色，给「这份数据归谁」用。
+ *
+ * 报表快照（report-snapshot）与报表留存（report-state）都在用它：写入时取一次，
+ * 读取时再比一次，期间登出、换人或降权都读不到旧数据。
+ *
+ * 未登录返回空串而不是 `"||"`：三个空值拼出来是非空字符串，调用方的 `!owner`
+ * 判断会失效，必须显式短路。
+ */
+export function sessionFingerprint(): string {
+  if (!authToken.value) return ''
+  return `${authToken.value}|${currentUser.value?.id ?? ''}|${currentUser.value?.role ?? ''}`
+}
+
 /* ---------- 401 出口 ---------- */
 
 let unauthorizedHandler: (() => void) | null = null

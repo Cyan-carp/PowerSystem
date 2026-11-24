@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import Icon from '../components/Icon.vue'
 import Pager from '../components/Pager.vue'
@@ -8,6 +8,7 @@ import { api } from '../lib/api'
 import type { AvailabilityItem, AvailabilityReport, Device, ReportParams, StationRow, TimelinessReport } from '../lib/api'
 import { n, pct, stamp } from '../lib/format'
 import { availabilityCsv, downloadCsv, timelinessCsv } from '../lib/report-csv'
+import { readReportState, writeReportState } from '../lib/report-state'
 import { takeSnapshot } from '../lib/report-snapshot'
 import { useLatestRequest } from '../lib/useLatestRequest'
 
@@ -31,11 +32,6 @@ const stations = computed(() => stationRequest.data.value ?? [])
 const loading = computed(() => tab.value === 'availability' ? availabilityRequest.pending.value : timelinessRequest.pending.value)
 const failed = computed(() => tab.value === 'availability' ? availabilityRequest.error.value : timelinessRequest.error.value)
 const reportParams = ref<ReportParams | null>(null)
-/* 手上这份可用率结果是不是「首页留下来的快照」，只用来决定提示文案。
-   快照要提示「如需最新请刷新」，刚查回来的不需要——两者都显示「生成于 X」。
-   按页签判：快照只覆盖可用率那一半，切到及时性后那份永远是现查的。 */
-const availabilityFromSnapshot = ref(false)
-const fromSnapshot = computed(() => tab.value === 'availability' && availabilityFromSnapshot.value)
 
 /* 报表窗口：前端按北京时间（+08:00）解释输入，与设备详情页保持一致，
    不能用浏览器本地时区，否则非 UTC+8 的机器上窗口会整体挪走。 */
@@ -100,8 +96,6 @@ const onStationChange = () => {
 /** 只发某一个页签的请求，不动另一个页签的结果 */
 const runTab = (which: TabKey, params: ReportParams) => {
   if (which === 'availability') {
-    /* 一旦走请求，手上这份就不再是快照了（查询、刷新、页签补查都算） */
-    availabilityFromSnapshot.value = false
     void availabilityRequest.run((signal) => api.availability(params, signal))
   } else {
     void timelinessRequest.run((signal) => api.timeliness(params, signal))
@@ -111,8 +105,8 @@ const runTab = (which: TabKey, params: ReportParams) => {
 /**
  * 查询与刷新同一个入口：条件取输入框的字面值，两个页签的旧结果一起作废。
  *
- * 两个页签都 cancel 是页签切换逻辑成立的前提：切过去之所以能安全地「有结果就跳过」，
- * 是因为任何一次新查询都把两边清空了，所以留下的结果必然属于当前这组条件。
+ * 两边都清空是「切页签不重发」成立的前提：留下的结果必然属于当前这组条件，
+ * 所以切换时只要手上有结果就可以直接用，不必再问一次后端。
  */
 const load = () => {
   availabilityRequest.cancel()
@@ -124,28 +118,59 @@ const load = () => {
   runTab(tab.value, params)
 }
 onMounted(() => {
-  /* 场站总览刚算过同口径的默认报表就先用它，没命中就走正常查询 */
-  const snapshot = takeSnapshot()
-  const from = snapshot ? Date.parse(snapshot.start) : NaN
-  const to = snapshot ? Date.parse(snapshot.end) : NaN
-  if (snapshot && Number.isFinite(from) && Number.isFinite(to)) {
-    const params = { start: snapshot.start, end: snapshot.end }
-    /* 输入框填快照自己的起止，不能把一份十分钟前的报表标成「此刻往前 7 天」 */
-    startText.value = toLocalInput(new Date(from))
-    endText.value = toLocalInput(new Date(to))
-    reportParams.value = params
-    availabilityRequest.data.value = snapshot
-    availabilityFromSnapshot.value = true
-    /* URL 直接带 ?tab=timeliness 时，快照只顶了可用率那一半：当前页签照样要查 */
-    if (tab.value !== 'availability') runTab(tab.value, params)
+  const kept = readReportState()
+  if (kept) {
+    /* 有留存就以留存为准：顺手把待交接的快照取掉，免得一份更新的首页结果被留在槽里，
+       哪天悄悄顶进来把数字换掉——那正是这次要消灭的行为。 */
+    takeSnapshot()
+    /* 上次离开时看到的整份状态原样恢复：窗口、筛选、两个页签的结果一起回来，一个请求都不发。
+       只有当初就没拿到的那一半（提交查询后被清空、或上次没查成）才补一次。 */
+    startText.value = kept.startText
+    endText.value = kept.endText
+    stationFilter.value = kept.stationFilter
+    deviceFilter.value = kept.deviceFilter
+    reportParams.value = kept.params
+    availabilityRequest.data.value = kept.availability
+    timelinessRequest.data.value = kept.timeliness
+    if (!(tab.value === 'availability' ? kept.availability : kept.timeliness)) runTab(tab.value, kept.params)
   } else {
-    const end = new Date()
-    startText.value = toLocalInput(new Date(end.getTime() - 7 * 86_400_000))
-    endText.value = toLocalInput(end)
-    void load()
+    /* 场站总览刚算过同口径的默认报表就先用它，没命中就走正常查询 */
+    const snapshot = takeSnapshot()
+    const from = snapshot ? Date.parse(snapshot.start) : NaN
+    const to = snapshot ? Date.parse(snapshot.end) : NaN
+    if (snapshot && Number.isFinite(from) && Number.isFinite(to)) {
+      const params = { start: snapshot.start, end: snapshot.end }
+      /* 输入框填快照自己的起止，不能把一份十分钟前的报表标成「此刻往前 7 天」 */
+      startText.value = toLocalInput(new Date(from))
+      endText.value = toLocalInput(new Date(to))
+      reportParams.value = params
+      availabilityRequest.data.value = snapshot
+      /* URL 直接带 ?tab=timeliness 时，快照只顶了可用率那一半：当前页签照样要查 */
+      if (tab.value !== 'availability') runTab(tab.value, params)
+    } else {
+      const end = new Date()
+      startText.value = toLocalInput(new Date(end.getTime() - 7 * 86_400_000))
+      endText.value = toLocalInput(end)
+      void load()
+    }
   }
   void loadDevices()
   void stationRequest.run(async () => (await api.stations()).list)
+})
+
+onBeforeUnmount(() => {
+  /* 离开时把这一刻看到的整份状态存下来。在飞的请求不再等它（作用域销毁时会被中止），
+     回来时按「哪一半没有结果就补哪一半」处理，补的那次沿用同一组参数。 */
+  if (!reportParams.value) return
+  writeReportState({
+    params: reportParams.value,
+    startText: startText.value,
+    endText: endText.value,
+    stationFilter: stationFilter.value,
+    deviceFilter: deviceFilter.value,
+    availability: availability.value,
+    timeliness: timeliness.value,
+  })
 })
 
 const applyQuery = () => {
@@ -157,15 +182,12 @@ watch(
   () => route.query,
   () => applyQuery(),
 )
-watch(tab, (value, previous) => {
+watch(tab, (value) => {
   void router.replace({ query: { ...route.query, tab: value } })
-  /* 切走时放弃上一个页签还在飞的请求（迟到的结果没人要），但保留它已经拿到的结果 */
-  if (previous === 'availability') availabilityRequest.abort()
-  else timelinessRequest.abort()
-  /* 同一组条件已经查过就直接用（页签结果只在页面生命周期内保留）；
-     结果不在了才补一次，沿用上次提交的参数，不重新读输入框。 */
-  const ready = value === 'availability' ? availability.value : timeliness.value
-  if (ready || !reportParams.value) return
+  /* 页签切换不是刷新：已经有结果就一直用，在飞的请求让它自己跑完再填进来。
+     只有这个页签从来没有结果（刚提交过查询、或上次没查成）才补一次。 */
+  const request = value === 'availability' ? availabilityRequest : timelinessRequest
+  if (request.data.value || request.pending.value || !reportParams.value) return
   runTab(value, reportParams.value)
 })
 
@@ -374,15 +396,18 @@ const exportCsv = (kind: TabKey = tab.value) => {
     </div>
     <span class="period">
       统计窗口 {{ windowLabel }} · 规则版本 {{ (tab === 'availability' ? availability?.rule_version : timeliness?.rule_version) || '—' }}
-      <template v-if="generatedAt"> · 生成于 {{ stamp(generatedAt) }}<template v-if="fromSnapshot">（快照数据，如需最新请刷新）</template></template>
+    </span>
+    <span v-if="generatedAt" class="generated">
+      <span class="generated-label">生成于</span>
+      <b class="generated-time num">{{ stamp(generatedAt) }}</b>
     </span>
   </div>
 
-  <p v-if="tab === 'availability' && availability?.statistics_updated_at" class="table-note" role="status">
-    统计更新于 {{ stamp(availability.statistics_updated_at) }}
-    <template v-if="availability.aggregation_state === 'warming'"> · 历史汇总预热中，本次包含原始数据计算</template>
-    <template v-else-if="availability.aggregation_state === 'degraded'"> · 汇总暂不可用，本次使用原始数据计算</template>
-    <template v-else-if="availability.aggregation_state === 'ready'"> · 历史汇总与窗口边界补算，更新延迟不超过 1 分钟</template>
+  <p v-if="tab === 'availability' && availability?.aggregation_state === 'warming'" class="table-note" role="status">
+    历史汇总预热中，本次包含原始数据计算
+  </p>
+  <p v-else-if="tab === 'availability' && availability?.aggregation_state === 'degraded'" class="table-note" role="status">
+    汇总暂不可用，本次使用原始数据计算
   </p>
 
   <template v-if="tab === 'availability' && availability">
@@ -453,11 +478,6 @@ const exportCsv = (kind: TabKey = tab.value) => {
             </tr>
           </tbody>
         </table>
-      </div>
-      <div class="pager">
-        <span>计算于 {{ stamp(availability?.computed_at) }}</span>
-        <span class="grow"></span>
-        <span class="pager-total">台·时 = 设备数 × 小时，跨设备累加；未知不计入分母，避免把「没数据」算成「停机」</span>
       </div>
     </section>
 
@@ -544,7 +564,6 @@ const exportCsv = (kind: TabKey = tab.value) => {
         :total="deviceRows.length"
         :page-size="devicePageSize"
         unit="台"
-        note="覆盖率低于 90% 记为数据不足"
       />
     </section>
   </template>
@@ -697,6 +716,31 @@ const exportCsv = (kind: TabKey = tab.value) => {
 .period {
   font-size: 11.5px;
   color: var(--ink-3);
+}
+
+/* 生成时间是这份报表的「保质期」，比规则版本重要得多：单独做成右侧徽标，数字放大到 16px。
+   窗期与规则版本留在左边当次要信息，两者不抢同一行字重。 */
+.generated {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 5px 14px 6px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-pill);
+  background: var(--card-soft);
+}
+
+.generated-label {
+  font-size: 12px;
+  color: var(--ink-3);
+}
+
+.generated-time {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--ink);
+  letter-spacing: -0.01em;
 }
 
 .strip {

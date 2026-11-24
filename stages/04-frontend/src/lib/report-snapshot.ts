@@ -12,11 +12,11 @@
  * - 不落 localStorage / sessionStorage，刷新页面即失效，不在磁盘上留上一个账号的数据；
  * - 超龄不丢弃：按业务规范，超龄快照照常展示，只在界面上提示手动刷新。
  *
- * 它只保护「交接」这一段。页面内数据的安全边界靠组件生命周期：登出与 401 都会
- * `clearSession` + 跳登录页，报表组件随之卸载，组件内状态一并销毁。
+ * 它只保护「交接」这一段。跨页面留存由 report-state 负责，两者共用
+ * `sessionFingerprint()` 判归属：登出、换人、降权，两份数据同时读不到。
  */
 import type { AvailabilityReport } from './api'
-import { authToken, currentUser } from './auth'
+import { sessionFingerprint } from './auth'
 
 interface Slot {
   report: AvailabilityReport
@@ -26,20 +26,13 @@ interface Slot {
 let slot: Slot | null = null
 
 /**
- * 当前会话指纹。请求发起前取一次、回来时再比对，防止旧会话的结果写进新会话。
+ * 只接受默认窗口（无场站/设备筛选）的可用率报表；owner 由调用方在发起请求时取。
  *
- * 未登录时返回空串而不是 `"||"`：三个空值拼出来是非空字符串，调用方的 `!owner`
- * 判断会失效。这里必须显式短路，否则「没登录」会被当成一个合法归属。
+ * owner 取的是 `sessionFingerprint()`，报表留存（report-state）用的是同一份指纹。
  */
-export function snapshotOwner(): string {
-  if (!authToken.value) return ''
-  return `${authToken.value}|${currentUser.value?.id ?? ''}|${currentUser.value?.role ?? ''}`
-}
-
-/** 只接受默认窗口（无场站/设备筛选）的可用率报表；owner 由调用方在发起请求时取 */
 export function putSnapshot(report: AvailabilityReport, owner: string): void {
   /* 请求期间登出或换了人：这份结果已经不属于当前会话，宁可不写 */
-  if (!owner || owner !== snapshotOwner()) return
+  if (!owner || owner !== sessionFingerprint()) return
   slot = { report, owner }
 }
 
@@ -47,6 +40,6 @@ export function putSnapshot(report: AvailabilityReport, owner: string): void {
 export function takeSnapshot(): AvailabilityReport | null {
   const item = slot
   slot = null
-  if (!item || !item.owner || item.owner !== snapshotOwner()) return null
+  if (!item || !item.owner || item.owner !== sessionFingerprint()) return null
   return item.report
 }
