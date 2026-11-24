@@ -10,6 +10,7 @@
  * - 切会话/新建会话会让旧回调失效（generation 闸门），迟到的快照不会写进新会话。
  */
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import Drawer from '../components/Drawer.vue'
 import Icon from '../components/Icon.vue'
 import RunAnswer from '../components/RunAnswer.vue'
@@ -58,6 +59,22 @@ const attachments = useAssistantAttachments()
 const { files: attachmentFiles, selected: chosenAttachments, parsing: parsingAttachment,
   error: attachmentError, searching: searchingAttachments, active: attachmentMode } = attachments
 const recordsOpen = ref(false)
+
+/**
+ * 顶栏「页面指南 → 问助手」会把本页的典型问题带过来。
+ * 只预填输入框，不自动发送：自动发送会直接消耗一次模型额度，
+ * 而且用户多半还想再补一句现场上下文。
+ */
+const route = useRoute()
+watch(
+  () => route.query.question,
+  (value) => {
+    if (typeof value !== 'string' || !value.trim()) return
+    draft.value = value.trim()
+    void nextTick(() => inputter.value?.focus())
+  },
+  { immediate: true },
+)
 
 /** 读章节抽屉：知识库来源点「阅读章节」后在这里展开全文 */
 const sourceDoc = ref<KnowledgeChapter | null>(null)

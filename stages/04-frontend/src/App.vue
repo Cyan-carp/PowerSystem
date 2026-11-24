@@ -21,6 +21,7 @@ import {
 } from './lib/auth'
 import { resetModelBoard, startModelPolling, topbarBalance, topbarTone } from './lib/model-usage'
 import { theme, toggleTheme } from './lib/theme'
+import { guides, guideVersion } from './lib/page-guide'
 import { icpNotice } from './lib/site'
 import { toast } from './lib/toast'
 
@@ -45,6 +46,20 @@ const nav = [
 ]
 
 const pageLabel = computed(() => (route.meta.label as string) || '总览')
+
+/**
+ * 页面指南按路由名取内容。原来这里是一段写死的「接本地假后端」开发说明，
+ * 每个页面点开看到的都一样，也不是用户该看到的措辞；改回覆盖前那版的分页结构，
+ * 内容源在 `lib/page-guide.ts`。
+ */
+const guide = computed(() => guides[String(route.name ?? '')])
+
+/** 「问助手」带问题跳转：只预填输入框，不自动发送（发送要花一次模型额度） */
+const askGuide = () => {
+  const question = guide.value?.question
+  open.value = null
+  if (question) void router.push({ path: '/assistant', query: { question } })
+}
 
 /**
  * 手机端底栏只放日常四件事，其余进「更多」面板。
@@ -358,18 +373,41 @@ onBeforeUnmount(() => {
           </div>
 
           <div ref="guideWrap" class="pop-wrap is-guide">
-            <button class="tb-icon" title="数据说明" :class="{ 'is-open': open === 'guide' }" @click="toggle('guide')">
+            <button
+              class="tb-icon"
+              :title="guide ? `页面指南：${guide.title}` : '页面指南'"
+              :class="{ 'is-open': open === 'guide' }"
+              @click="toggle('guide')"
+            >
               <Icon name="help" :size="20" />
             </button>
             <div v-if="open === 'guide'" class="popover guide-pop">
-              <div class="pop-head"><h4>数据说明</h4></div>
-              <div class="guide-body">
-                <p>页面接本地假后端（127.0.0.1:8080），需先登录；账号任意、密码非空即可。</p>
-                <ul>
-                  <li>功率曲线按整点日照系数逐设备累加，与顶部「当前出力」同口径。</li>
-                  <li>告警、健康分、边节点状态均为演示数据，不代表真实场站。</li>
-                  <li>时间统一按北京时间显示，与设备所在时区一致。</li>
-                </ul>
+              <div class="pop-head">
+                <h4>{{ guide ? guide.title : '页面指南' }}</h4>
+                <span class="guide-ver">{{ guideVersion }}</span>
+              </div>
+              <div v-if="guide" class="guide-body">
+                <p class="guide-purpose">{{ guide.purpose }}</p>
+                <ol class="guide-steps">
+                  <li v-for="(step, index) in guide.steps" :key="step">
+                    <span class="guide-num num">{{ String(index + 1).padStart(2, '0') }}</span>
+                    <p>{{ step }}</p>
+                  </li>
+                </ol>
+                <div v-if="guide.notes.length" class="guide-notes">
+                  <p class="guide-notes-head">注意</p>
+                  <ul>
+                    <li v-for="note in guide.notes" :key="note">{{ note }}</li>
+                  </ul>
+                </div>
+              </div>
+              <p v-else class="guide-empty">这一页还没有指南。</p>
+              <div v-if="guide?.question" class="guide-foot">
+                <button class="btn btn-sm" @click="askGuide">
+                  <Icon name="sparkles" :size="14" />
+                  问助手
+                </button>
+                <span class="guide-foot-note">带上本页问题去助手</span>
               </div>
             </div>
           </div>
@@ -567,7 +605,21 @@ onBeforeUnmount(() => {
 }
 
 .guide-pop {
-  width: 320px;
+  width: 368px;
+  /* 关掉 pop-in 淡入：这个弹层实测会长期停在动画首帧（整块半透明、底下表格透上来），
+     同一位置的铃铛弹层不受影响，差异只在内容结构。淡入只有 140ms，去掉不损失信息，
+     换来的是「点开即不透明」这种确定性。 */
+  animation: none;
+}
+
+.guide-ver {
+  margin-left: auto;
+  font-family: var(--font-num);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  color: var(--ink-4);
+  opacity: 0.75;
 }
 
 /* ---------- 顶栏账号菜单 ---------- */
@@ -648,19 +700,116 @@ onBeforeUnmount(() => {
   color: var(--bad-deep);
 }
 
+/* 指南正文：用途一段、编号步骤一组、边界提示一组。
+   高度按视口给，不用固定值——顶栏 60 + 间距 10 + 底部按钮条 46，剩下都归正文；
+   窗口再矮也只在面板内部滚动，不会把最后一行切成半行。 */
 .guide-body {
+  max-height: calc(100vh - 150px);
+  overflow-y: auto;
   padding: 12px 14px 14px;
   font-size: 11.5px;
+  line-height: 1.7;
+  color: var(--ink-3);
+}
+
+.guide-purpose {
+  margin: 0 0 12px;
+  padding-bottom: 11px;
+  border-bottom: 1px solid var(--line-soft);
+  color: var(--ink-2);
+}
+
+.guide-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.guide-steps li {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  gap: 9px;
+}
+
+.guide-num {
+  display: grid;
+  place-items: center;
+  height: 18px;
+  margin-top: 1px;
+  border-radius: var(--r-sm);
+  background: var(--card-soft);
+  border: 1px solid var(--line-soft);
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--ink-4);
+}
+
+.guide-steps p {
+  margin: 0;
+}
+
+/* 边界提示：整块浅琥珀底 + 「注意」小标，和操作步骤分开读；不给每条单独铺底，
+   否则三步一气读下来会像三张告警卡 */
+.guide-notes {
+  margin-top: 13px;
+  padding: 9px 11px 10px;
+  border-radius: var(--r-md);
+  background: var(--warn-soft);
+  border: 1px solid var(--warn-line);
+}
+
+.guide-notes-head {
+  margin: 0 0 5px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: var(--warn-deep);
+}
+
+.guide-notes ul {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin: 0;
+  padding-left: 13px;
+  font-size: 11px;
   line-height: 1.65;
   color: var(--ink-3);
 }
 
-.guide-body ul {
-  margin: 8px 0 0;
-  padding-left: 16px;
+.guide-notes li::marker {
+  color: var(--warn);
+}
+
+.guide-empty {
+  margin: 0;
+  padding: 14px;
+  font-size: 11.5px;
+  color: var(--ink-4);
+}
+
+.guide-foot {
   display: flex;
-  flex-direction: column;
-  gap: 4px;
+  align-items: center;
+  gap: 9px;
+  padding: 9px 14px;
+  border-top: 1px solid var(--line-soft);
+  background: var(--card-soft);
+}
+
+.guide-foot-note {
+  font-size: 10.5px;
+  color: var(--ink-4);
+}
+
+/* 弹层里的按钮压到 28px：34px 会和 11.5px 正文的头重脚轻 */
+.guide-foot .btn {
+  height: 28px;
+  padding: 0 10px;
+  font-size: 11.5px;
 }
 
 .sev {
