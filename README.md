@@ -40,6 +40,7 @@ An integrated operations platform for renewable-energy assets — monitoring, al
 | 数据接入 | 设备模拟器 → MQTT QoS 1 → EMQX → Go 网关 → TDengine；5 秒采样一次，链路中断后自动补传 |
 | 链路状态 | 区分设备上报中断与平台处理延迟，查看待处理积压、7 天外滞留与历史电量覆盖 |
 | 运行总览 | 全平台 143 台设备的状态分布、实时功率曲线与场站对比，经 WebSocket 秒级推送 |
+| 统计报表 | 可用率与及时性按场站、设备统计并导出 CSV（本地生成）；首次从总览进入复用总览那次计算，不重复请求；切走再回来结果保留，只有「查询 / 刷新」才换数据 |
 | 告警闭环 | 支持阈值与自然规则判警、去重合并、恢复跟踪与值班筛选；AI 解读失败时保留事件事实 |
 | 现场记录 | 在设备与告警详情追加症状、处置措施与结果，分页留存 |
 | 健康评分 | 按可用率、告警密度与遥测质量综合评分；数据不足时显式标记为「未知」，不计为 0 分 |
@@ -48,6 +49,7 @@ An integrated operations platform for renewable-energy assets — monitoring, al
 | 换版闭环 | 页面一键重训 → 候选入台账 → 试用 → 确认或回退；推理服务热加载，切换期间不中断服务 |
 | AI 辅助解读 | 解读模型漂移原因、对比试用版本；结论仅作建议，不触发训练或换版动作 |
 | 智能助手 | 以自然语言查询设备状态、告警与报表，可引用站内设备说明书、巡检表与日志附件；答案分层为「直接结论 / 已核验事实 / 未核验解释」 |
+| 页面指南 | 顶栏按当前页给出用途、操作步骤与注意事项；可带着问题跳到智能助手，只预填不自动发送 |
 | 定期任务 | 日报、巡检等周期任务，支持预演与交付位置设定；写操作须人工批准 |
 | 受控运维 | 具备独立审查与人工批准流程；生产开关与实际开放范围以当前系统状态为准 |
 | 账号与权限 | 管理员可在站内注册账号并分配「管理员 / 常规运维人员」权限；「原始 user」管理员可停用其他管理员账号 |
@@ -140,6 +142,7 @@ npm run dev                       # http://127.0.0.1:5173
 | 桌面端未收到系统通知 | 先核对客户端通知设置、Windows 免打扰与网络状态；通知不保证必达，告警事实以站内记录为准 |
 | 能否用 `docker compose down -v` 清理环境 | 不建议。`-v` 会删除数据库数据卷；开发环境的停止方式见 home-dev 手册 |
 | 报表日期不一致 | 报表按北京时间自然日聚合，`end_date` 不含当日；跨时区查看数据前请先对齐时区 |
+| 报表切到别的页面再回来，数据没有自动更新 | 属预期：结果在页面生命周期内保留，只有「查询 / 刷新」才换数据；需要最新数据时点刷新，F5 或重开标签页会重置窗口与结果 |
 | 端口被占用但 `netstat` 查不到 | Windows 上 Hyper-V / WSL 会预留动态端口段，落在区间内的端口无法绑定。可用 `netsh interface ipv4 show excludedportrange protocol=tcp` 确认 |
 | Android 客户端无法连接或白屏 | 确认手机网络与「服务器设置」中的站点地址；客户端仅承载网页，离线不可用。长按桌面图标可重新进入服务器设置 |
 
@@ -222,6 +225,7 @@ The platform is available in a browser and through an Electron-based Windows des
 - End-to-end chain: ingest → store → detect → explain → act → review
 - 143 synthetic devices across 5 stations, 5-second sampling, replay on reconnect
 - Layered answers that separate verified facts from unverified explanation
+- Reports reuse the overview's first calculation, keep results for the page session, and export CSV in the browser
 - Sensitive assistant actions require explicit approval and leave an audit trail; enabled actions are listed on the current status page
 - Windows and Android clients that reuse the same web interface
 - Releases are traceable by batch and evidence; the checks and backup status actually performed are recorded per batch
