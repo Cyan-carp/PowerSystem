@@ -7,3 +7,8 @@ deploy/edge-server/独立云服务器部署/scripts/*.py text eol=lf
 deploy/edge-server/独立云服务器部署/scripts/**/*.py text eol=lf
 deploy/edge-server/独立云服务器部署/SHA256SUMS text eol=lf
 notes/04-系统部署发布备份与变更记录/独立云服务器部署/*.md text eol=lf
+
+# 报表 CSV 比对夹具必须与后端产物逐字节相同（BOM + LF）。
+# binary 同时关闭行尾转换与文本 diff，避免 core.autocrlf 把 LF 改写成 CRLF 造成假红。
+stages/04-frontend/tests/fixtures/*.csv binary
+stages/04-frontend/tests/fixtures/*.json binary

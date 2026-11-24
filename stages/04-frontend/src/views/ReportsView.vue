@@ -7,7 +7,8 @@ import StatusChip from '../components/StatusChip.vue'
 import { api } from '../lib/api'
 import type { AvailabilityItem, AvailabilityReport, Device, ReportParams, StationRow, TimelinessReport } from '../lib/api'
 import { n, pct, stamp } from '../lib/format'
-import { toast } from '../lib/toast'
+import { availabilityCsv, downloadCsv, timelinessCsv } from '../lib/report-csv'
+import { takeSnapshot } from '../lib/report-snapshot'
 import { useLatestRequest } from '../lib/useLatestRequest'
 
 const route = useRoute()
@@ -30,6 +31,11 @@ const stations = computed(() => stationRequest.data.value ?? [])
 const loading = computed(() => tab.value === 'availability' ? availabilityRequest.pending.value : timelinessRequest.pending.value)
 const failed = computed(() => tab.value === 'availability' ? availabilityRequest.error.value : timelinessRequest.error.value)
 const reportParams = ref<ReportParams | null>(null)
+/* 手上这份可用率结果是不是「首页留下来的快照」，只用来决定提示文案。
+   快照要提示「如需最新请刷新」，刚查回来的不需要——两者都显示「生成于 X」。
+   按页签判：快照只覆盖可用率那一半，切到及时性后那份永远是现查的。 */
+const availabilityFromSnapshot = ref(false)
+const fromSnapshot = computed(() => tab.value === 'availability' && availabilityFromSnapshot.value)
 
 /* 报表窗口：前端按北京时间（+08:00）解释输入，与设备详情页保持一致，
    不能用浏览器本地时区，否则非 UTC+8 的机器上窗口会整体挪走。 */
@@ -61,6 +67,11 @@ const windowLabel = computed(() => {
   return reportParams.value ? `${stamp(reportParams.value.start)} 至 ${stamp(reportParams.value.end)}` : '未查询'
 })
 
+/** 当前页签这份结果的生成时间：后端 handler 里取的时间，不是请求到达前端的时间 */
+const generatedAt = computed(() =>
+  (tab.value === 'availability' ? availability.value : timeliness.value)?.computed_at ?? '',
+)
+
 const deviceQuery = () => ({
   station_code: stationFilter.value || undefined,
   device_id: deviceFilter.value ? Number(deviceFilter.value) : undefined,
@@ -86,6 +97,23 @@ const onStationChange = () => {
   void loadDevices()
 }
 
+/** 只发某一个页签的请求，不动另一个页签的结果 */
+const runTab = (which: TabKey, params: ReportParams) => {
+  if (which === 'availability') {
+    /* 一旦走请求，手上这份就不再是快照了（查询、刷新、页签补查都算） */
+    availabilityFromSnapshot.value = false
+    void availabilityRequest.run((signal) => api.availability(params, signal))
+  } else {
+    void timelinessRequest.run((signal) => api.timeliness(params, signal))
+  }
+}
+
+/**
+ * 查询与刷新同一个入口：条件取输入框的字面值，两个页签的旧结果一起作废。
+ *
+ * 两个页签都 cancel 是页签切换逻辑成立的前提：切过去之所以能安全地「有结果就跳过」，
+ * 是因为任何一次新查询都把两边清空了，所以留下的结果必然属于当前这组条件。
+ */
 const load = () => {
   availabilityRequest.cancel()
   timelinessRequest.cancel()
@@ -93,17 +121,29 @@ const load = () => {
   if (!range) { reportParams.value = null; return }
   const params = { ...range, ...deviceQuery() }
   reportParams.value = params
-  if (tab.value === 'availability') {
-    void availabilityRequest.run((signal) => api.availability(params, signal))
-  } else {
-    void timelinessRequest.run((signal) => api.timeliness(params, signal))
-  }
+  runTab(tab.value, params)
 }
 onMounted(() => {
-  const end = new Date()
-  startText.value = toLocalInput(new Date(end.getTime() - 7 * 86_400_000))
-  endText.value = toLocalInput(end)
-  void load()
+  /* 场站总览刚算过同口径的默认报表就先用它，没命中就走正常查询 */
+  const snapshot = takeSnapshot()
+  const from = snapshot ? Date.parse(snapshot.start) : NaN
+  const to = snapshot ? Date.parse(snapshot.end) : NaN
+  if (snapshot && Number.isFinite(from) && Number.isFinite(to)) {
+    const params = { start: snapshot.start, end: snapshot.end }
+    /* 输入框填快照自己的起止，不能把一份十分钟前的报表标成「此刻往前 7 天」 */
+    startText.value = toLocalInput(new Date(from))
+    endText.value = toLocalInput(new Date(to))
+    reportParams.value = params
+    availabilityRequest.data.value = snapshot
+    availabilityFromSnapshot.value = true
+    /* URL 直接带 ?tab=timeliness 时，快照只顶了可用率那一半：当前页签照样要查 */
+    if (tab.value !== 'availability') runTab(tab.value, params)
+  } else {
+    const end = new Date()
+    startText.value = toLocalInput(new Date(end.getTime() - 7 * 86_400_000))
+    endText.value = toLocalInput(end)
+    void load()
+  }
   void loadDevices()
   void stationRequest.run(async () => (await api.stations()).list)
 })
@@ -117,9 +157,16 @@ watch(
   () => route.query,
   () => applyQuery(),
 )
-watch(tab, (value) => {
+watch(tab, (value, previous) => {
   void router.replace({ query: { ...route.query, tab: value } })
-  load()
+  /* 切走时放弃上一个页签还在飞的请求（迟到的结果没人要），但保留它已经拿到的结果 */
+  if (previous === 'availability') availabilityRequest.abort()
+  else timelinessRequest.abort()
+  /* 同一组条件已经查过就直接用（页签结果只在页面生命周期内保留）；
+     结果不在了才补一次，沿用上次提交的参数，不重新读输入框。 */
+  const ready = value === 'availability' ? availability.value : timeliness.value
+  if (ready || !reportParams.value) return
+  runTab(value, reportParams.value)
 })
 
 const stationName = computed(() => {
@@ -269,55 +316,15 @@ const recoveryReasons = computed(() => {
   }))
 })
 
-/** 每个页签各自一个导出按钮：导出的是该页签的当前数据，不跟当前激活页签耦合 */
-const exporting = ref<TabKey | ''>('')
-
-/** 后端不可用时的兜底：只导当前页已有的行，字段比后端 CSV 少 */
-const localCsv = (kind: TabKey) => {
-  let header = ''
-  let lines: string[] = []
+/** 每个页签各自一个导出按钮：导出的是该页签当前这份结果，不跟激活页签耦合。
+    用同一份 JSON 在本地拼 CSV，不回后端重算：否则两次计算之间进来的采样会让文件
+    与页面不一致，还要多付一次 143 台 x 7 天。列序 / BOM / 转义见 lib/report-csv.ts，
+    与 report_export.go 逐列对齐；服务端导出接口保留，界面不再调用。 */
+const exportCsv = (kind: TabKey = tab.value) => {
   if (kind === 'availability') {
-    header = 'station_code,station_name,device_count,availability,data_coverage,fault_ms,unknown_ms'
-    lines = stationRows.value.map((row) =>
-      [
-        row.station_code,
-        row.name,
-        row.device_count,
-        row.observed_availability,
-        row.data_coverage,
-        row.fault_ms,
-        row.unknown_ms,
-      ].join(','),
-    )
-  } else {
-    header = 'metric,count,mean_ms,median_ms,p90_ms'
-    lines = timeRows.value.map((row) =>
-      [row.key, row.stat.count, row.stat.mean_ms, row.stat.median_ms, row.stat.p90_ms].join(','),
-    )
-  }
-  const blob = new Blob([`\ufeff${[header, ...lines].join('\n')}`], { type: 'text/csv;charset=utf-8' })
-  const url = URL.createObjectURL(blob)
-  const link = document.createElement('a')
-  link.href = url
-  link.download = `report-${kind}-${new Date().toISOString().slice(0, 10)}.csv`
-  link.click()
-  URL.revokeObjectURL(url)
-}
-
-/** 优先走后端 CSV（含设备行 + 场站汇总行 + 规则版本），失败才退回本地拼 */
-const exportCsv = async (kind: TabKey = tab.value) => {
-  if (exporting.value || !reportParams.value) return
-  const params = { ...reportParams.value }
-  exporting.value = kind
-  try {
-    await api.exportReport(kind === 'availability' ? 'availability' : 'alarm-timeliness', {
-      ...params,
-    })
-  } catch (error) {
-    localCsv(kind)
-    toast('warn', `后端未返回 CSV，已按当前页导出：${(error as Error).message}`)
-  } finally {
-    exporting.value = ''
+    if (availability.value) downloadCsv('availability.csv', availabilityCsv(availability.value))
+  } else if (timeliness.value) {
+    downloadCsv('alarm-timeliness.csv', timelinessCsv(timeliness.value))
   }
 }
 </script>
@@ -365,7 +372,10 @@ const exportCsv = async (kind: TabKey = tab.value) => {
         {{ item.label }}
       </button>
     </div>
-    <span class="period">统计窗口 {{ windowLabel }} · 规则版本 {{ (tab === 'availability' ? availability?.rule_version : timeliness?.rule_version) || '—' }}</span>
+    <span class="period">
+      统计窗口 {{ windowLabel }} · 规则版本 {{ (tab === 'availability' ? availability?.rule_version : timeliness?.rule_version) || '—' }}
+      <template v-if="generatedAt"> · 生成于 {{ stamp(generatedAt) }}<template v-if="fromSnapshot">（快照数据，如需最新请刷新）</template></template>
+    </span>
   </div>
 
   <p v-if="tab === 'availability' && availability?.statistics_updated_at" class="table-note" role="status">
@@ -389,7 +399,7 @@ const exportCsv = async (kind: TabKey = tab.value) => {
         <span class="card-title">场站可用率</span>
         <span class="card-sub">{{ stationRows.length }} 个场站 · {{ totals.devices }} 台设备</span>
         <div class="card-tools">
-          <button class="btn btn-sm" :disabled="!stationRows.length || !!exporting" @click="exportCsv('availability')">
+          <button class="btn btn-sm" :disabled="!stationRows.length" @click="exportCsv('availability')">
             <Icon name="download" :size="13" />导出可用率 CSV
           </button>
         </div>
@@ -554,7 +564,7 @@ const exportCsv = async (kind: TabKey = tab.value) => {
           <span class="card-title">时效分布</span>
           <span class="card-sub">单位：时:分:秒</span>
           <div class="card-tools">
-            <button class="btn btn-sm" :disabled="!timeRows.length || !!exporting" @click="exportCsv('timeliness')">
+            <button class="btn btn-sm" :disabled="!timeRows.length" @click="exportCsv('timeliness')">
               <Icon name="download" :size="13" />导出时效 CSV
             </button>
           </div>

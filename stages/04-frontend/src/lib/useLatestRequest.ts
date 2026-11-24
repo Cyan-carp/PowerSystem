@@ -7,10 +7,15 @@ export function useLatestRequest<T>() {
   const error = ref('')
   let controller: AbortController | undefined
 
-  const cancel = () => {
+  /** 放弃在飞请求但保留已有结果：切页签时用，切回来还能直接看上一份 */
+  const abort = () => {
     controller?.abort()
     controller = undefined
     pending.value = false
+  }
+
+  const cancel = () => {
+    abort()
     data.value = null
     error.value = ''
   }
@@ -33,5 +38,5 @@ export function useLatestRequest<T>() {
   }
 
   onScopeDispose(cancel)
-  return { data, pending, error, run, cancel }
+  return { data, pending, error, run, abort, cancel }
 }
