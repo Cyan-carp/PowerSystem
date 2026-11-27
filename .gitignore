@@ -38,11 +38,4 @@ stages/04-frontend/dev/
 /local-scripts/
 # 安卓外壳构建产物与签名密钥（密钥丢失后无法覆盖升级，只留本机）
 /stages/12-android-client/build/
-# 个人简历与联系方式等隐私数据：GitHub 仓库是公开的，只留本机，不入库
-/resume/
-# 面试准备资料（源网智联等）：只留本机，不入库、不推送
-/interview-prep/
-# shared-memory 中不宜公开的对话记忆：只留本机
-/shared-memory/conversations/2026-11-24/2026-11-24-技能安装与技术面试资料.md
-/shared-memory/conversations/2026-11-26/
 

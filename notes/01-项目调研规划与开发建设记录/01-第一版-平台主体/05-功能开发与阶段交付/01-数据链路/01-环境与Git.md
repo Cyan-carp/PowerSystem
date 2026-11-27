@@ -54,7 +54,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\stages\01-data-chain\s
 | `main` | 阶段一 M1 已验收并合入，保留 `stage1-m1-passed` 标签 |
 | `dev` | 承载阶段一整理和未来阶段的集成工作 |
 | `feature/stage1-*` | 功能分支，完成后合入 `dev` |
-| 提交身份 | 仅在此仓库配置为 `Carp <2310314536@qq.com>` |
+| 提交身份 | 仅在此仓库配置，邮箱保存在本机 `.git/config`，不写入文档 |
 | 忽略项 | `.env`、虚拟环境、编译文件、`artifacts/` 均忽略 |
 | 提交项 | `go.sum` 和依赖锁定文件提交 |
 | 远端 | `origin` 指向公开仓库 `https://github.com/Cyan-carp/PowerSystem.git` |

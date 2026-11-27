@@ -284,7 +284,7 @@ S09联合整改、必要验证与未发布交接见 [S09阶段交接](../../note
 Linux/WSL夹具使用PostgreSQL16、Redis7、Prometheus2.45和官方独立Alertmanager0.26；仅绑定15439、16389、18089、19090、19093的loopback端口。依赖须解包到`$TR_S01_FIXTURE_ROOT/deps/root/usr/`，PostgreSQL库位于其`lib/x86_64-linux-gnu`；不得指向现有业务库。发行版Alertmanager可能硬编码系统模板，使用官方独立二进制，保持名称`prometheus-alertmanager`。
 
 ```bash
-export TR_S01_FIXTURE_ROOT=/home/user23103/tr-s01-fixture
+export TR_S01_FIXTURE_ROOT=/home/<user>/tr-s01-fixture
 bash stages/02-backend/scripts/tr-s01-fixture.sh start
 # 仅重置本夹具两库及16389 Redis；保留原证据，必要重测时才执行
 bash stages/02-backend/scripts/tr-s01-fixture.sh reset
@@ -309,10 +309,10 @@ go test -tags tr_s01 ./internal/api -run '^TestTRS01Isolated$' -v -count=1 -time
 
 ```bash
 python3 stages/02-backend/scripts/test-telemetry-alerts.py \
-  --bin-dir /home/user23103/tr-s01-fixture/deps/root/usr/bin \
+  --bin-dir /home/<user>/tr-s01-fixture/deps/root/usr/bin \
   --evidence artifacts/遥测可靠性/TR-S01-local/alerts-r1
-python3 stages/02-backend/scripts/telemetry-rule-boundaries.py /home/user23103/tr-s01-fixture/rules.json
-/home/user23103/tr-s01-fixture/deps/root/usr/bin/promtool test rules /home/user23103/tr-s01-fixture/rules.json
+python3 stages/02-backend/scripts/telemetry-rule-boundaries.py /home/<user>/tr-s01-fixture/rules.json
+/home/<user>/tr-s01-fixture/deps/root/usr/bin/promtool test rules /home/<user>/tr-s01-fixture/rules.json
 bash -n stages/02-backend/scripts/tr-s01-fixture.sh
 bash stages/02-backend/scripts/tr-s01-fixture.sh stop
 ```
@@ -340,8 +340,8 @@ bash stages/02-backend/scripts/tr-s01-fixture.sh stop
 复用已解包的S01 PG16/Redis7二进制，S02另建数据根与loopback端口15440/16390。脚本只允许专用`/home/.../tr-s02-fixture`；测试仅允许固定`tr_s02_test`和派生启动测试库，不指向业务库。
 
 ```bash
-export TR_S02_FIXTURE_ROOT=/home/user23103/tr-s02-fixture
-export TR_S02_DEPS_ROOT=/home/user23103/tr-s01-fixture/deps/root
+export TR_S02_FIXTURE_ROOT=/home/<user>/tr-s02-fixture
+export TR_S02_DEPS_ROOT=/home/<user>/tr-s01-fixture/deps/root
 bash stages/02-backend/scripts/tr-s02-fixture.sh start
 # 完成本轮验证后停止；保留数据与失败证据供下一阶段复核
 bash stages/02-backend/scripts/tr-s02-fixture.sh stop
@@ -379,8 +379,8 @@ T01—T08使用真实PG/Redis、实际事务锁/触发器取消、实际COMMIT�
 从仓库根在WSL执行下列命令，仅本轮独立loopback端口；start拒绝覆盖已运行实例，stop核对Redis PID。先确认根目录和依赖根存在，不使用生产连接。脚本须保留LF换行。
 
 ```bash
-export TR_S03_FIXTURE_ROOT=/home/user23103/tr-s03-fixture
-export TR_S03_DEPS_ROOT=/home/user23103/tr-s01-fixture/deps/root
+export TR_S03_FIXTURE_ROOT=/home/<user>/tr-s03-fixture
+export TR_S03_DEPS_ROOT=/home/<user>/tr-s01-fixture/deps/root
 bash stages/02-backend/scripts/tr-s03-fixture.sh start
 # 验证结束只停止上述专用实例，保留PG数据和本轮证据
 bash stages/02-backend/scripts/tr-s03-fixture.sh stop

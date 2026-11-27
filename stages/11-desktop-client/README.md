@@ -34,7 +34,7 @@ S01原夹具与采证脚本保留作历史，不用于S02关闭/通知验收。�
 工作目录为本页所在目录，使用Node>=22.12（本机24.22.1）。运行时无npm dependencies；Electron45.0.0/builder26.18.0/TS5.9.3沿用锁文件。首次安装或变更依赖才需npm ci；系统Node22.11不符合要求。
 
 ```powershell
-$env:PATH = 'C:\Users\23103\.cache\codex-runtimes\codex-primary-runtime\dependencies\node\bin;' + $env:PATH
+$env:PATH = 'C:\Users\<user>\.cache\codex-runtimes\codex-primary-runtime\dependencies\node\bin;' + $env:PATH
 $run = [IO.Path]::GetFullPath('../../artifacts/v5-桌面客户端/S02-运维桌面-20261026-r1')
 $env:ELECTRON_BUILDER_CACHE = Join-Path $run 'builder-cache'
 $env:CSC_IDENTITY_AUTO_DISCOVERY = 'false'
@@ -181,8 +181,8 @@ New-Item -ItemType File -Path '../../artifacts/v5-桌面客户端/S02-运维桌�
 实际取证脚本保存在本轮忽略目录，只包含固定inventory/rag/alarms查询。经既有7070管理入口与PVE/QGA定位DL380G9/VM117，断言guest hostname=powersystem-prod；精确项目Postgres容器内BEGIN READ ONLY、10秒语句超时、SHOW transaction_read_only、COMMIT。只输出计数/时间/状态，不输出连接串/认证密封/业务正文，不上传项目文件。
 
 ```powershell
-& 'C:/Users/23103/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/python.exe' '../../artifacts/v5-桌面客户端/S02-运维桌面-20261026-r1/server-readonly-probe.py' rag
-& 'C:/Users/23103/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/python.exe' '../../artifacts/v5-桌面客户端/S02-运维桌面-20261026-r1/server-readonly-probe.py' alarms
+& 'C:/Users/<user>/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/python.exe' '../../artifacts/v5-桌面客户端/S02-运维桌面-20261026-r1/server-readonly-probe.py' rag
+& 'C:/Users/<user>/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/python.exe' '../../artifacts/v5-桌面客户端/S02-运维桌面-20261026-r1/server-readonly-probe.py' alarms
 ```
 
 该脚本绑定本次两段实际退出窗；新批次先重新核身份/时窗，不能沿用旧结论。没有有效任务或窗口内没有新增记录均不通过，不自动创建、恢复或批准任务。
@@ -215,7 +215,7 @@ R3仅核自然新告警与当前退出状态；没有样本不能签收，不自
 
 ```powershell
 ./scripts/Collect-S02Evidence.ps1 -Phase closed -Isolated -RunDirectory '../../artifacts/v5-桌面客户端/S02-运维桌面-20261027-r3'
-& 'C:/Users/23103/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/python.exe' '../../artifacts/v5-桌面客户端/S02-运维桌面-20261027-r3/server-readonly-probe.py' alarms
+& 'C:/Users/<user>/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/python.exe' '../../artifacts/v5-桌面客户端/S02-运维桌面-20261027-r3/server-readonly-probe.py' alarms
 ```
 
 ## S03执行入口与冻结候选
@@ -233,7 +233,7 @@ R3仅核自然新告警与当前退出状态；没有样本不能签收，不自
 工作目录阶段十一。证据目录参数只给测试/构建工具，不进入团队应用；须落在本仓库artifacts/v5-desktop子目录。不要在同一已冻结前端被夹具服务时重建它。
 
 ```powershell
-$env:PATH = 'C:\Users\23103\.cache\codex-runtimes\codex-primary-runtime\dependencies\node\bin;' + $env:PATH
+$env:PATH = 'C:\Users\<user>\.cache\codex-runtimes\codex-primary-runtime\dependencies\node\bin;' + $env:PATH
 $env:POWERSYSTEM_TEST_RUN_DIRECTORY = [IO.Path]::GetFullPath('../../artifacts/v5-桌面客户端/S03-联合验收-20261027-r3')
 node 'C:/Program Files/nodejs/node_modules/npm/bin/npm-cli.js' run typecheck
 node --test tests/test-run-directory.test.cjs

@@ -707,9 +707,17 @@ func TestTRS04T04(t *testing.T) {
 	}
 	t.Log("cross-run/reset seq, old backfill, concurrent late writes and actual Redis restart; trusted durable TD source matches, business remains pending")
 }
+// s04dockerBin 返回本机 docker 可执行文件；优先读 TR_S04_DOCKER，未设置时走 PATH。
+func s04dockerBin() string {
+	if p := os.Getenv("TR_S04_DOCKER"); p != "" {
+		return p
+	}
+	return "docker"
+}
+
 func s04docker(t *testing.T, args ...string) {
 	t.Helper()
-	c := exec.Command("C:/Users/23103/AppData/Local/Programs/DockerDesktop/resources/bin/docker.exe", args...)
+	c := exec.Command(s04dockerBin(), args...)
 	b, e := c.CombinedOutput()
 	if e != nil {
 		t.Fatalf("dedicated docker %v: %v %s", args, e, b)
@@ -747,7 +755,7 @@ func TestTRS04T05(t *testing.T) {
 	}
 	// Real pg_dump while frozen; retain the file and restore it to a separate DB.
 	path := filepath.Join(os.Getenv("TR_S04_EVIDENCE"), os.Getenv("TR_S04_RUN")+"-frozen.dump")
-	cmd := exec.Command("C:/Users/23103/AppData/Local/Programs/DockerDesktop/resources/bin/docker.exe", "exec", "tr-s04-pg", "pg_dump", "-U", "tr_s04", "-d", "tr_s04_test", "-n", "public", "-Fc")
+	cmd := exec.Command(s04dockerBin(), "exec", "tr-s04-pg", "pg_dump", "-U", "tr_s04", "-d", "tr_s04_test", "-n", "public", "-Fc")
 	file, e := os.Create(path)
 	s04must(t, e)
 	cmd.Stdout = file
@@ -756,7 +764,7 @@ func TestTRS04T05(t *testing.T) {
 	s04must(t, file.Close())
 	restoredName := fmt.Sprintf("tr_s04_restore_%d", time.Now().UnixNano())
 	s04docker(t, "exec", "tr-s04-pg", "createdb", "-U", "tr_s04", restoredName)
-	restore := exec.Command("C:/Users/23103/AppData/Local/Programs/DockerDesktop/resources/bin/docker.exe", "exec", "-i", "tr-s04-pg", "pg_restore", "-U", "tr_s04", "-d", restoredName, "--no-owner", "--clean", "--if-exists")
+	restore := exec.Command(s04dockerBin(), "exec", "-i", "tr-s04-pg", "pg_restore", "-U", "tr_s04", "-d", restoredName, "--no-owner", "--clean", "--if-exists")
 	input, e := os.Open(path)
 	s04must(t, e)
 	restore.Stdin = input
